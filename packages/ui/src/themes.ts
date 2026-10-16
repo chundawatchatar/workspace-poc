@@ -2,6 +2,9 @@ import type { ITheme } from '@xterm/xterm'
 
 export type ThemeMode = 'light' | 'dark'
 
+/** What the user picked: a mode, or follow the system. */
+export type ThemeChoice = 'system' | ThemeMode
+
 /** Interface colours. Each key becomes the CSS variable `--color-<key>` that the Tailwind classes read. */
 export interface UiColors {
   bg: string

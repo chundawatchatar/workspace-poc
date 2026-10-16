@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
-import { type AppState, makePane, makeSurface, makeWorkspace, newId } from '@poc/shared'
+import { type AppState, makePane, makeSurface, makeWorkspace, newId } from '@orch/shared'
 
 function seed(projectRoot: string): AppState {
   // The first workspace shows a terminal beside the sample git and issue tabs.

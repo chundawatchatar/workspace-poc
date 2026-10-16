@@ -1,4 +1,4 @@
-import type { LayoutNode, PaneNode, SplitNode, Surface, SurfaceKind, Workspace } from '@poc/shared'
+import type { LayoutNode, PaneNode, SplitNode, Surface, SurfaceKind, Workspace } from '@orch/shared'
 import {
   Columns2,
   GitPullRequest,
@@ -9,7 +9,7 @@ import {
   Rows2,
   SquareTerminal,
   X,
-} from 'lucide-react'
+} from '@orch/ui/icons'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { addSurface, closeSurface, moveSurface, selectSurface, splitPane, toggleZoom } from '../lib/commands'
 import { ackSession, dispatch, focusedPaneId, pushState, setFocus, useApp, zoomedPaneId } from '../lib/store'

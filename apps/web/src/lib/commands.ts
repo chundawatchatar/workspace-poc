@@ -10,7 +10,7 @@ import {
   reduce,
   type SurfaceKind,
   type Workspace,
-} from '@poc/shared'
+} from '@orch/shared'
 import { dispatch, focusedPaneId, getSnapshot, mutate, setFocus, toggleZoom as toggleZoomState } from './store'
 import { placeSurface } from './tabOrder'
 import { withPaneTransition } from './transition'

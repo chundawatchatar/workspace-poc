@@ -1,3 +1,4 @@
+import { THEME_BOOT_SCRIPT } from '@orch/ui'
 import { createRootRoute, HeadContent, Outlet, Scripts, useNavigate, useParams } from '@tanstack/react-router'
 import { type ReactNode, useEffect } from 'react'
 import { Overlays } from '../components/Overlays'
@@ -5,7 +6,6 @@ import { Sidebar } from '../components/Sidebar'
 import { useShortcuts } from '../lib/shortcuts'
 import { SIDEBAR_BOOT_SCRIPT } from '../lib/sidebarWidth'
 import { connect, initTheme, useApp } from '../lib/store'
-import { THEME_BOOT_SCRIPT } from '../lib/themes'
 import appCss from '../styles.css?url'
 
 export const Route = createRootRoute({

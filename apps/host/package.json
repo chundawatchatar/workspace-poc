@@ -1,5 +1,5 @@
 {
-  "name": "@poc/host",
+  "name": "@orch/host",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@hono/bun": "^1.0.1",
-    "@poc/shared": "workspace:*",
+    "@orch/shared": "workspace:*",
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/headless": "^6.0.0",
     "hono": "^4.13.13"

@@ -1,6 +1,6 @@
-import { type GitInfo, listPanes, type SessionInfo, type Workspace } from '@poc/shared'
+import { type GitInfo, listPanes, type SessionInfo, type Workspace } from '@orch/shared'
+import { GitBranch, Keyboard, Moon, Palette, Plus, Sun, X } from '@orch/ui/icons'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { GitBranch, Keyboard, Moon, Palette, Plus, Sun, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { removeWorkspace, renameWorkspace } from '../lib/commands'
 import { LEADER_LABEL } from '../lib/shortcuts'

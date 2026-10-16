@@ -1,6 +1,6 @@
-import type { Workspace } from '@poc/shared'
+import type { Workspace } from '@orch/shared'
+import { Bell, Columns2, PanelLeft, Rows2 } from '@orch/ui/icons'
 import { createFileRoute, Navigate, useNavigate } from '@tanstack/react-router'
-import { Bell, Columns2, PanelLeft, Rows2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { HostStatus } from '../components/HostStatus'
 import { LayoutView } from '../components/LayoutView'

@@ -9,16 +9,23 @@ import {
   type ServerEvent,
   type SessionInfo,
   type Workspace,
-} from '@poc/shared'
+} from '@orch/shared'
+import {
+  applyThemeToDocument,
+  DEFAULT_THEME,
+  MODE_KEY,
+  type ThemeChoice,
+  themeById,
+  themeFor,
+  themeKey,
+} from '@orch/ui'
 import { useSyncExternalStore } from 'react'
-import { applyThemeToDocument, DEFAULT_THEME, MODE_KEY, themeById, themeFor, themeKey } from './themes'
 
 // The host listens on the loopback address only.
 export const HOST_HTTP = `http://127.0.0.1:${HOST_PORT}`
 export const HOST_WS = `ws://127.0.0.1:${HOST_PORT}`
 
 export type Overlay = 'help' | 'new-workspace' | 'palette' | 'themes' | null
-export type ThemeChoice = 'system' | 'light' | 'dark'
 export type Theme = 'light' | 'dark'
 
 export interface Snapshot {

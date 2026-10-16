@@ -1,6 +1,6 @@
 import { existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import type { SessionInfo, TermServerMsg } from '@poc/shared'
+import type { SessionInfo, TermServerMsg } from '@orch/shared'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { Terminal } from '@xterm/headless'
 

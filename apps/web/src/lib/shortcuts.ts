@@ -1,4 +1,4 @@
-import type { Workspace } from '@poc/shared'
+import type { Workspace } from '@orch/shared'
 import { useEffect, useRef } from 'react'
 import {
   addSurface,

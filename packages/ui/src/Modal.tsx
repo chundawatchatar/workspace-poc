@@ -1,11 +1,10 @@
 import type { ReactNode } from 'react'
-import { setOverlay } from '../lib/store'
 
-export function Modal(props: { title: string; children: ReactNode; width?: string }) {
+export function Modal(props: { title: string; children: ReactNode; width?: string; onClose: () => void }) {
   return (
     <div
       className="anim-backdrop fixed inset-0 z-50 flex items-start justify-center bg-black/55 pt-[14vh]"
-      onPointerDown={(event) => event.target === event.currentTarget && setOverlay(null)}
+      onPointerDown={(event) => event.target === event.currentTarget && props.onClose()}
     >
       <div
         role="dialog"

@@ -5,7 +5,7 @@ description: Verify the workspace after changes by running the TypeScript typech
 
 Run from the repo root:
 
-1. `bun run typecheck`: runs `tsc` in `@poc/shared`, `@poc/host` and `@poc/web`. Note which workspace failed.
+1. `bun run typecheck`: runs `tsc` in `@orch/shared`, `@orch/ui`, `@orch/host` and `@orch/web`. Note which workspace failed.
 2. `bunx biome check . --max-diagnostics=100`: lint and format check.
 
 Report the results grouped by workspace (`apps/web`, `apps/host`, `packages/shared`), with `file:line` and a one-line description for each error. Separate errors in files touched by this work from errors that already existed. The touched files are:

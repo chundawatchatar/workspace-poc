@@ -1,4 +1,4 @@
-import type { AppState, LayoutNode, PaneNode } from '@poc/shared'
+import type { AppState, LayoutNode, PaneNode } from '@orch/shared'
 
 // Reordering tabs is done here, on the client, because the shared reducer has
 // no action for it yet. It belongs there as an optional index on

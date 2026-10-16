@@ -1,4 +1,4 @@
-import { CircleDot, GitMerge, GitPullRequest, MessageSquare } from 'lucide-react'
+import { CircleDot, GitMerge, GitPullRequest, MessageSquare } from '@orch/ui/icons'
 import type { ReactNode } from 'react'
 
 // Placeholder views with hard-coded data. They show where git and issue

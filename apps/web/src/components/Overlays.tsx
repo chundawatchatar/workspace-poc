@@ -1,10 +1,10 @@
+import { Modal } from '@orch/ui'
 import { useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { addWorkspace } from '../lib/commands'
 import { LEADER_LABEL, SHORTCUT_ROWS } from '../lib/shortcuts'
 import { HOST_HTTP, setOverlay, useApp } from '../lib/store'
 import { CommandPalette } from './CommandPalette'
-import { Modal } from './Modal'
 import { ThemePicker } from './ThemePicker'
 
 export function Overlays() {
@@ -18,7 +18,7 @@ export function Overlays() {
 
 function ShortcutsHelp() {
   return (
-    <Modal title="Keyboard shortcuts" width="w-[560px]">
+    <Modal title="Keyboard shortcuts" width="w-[560px]" onClose={() => setOverlay(null)}>
       <p className="mb-3 text-xs leading-relaxed text-dim">
         Press <kbd>{LEADER_LABEL}</kbd>, release, then the key in the first column. The second column works without the
         leader. Browsers keep Ctrl/Cmd+W, T and N for themselves, so none of these use them.
@@ -74,7 +74,7 @@ function NewWorkspace() {
   const field = 'w-full rounded-md border border-line bg-bg px-2.5 py-1.5 text-[13px] outline-none focus:border-accent'
 
   return (
-    <Modal title="New workspace">
+    <Modal title="New workspace" onClose={() => setOverlay(null)}>
       <form onSubmit={create} className="space-y-3">
         <label className="block">
           <span className="mb-1 block text-xs text-dim">Folder on the host</span>

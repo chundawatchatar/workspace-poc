@@ -11,7 +11,7 @@ import {
   listSurfaces,
   type ServerEvent,
   type TermClientMsg,
-} from '@poc/shared'
+} from '@orch/shared'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { SessionManager, type TermClient } from './sessions'

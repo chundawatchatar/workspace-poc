@@ -1,6 +1,7 @@
-import { listPanes, type SurfaceKind } from '@poc/shared'
+import { listPanes, type SurfaceKind } from '@orch/shared'
+import { THEMES } from '@orch/ui'
+import { ChevronRight, GitPullRequest, KanbanSquare, LayoutGrid, Search, SquareTerminal } from '@orch/ui/icons'
 import { useNavigate, useParams } from '@tanstack/react-router'
-import { ChevronRight, GitPullRequest, KanbanSquare, LayoutGrid, Search, SquareTerminal } from 'lucide-react'
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import {
   addSurface,
@@ -12,7 +13,6 @@ import {
   toggleZoom,
 } from '../lib/commands'
 import { selectTheme, setOverlay, setThemeChoice, toggleSidebar, useApp } from '../lib/store'
-import { THEMES } from '../lib/themes'
 import { tidyTitle } from './LayoutView'
 import { shortPath } from './Sidebar'
 

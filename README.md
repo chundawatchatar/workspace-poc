@@ -23,6 +23,7 @@ Then open http://127.0.0.1:3210. The host listens on 127.0.0.1:4599.
 | `apps/web` | The UI: TanStack Start, React, Tailwind, xterm.js |
 | `apps/host` | The host service: Bun and Hono. Owns the shells and the layout |
 | `packages/shared` | The layout model, its reducer, and the wire protocol |
+| `packages/ui` | Shared UI: themes, styles and store-free components (modal, theme picker, terminal) |
 
 ## What is real
 
@@ -42,7 +43,7 @@ Then open http://127.0.0.1:3210. The host listens on 127.0.0.1:4599.
   and the terminal colours. The sun/moon button at the bottom of the sidebar
   switches between light and dark; the palette button beside it (or `Ctrl+B`
   then `T`) opens the picker. One theme is remembered for each side, and
-  "System" follows the OS. To add a theme, append to `apps/web/src/lib/themes.ts`.
+  "System" follows the OS. To add a theme, append to `packages/ui/src/themes.ts`.
 - Tabs can be dragged: within a tab bar to reorder them, onto another pane's tab
   bar to place them there, or onto another pane's body to add them at the end.
 - The sidebar is resizable: drag its right edge (double-click to reset). `Cmd+B`
