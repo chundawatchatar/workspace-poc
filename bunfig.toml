@@ -1,3 +1,7 @@
 [install]
 # One node_modules at the repo root instead of per-workspace folders.
 linker = "hoisted"
+
+[test]
+# `bun test --coverage` reports on source files only, not the tests themselves.
+coverageSkipTestFiles = true

@@ -1,12 +1,13 @@
 ---
 name: verify
-description: Verify the workspace after changes by running the TypeScript typecheck across all workspaces and the Biome lint/format check, then summarize problems per workspace. Use after making code changes or before opening a PR.
+description: Verify the workspace after changes by running the TypeScript typecheck across all workspaces, the tests, and the Biome lint/format check, then summarize problems per workspace. Use after making code changes or before opening a PR.
 ---
 
 Run from the repo root:
 
 1. `bun run typecheck`: runs `tsc` in `@orch/shared`, `@orch/ui`, `@orch/host` and `@orch/web`. Note which workspace failed.
-2. `bunx biome check . --max-diagnostics=100`: lint and format check.
+2. `bun test`: runs the `*.test.ts` files. Note each failing test and its file.
+3. `bunx biome check . --max-diagnostics=100`: lint and format check.
 
 Report the results grouped by workspace (`apps/web`, `apps/host`, `packages/shared`), with `file:line` and a one-line description for each error. Separate errors in files touched by this work from errors that already existed. The touched files are:
 
