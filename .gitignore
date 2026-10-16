@@ -6,3 +6,5 @@ dist
 .data
 *.log
 .DS_Store
+.tmp
+.temp
