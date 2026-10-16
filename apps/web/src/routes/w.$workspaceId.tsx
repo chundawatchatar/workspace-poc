@@ -14,10 +14,11 @@ function WorkspacePage() {
   const { workspaceId } = Route.useParams()
   const loaded = useApp((s) => s.state !== null)
   const workspace = useApp((s) => s.state?.workspaces.find((w) => w.id === workspaceId))
+  const name = workspace?.name
 
   useEffect(() => {
-    if (workspace) document.title = `${workspace.name} · Workspaces`
-  }, [workspace?.name])
+    if (name) document.title = `${name} · Workspaces`
+  }, [name])
 
   if (!loaded) return <HostStatus />
   if (!workspace) return <Navigate to="/" replace />

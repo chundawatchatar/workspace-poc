@@ -141,6 +141,7 @@ export function CommandPalette() {
 
   const selected = Math.min(index, Math.max(0, visible.length - 1))
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: The dependencies are the trigger: scroll when the selection or the list changes.
   useEffect(() => {
     list.current?.querySelector('[data-selected="true"]')?.scrollIntoView({ block: 'nearest' })
   }, [selected, visible])

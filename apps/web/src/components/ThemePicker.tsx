@@ -92,6 +92,7 @@ function ThemeCard({ theme, inUse, preferred }: { theme: ThemeDef; inUse: boolea
           </div>
           <div className="flex gap-1">
             {swatches.map((colour, i) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: A fixed list of swatches that never reorders, and colours can repeat.
               <span key={i} className="h-2 w-2 rounded-full" style={{ background: colour }} />
             ))}
           </div>
