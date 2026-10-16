@@ -4,6 +4,9 @@ A browser prototype of a cmux-style workspace: a sidebar of workspaces, split
 panes, tabs in every pane, and real terminals. It exists to show what the
 browser-only design can do. The name is a placeholder.
 
+What the product should do, and how far the prototype has got, is in
+[docs/REQUIREMENTS.md](docs/REQUIREMENTS.md).
+
 ## Run
 
 ```bash
