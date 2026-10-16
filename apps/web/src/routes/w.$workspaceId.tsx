@@ -38,7 +38,13 @@ function Header({ workspace }: { workspace: Workspace }) {
   const button = 'rounded p-1.5 text-dim hover:bg-raised hover:text-ink'
   return (
     <header className="flex h-10 shrink-0 items-center gap-2 border-b border-line bg-sidebar px-2">
-      <button type="button" title="Toggle sidebar" aria-label="Toggle sidebar" className={button} onClick={toggleSidebar}>
+      <button
+        type="button"
+        title="Toggle sidebar"
+        aria-label="Toggle sidebar"
+        className={button}
+        onClick={toggleSidebar}
+      >
         <PanelLeft size={15} />
       </button>
       <span className="text-[13px] font-semibold">{workspace.name}</span>

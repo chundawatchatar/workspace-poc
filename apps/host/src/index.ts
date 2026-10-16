@@ -146,7 +146,12 @@ app.get(
     let client: TermClient | null = null
     return {
       onOpen(_event, ws) {
-        client = { ready: false, queue: [], want: null, send: (data) => ws.send(data as string | Uint8Array<ArrayBuffer>) }
+        client = {
+          ready: false,
+          queue: [],
+          want: null,
+          send: (data) => ws.send(data as string | Uint8Array<ArrayBuffer>),
+        }
         sessions.ensure(id, cwd, cols, rows).attach(client)
       },
       onMessage(event) {

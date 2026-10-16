@@ -1,7 +1,7 @@
 import { Check, Monitor, Moon, Sun } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { selectTheme, setThemeChoice, type ThemeChoice, useApp } from '../lib/store'
-import { type ThemeDef, type ThemeMode, THEMES } from '../lib/themes'
+import { THEMES, type ThemeDef, type ThemeMode } from '../lib/themes'
 import { Modal } from './Modal'
 
 const MODES: { choice: ThemeChoice; label: string; icon: ReactNode }[] = [
@@ -57,8 +57,8 @@ export function ThemePicker() {
         {section('dark', 'Dark themes')}
         {section('light', 'Light themes')}
         <p className="text-xs text-faint">
-          One theme is remembered for dark and one for light. Switching appearance, or the system doing so,
-          uses the theme chosen for that side.
+          One theme is remembered for dark and one for light. Switching appearance, or the system doing so, uses the
+          theme chosen for that side.
         </p>
       </div>
     </Modal>
@@ -99,9 +99,7 @@ function ThemeCard({ theme, inUse, preferred }: { theme: ThemeDef; inUse: boolea
       </div>
       <div className="flex items-center justify-between gap-2 border-t border-line px-2 py-1.5">
         <span className="truncate text-xs text-ink">{theme.name}</span>
-        {(inUse || preferred) && (
-          <Check size={13} className={inUse ? 'shrink-0 text-accent' : 'shrink-0 text-faint'} />
-        )}
+        {(inUse || preferred) && <Check size={13} className={inUse ? 'shrink-0 text-accent' : 'shrink-0 text-faint'} />}
       </div>
     </button>
   )

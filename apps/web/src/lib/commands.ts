@@ -11,9 +11,9 @@ import {
   type SurfaceKind,
   type Workspace,
 } from '@poc/shared'
+import { dispatch, focusedPaneId, getSnapshot, mutate, setFocus, toggleZoom as toggleZoomState } from './store'
 import { placeSurface } from './tabOrder'
 import { withPaneTransition } from './transition'
-import { dispatch, focusedPaneId, getSnapshot, mutate, setFocus, toggleZoom as toggleZoomState } from './store'
 
 // Every way of triggering an action (button, shortcut, leader key) calls these.
 

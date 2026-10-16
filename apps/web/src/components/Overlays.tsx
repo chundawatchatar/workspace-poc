@@ -20,8 +20,8 @@ function ShortcutsHelp() {
   return (
     <Modal title="Keyboard shortcuts" width="w-[560px]">
       <p className="mb-3 text-xs leading-relaxed text-dim">
-        Press <kbd>{LEADER_LABEL}</kbd>, release, then the key in the first column. The second column works
-        without the leader. Browsers keep Ctrl/Cmd+W, T and N for themselves, so none of these use them.
+        Press <kbd>{LEADER_LABEL}</kbd>, release, then the key in the first column. The second column works without the
+        leader. Browsers keep Ctrl/Cmd+W, T and N for themselves, so none of these use them.
       </p>
       <table className="w-full text-xs">
         <thead>

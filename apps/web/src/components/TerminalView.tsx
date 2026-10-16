@@ -33,10 +33,7 @@ export function TerminalView({ sessionId, cwd, active }: Props) {
     let cleanup = () => {}
 
     void (async () => {
-      const [{ Terminal }, { FitAddon }] = await Promise.all([
-        import('@xterm/xterm'),
-        import('@xterm/addon-fit'),
-      ])
+      const [{ Terminal }, { FitAddon }] = await Promise.all([import('@xterm/xterm'), import('@xterm/addon-fit')])
       if (disposed) return
 
       const term = new Terminal({

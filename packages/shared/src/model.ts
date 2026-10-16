@@ -133,9 +133,7 @@ function removeSurface(node: LayoutNode, surfaceId: string): LayoutNode | null {
     const surfaces = node.surfaces.filter((s) => s.id !== surfaceId)
     if (surfaces.length === 0) return null
     const activeSurfaceId =
-      node.activeSurfaceId === surfaceId
-        ? surfaces[Math.min(index, surfaces.length - 1)].id
-        : node.activeSurfaceId
+      node.activeSurfaceId === surfaceId ? surfaces[Math.min(index, surfaces.length - 1)].id : node.activeSurfaceId
     return { ...node, surfaces, activeSurfaceId }
   }
   const a = removeSurface(node.a, surfaceId)
@@ -145,11 +143,7 @@ function removeSurface(node: LayoutNode, surfaceId: string): LayoutNode | null {
   return a === node.a && b === node.b ? node : { ...node, a, b }
 }
 
-function updateWorkspace(
-  state: AppState,
-  workspaceId: string,
-  fn: (workspace: Workspace) => Workspace,
-): AppState {
+function updateWorkspace(state: AppState, workspaceId: string, fn: (workspace: Workspace) => Workspace): AppState {
   let changed = false
   const workspaces = state.workspaces.map((w) => {
     if (w.id !== workspaceId) return w

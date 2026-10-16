@@ -125,7 +125,8 @@ function PaneView({ workspace, pane }: { workspace: Workspace; pane: PaneNode })
   }, [])
 
   // No marker where dropping would leave the tab exactly where it is.
-  const draggedFrom = dragSource?.paneId === pane.id ? pane.surfaces.findIndex((s) => s.id === dragSource?.surfaceId) : -1
+  const draggedFrom =
+    dragSource?.paneId === pane.id ? pane.surfaces.findIndex((s) => s.id === dragSource?.surfaceId) : -1
   const markerIndex =
     dropIndex === null || (draggedFrom !== -1 && (dropIndex === draggedFrom || dropIndex === draggedFrom + 1))
       ? null
@@ -207,7 +208,9 @@ function PaneView({ workspace, pane }: { workspace: Workspace; pane: PaneNode })
               pane={pane}
               surface={surface}
               paneFocused={focused}
-              title={surface.kind === 'terminal' ? tidyTitle(sessions[surface.id]?.title ?? surface.title) : surface.title}
+              title={
+                surface.kind === 'terminal' ? tidyTitle(sessions[surface.id]?.title ?? surface.title) : surface.title
+              }
               attention={Boolean(sessions[surface.id]?.attention)}
             />
           ))}
@@ -237,9 +240,7 @@ function PaneView({ workspace, pane }: { workspace: Workspace; pane: PaneNode })
           >
             <span className="relative block">
               {zoomed ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-              {attentionElsewhere && (
-                <span className="absolute -top-1 -right-1 h-1.5 w-1.5 rounded-full bg-accent" />
-              )}
+              {attentionElsewhere && <span className="absolute -top-1 -right-1 h-1.5 w-1.5 rounded-full bg-accent" />}
             </span>
           </IconButton>
         </div>
@@ -249,10 +250,7 @@ function PaneView({ workspace, pane }: { workspace: Workspace; pane: PaneNode })
         {pane.surfaces.map((surface) => {
           const visible = surface.id === pane.activeSurfaceId
           return (
-            <div
-              key={surface.id}
-              className={`absolute inset-0 ${visible ? '' : 'pointer-events-none invisible'}`}
-            >
+            <div key={surface.id} className={`absolute inset-0 ${visible ? '' : 'pointer-events-none invisible'}`}>
               {surface.kind === 'terminal' ? (
                 <TerminalView sessionId={surface.id} cwd={workspace.cwd} active={visible && focused && !overlayOpen} />
               ) : surface.kind === 'pulls' ? (

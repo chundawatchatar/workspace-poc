@@ -19,10 +19,42 @@ function SampleShell(props: { title: string; children: ReactNode }) {
 }
 
 const PULLS = [
-  { id: 42, title: 'Attach sessions over a single socket', branch: 'mux-socket', author: 'priya', checks: 'passing', comments: 4, state: 'open' },
-  { id: 41, title: 'Restore pane layout after restart', branch: 'restore-layout', author: 'review-agent', checks: 'running', comments: 1, state: 'open' },
-  { id: 39, title: 'Scope agent tokens to one repository', branch: 'scoped-tokens', author: 'tomas', checks: 'failing', comments: 7, state: 'open' },
-  { id: 37, title: 'Add terminal runner type for workflows', branch: 'terminal-runner', author: 'priya', checks: 'passing', comments: 12, state: 'merged' },
+  {
+    id: 42,
+    title: 'Attach sessions over a single socket',
+    branch: 'mux-socket',
+    author: 'priya',
+    checks: 'passing',
+    comments: 4,
+    state: 'open',
+  },
+  {
+    id: 41,
+    title: 'Restore pane layout after restart',
+    branch: 'restore-layout',
+    author: 'review-agent',
+    checks: 'running',
+    comments: 1,
+    state: 'open',
+  },
+  {
+    id: 39,
+    title: 'Scope agent tokens to one repository',
+    branch: 'scoped-tokens',
+    author: 'tomas',
+    checks: 'failing',
+    comments: 7,
+    state: 'open',
+  },
+  {
+    id: 37,
+    title: 'Add terminal runner type for workflows',
+    branch: 'terminal-runner',
+    author: 'priya',
+    checks: 'passing',
+    comments: 12,
+    state: 'merged',
+  },
 ] as const
 
 const CHECK_STYLE = {

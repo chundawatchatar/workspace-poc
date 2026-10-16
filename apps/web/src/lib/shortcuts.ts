@@ -213,8 +213,7 @@ export function useShortcuts(workspace: Workspace | undefined, goToWorkspace: (i
         if (event.key !== 'Escape') afterLeader(event)
         return
       }
-      const leader =
-        event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey && event.code === 'KeyB'
+      const leader = event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey && event.code === 'KeyB'
       if (leader) {
         swallow(event)
         setLeader(true)

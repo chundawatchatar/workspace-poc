@@ -39,8 +39,7 @@ function terminal(
   bright: Ansi,
 ): ITheme {
   const [black, red, green, yellow, blue, magenta, cyan, white] = normal
-  const [brightBlack, brightRed, brightGreen, brightYellow, brightBlue, brightMagenta, brightCyan, brightWhite] =
-    bright
+  const [brightBlack, brightRed, brightGreen, brightYellow, brightBlue, brightMagenta, brightCyan, brightWhite] = bright
   return {
     background: base.background,
     foreground: base.foreground,

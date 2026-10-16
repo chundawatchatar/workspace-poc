@@ -93,9 +93,7 @@ export function CommandPalette() {
             group: 'Tab',
             icon: TAB_ICON[surface.kind],
             label: title,
-            hint: sessions[surface.id]?.attention
-              ? `${workspace.name} · needs attention`
-              : workspace.name,
+            hint: sessions[surface.id]?.attention ? `${workspace.name} · needs attention` : workspace.name,
             run: () => {
               const target = revealSurface(surface.id)
               if (target) go(target)

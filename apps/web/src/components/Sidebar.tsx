@@ -47,65 +47,65 @@ export function Sidebar({ activeId, open }: { activeId: string | undefined; open
   return (
     // The shell animates between the sidebar's width and zero; the sidebar inside keeps its width and is clipped.
     <div className="sidebar-shell" data-open={open} inert={!open}>
-    <aside
-      className="relative flex h-full flex-col border-r border-line bg-sidebar"
-      style={{ width: `var(--sidebar-width, ${SIDEBAR_WIDTH.initial}px)` }}
-    >
-      <div className="flex h-10 shrink-0 items-center justify-between px-3">
-        <span className="text-[11px] font-semibold tracking-wider text-faint uppercase">Workspaces</span>
-        <button
-          type="button"
-          title="New workspace"
-          aria-label="New workspace"
-          className="rounded p-1 text-dim hover:bg-raised hover:text-ink"
-          onClick={() => setOverlay('new-workspace')}
-        >
-          <Plus size={15} />
-        </button>
-      </div>
+      <aside
+        className="relative flex h-full flex-col border-r border-line bg-sidebar"
+        style={{ width: `var(--sidebar-width, ${SIDEBAR_WIDTH.initial}px)` }}
+      >
+        <div className="flex h-10 shrink-0 items-center justify-between px-3">
+          <span className="text-[11px] font-semibold tracking-wider text-faint uppercase">Workspaces</span>
+          <button
+            type="button"
+            title="New workspace"
+            aria-label="New workspace"
+            className="rounded p-1 text-dim hover:bg-raised hover:text-ink"
+            onClick={() => setOverlay('new-workspace')}
+          >
+            <Plus size={15} />
+          </button>
+        </div>
 
-      <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 pb-2">
-        {workspaces?.map((workspace, index) => (
-          <WorkspaceRow
-            key={workspace.id}
-            workspace={workspace}
-            index={index}
-            active={workspace.id === activeId}
-            fallbackId={workspaces.find((w) => w.id !== workspace.id)?.id}
-          />
-        ))}
-      </nav>
+        <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 pb-2">
+          {workspaces?.map((workspace, index) => (
+            <WorkspaceRow
+              key={workspace.id}
+              workspace={workspace}
+              index={index}
+              active={workspace.id === activeId}
+              fallbackId={workspaces.find((w) => w.id !== workspace.id)?.id}
+            />
+          ))}
+        </nav>
 
-      <div className="flex h-9 shrink-0 items-center justify-between border-t border-line px-3 text-xs text-dim">
-        <span className="flex items-center gap-1.5">
-          <span
-            className={`h-1.5 w-1.5 rounded-full ${
-              status === 'open' ? 'bg-good' : status === 'connecting' ? 'bg-warn' : 'bg-bad'
-            }`}
-          />
-          {status === 'open' ? 'Host connected' : status === 'connecting' ? 'Connecting…' : 'Host offline'}
-        </span>
-        {leader ? (
-          <span className="rounded bg-accent px-1.5 py-0.5 text-[11px] font-medium text-on-accent">
-            {LEADER_LABEL} …
+        <div className="flex h-9 shrink-0 items-center justify-between border-t border-line px-3 text-xs text-dim">
+          <span className="flex items-center gap-1.5">
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                status === 'open' ? 'bg-good' : status === 'connecting' ? 'bg-warn' : 'bg-bad'
+              }`}
+            />
+            {status === 'open' ? 'Host connected' : status === 'connecting' ? 'Connecting…' : 'Host offline'}
           </span>
-        ) : (
-          <span className="flex items-center">
-            <ThemeButtons />
-            <button
-              type="button"
-              title="Keyboard shortcuts"
-              aria-label="Keyboard shortcuts"
-              className="rounded p-1 hover:bg-raised hover:text-ink"
-              onClick={() => setOverlay('help')}
-            >
-              <Keyboard size={14} />
-            </button>
-          </span>
-        )}
-      </div>
-      <ResizeHandle />
-    </aside>
+          {leader ? (
+            <span className="rounded bg-accent px-1.5 py-0.5 text-[11px] font-medium text-on-accent">
+              {LEADER_LABEL} …
+            </span>
+          ) : (
+            <span className="flex items-center">
+              <ThemeButtons />
+              <button
+                type="button"
+                title="Keyboard shortcuts"
+                aria-label="Keyboard shortcuts"
+                className="rounded p-1 hover:bg-raised hover:text-ink"
+                onClick={() => setOverlay('help')}
+              >
+                <Keyboard size={14} />
+              </button>
+            </span>
+          )}
+        </div>
+        <ResizeHandle />
+      </aside>
     </div>
   )
 }
@@ -183,12 +183,7 @@ function ThemeButtons() {
   )
 }
 
-function WorkspaceRow(props: {
-  workspace: Workspace
-  index: number
-  active: boolean
-  fallbackId: string | undefined
-}) {
+function WorkspaceRow(props: { workspace: Workspace; index: number; active: boolean; fallbackId: string | undefined }) {
   const { workspace, index, active, fallbackId } = props
   const sessions = useApp((s) => s.sessions)
   const home = useApp((s) => s.info?.home)
