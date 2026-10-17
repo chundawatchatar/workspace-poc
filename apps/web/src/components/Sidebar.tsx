@@ -1,11 +1,12 @@
-import { type GitInfo, listPanes, type SessionInfo, type Workspace } from '@orch/shared'
+import { type GitInfo, listPanes, routes, type SessionInfo, type Workspace } from '@orch/shared'
 import { GitBranch, Keyboard, Moon, Palette, Plus, Sun, X } from '@orch/ui/icons'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
+import { callApi } from '../lib/api'
 import { removeWorkspace, renameWorkspace } from '../lib/commands'
 import { LEADER_LABEL } from '../lib/shortcuts'
 import { SIDEBAR_WIDTH, setSidebarWidth, sidebarWidth } from '../lib/sidebarWidth'
-import { HOST_HTTP, setOverlay, toggleThemeMode, useApp } from '../lib/store'
+import { setOverlay, toggleThemeMode, useApp } from '../lib/store'
 
 export function shortPath(path: string, home: string | undefined) {
   return home && path.startsWith(home) ? `~${path.slice(home.length)}` : path
@@ -16,8 +17,7 @@ function useGitInfo(cwd: string): GitInfo | null {
   useEffect(() => {
     let cancelled = false
     const load = () =>
-      fetch(`${HOST_HTTP}/api/git?cwd=${encodeURIComponent(cwd)}`)
-        .then((response) => response.json() as Promise<GitInfo>)
+      callApi(routes.git.status, { cwd })
         .then((next) => !cancelled && setInfo(next))
         .catch(() => {})
     load()

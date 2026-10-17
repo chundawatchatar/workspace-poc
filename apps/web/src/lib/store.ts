@@ -1,11 +1,13 @@
 import {
   type Action,
   type AppState,
+  buildSocketUrl,
   type ClientEvent,
   HOST_PORT,
   type HostInfo,
   listPanes,
   reduce,
+  routes,
   type ServerEvent,
   type SessionInfo,
   type Workspace,
@@ -124,7 +126,7 @@ function handle(event: ServerEvent) {
 
 function open() {
   set({ status: 'connecting' })
-  const ws = new WebSocket(`${HOST_WS}/ws/events`)
+  const ws = new WebSocket(`${HOST_WS}${buildSocketUrl(routes.sockets.events, {})}`)
   socket = ws
   ws.onopen = () => set({ status: 'open' })
   ws.onmessage = (message) => handle(JSON.parse(message.data) as ServerEvent)

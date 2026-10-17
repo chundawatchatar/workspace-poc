@@ -1,0 +1,58 @@
+import { upgradeWebSocket } from '@hono/bun'
+import { type AppState, type ClientEvent, type HostInfo, listSurfaces, routes } from '@orch/shared'
+import { Hono } from 'hono'
+import type { LayoutRepository } from '../layout/layout.repository'
+import type { SessionManager } from '../terminals/terminals.service'
+import type { EventClient, EventHub } from './events.service'
+
+interface Deps {
+  hub: EventHub
+  layout: LayoutRepository
+  sessions: SessionManager
+  info: HostInfo
+}
+
+function liveSessionIds(state: AppState) {
+  return new Set(
+    listSurfaces(state)
+      .filter((s) => s.kind === 'terminal')
+      .map((s) => s.id),
+  )
+}
+
+/** Serves `routes.sockets.events`. */
+export function createEventsSocket({ hub, layout, sessions, info }: Deps) {
+  return new Hono().get(
+    routes.sockets.events.path,
+    upgradeWebSocket(() => {
+      let client: EventClient | null = null
+      return {
+        onOpen(_event, ws) {
+          client = { id: crypto.randomUUID(), send: (event) => ws.send(JSON.stringify(event)) }
+          hub.add(client)
+          client.send({
+            type: 'hello',
+            clientId: client.id,
+            state: layout.state,
+            sessions: sessions.list().map((s) => s.info()),
+            info,
+          })
+        },
+        onMessage(event) {
+          if (typeof event.data !== 'string' || !client) return
+          const message = JSON.parse(event.data) as ClientEvent
+          if (message.type === 'state') {
+            layout.set(message.state)
+            hub.broadcast({ type: 'state', state: layout.state }, client)
+            sessions.collect(liveSessionIds(layout.state))
+          } else if (message.type === 'ack') {
+            sessions.get(message.sessionId)?.ack()
+          }
+        },
+        onClose() {
+          if (client) hub.remove(client)
+        },
+      }
+    }),
+  )
+}

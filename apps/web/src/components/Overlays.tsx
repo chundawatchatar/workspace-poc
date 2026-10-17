@@ -1,9 +1,11 @@
+import { routes } from '@orch/shared'
 import { Modal } from '@orch/ui'
 import { useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
+import { callApi } from '../lib/api'
 import { addWorkspace } from '../lib/commands'
 import { LEADER_LABEL, SHORTCUT_ROWS } from '../lib/shortcuts'
-import { HOST_HTTP, setOverlay, useApp } from '../lib/store'
+import { setOverlay, useApp } from '../lib/store'
 import { CommandPalette } from './CommandPalette'
 import { ThemePicker } from './ThemePicker'
 
@@ -56,8 +58,7 @@ function NewWorkspace() {
     event.preventDefault()
     setError(null)
     try {
-      const response = await fetch(`${HOST_HTTP}/api/dir?path=${encodeURIComponent(path.trim())}`)
-      const { path: resolved } = (await response.json()) as { path: string | null }
+      const { path: resolved } = await callApi(routes.fs.resolveDir, { path: path.trim() })
       if (!resolved) {
         setError('That folder does not exist on the host. Use an absolute path or one starting with ~.')
         return

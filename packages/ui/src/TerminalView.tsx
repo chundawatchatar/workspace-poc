@@ -1,4 +1,4 @@
-import type { TermClientMsg, TermServerMsg } from '@orch/shared'
+import { buildSocketUrl, routes, type TermClientMsg, type TermServerMsg } from '@orch/shared'
 import type { ITheme, Terminal } from '@xterm/xterm'
 import { useEffect, useRef, useState } from 'react'
 
@@ -74,8 +74,8 @@ export function TerminalView({ hostUrl, sessionId, cwd, active, theme }: Props) 
       }
 
       const connect = () => {
-        const query = new URLSearchParams({ cwd, cols: String(term.cols), rows: String(term.rows) })
-        const ws = new WebSocket(`${hostUrl}/ws/term/${sessionId}?${query}`)
+        const url = buildSocketUrl(routes.sockets.terminal, { id: sessionId, cwd, cols: term.cols, rows: term.rows })
+        const ws = new WebSocket(`${hostUrl}${url}`)
         ws.binaryType = 'arraybuffer'
         socket = ws
         ws.onmessage = (event) => {

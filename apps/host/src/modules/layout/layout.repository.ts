@@ -17,7 +17,7 @@ function seed(projectRoot: string): AppState {
 }
 
 /** The layout, kept in memory and written to a JSON file so it survives a restart. */
-export class StateStore {
+export class LayoutRepository {
   state: AppState
   private timer: ReturnType<typeof setTimeout> | null = null
 

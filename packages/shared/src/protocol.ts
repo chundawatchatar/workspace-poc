@@ -40,8 +40,3 @@ export type TermClientMsg =
   | { type: 'resize'; cols: number; rows: number }
   /** This view was focused, so the session should take its size. */
   | { type: 'focus' }
-
-export interface GitInfo {
-  branch: string | null
-  changes: number
-}
