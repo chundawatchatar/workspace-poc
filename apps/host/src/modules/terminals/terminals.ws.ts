@@ -45,6 +45,7 @@ export function createTerminalSocket(sessions: SessionManager) {
           if (message.type === 'input') session.input(message.data, client)
           else if (message.type === 'resize') session.resize(message.cols, message.rows, client)
           else if (message.type === 'focus') session.claim(client)
+          else if (message.type === 'clear') session.clear()
         },
         onClose() {
           if (client) sessions.get(id)?.detach(client)

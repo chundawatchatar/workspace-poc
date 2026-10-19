@@ -104,6 +104,19 @@ export function TerminalView({ hostUrl, sessionId, cwd, active, theme }: Props) 
 
       const onData = term.onData((data) => send({ type: 'input', data }))
 
+      // Shift+Enter would arrive as a plain Enter and submit. It sends a line feed (Ctrl+J) instead, which
+      // Claude Code, Codex and similar tools take as a new line in their input.
+      // Cmd+K clears the screen as in macOS terminals. The host clears its copy too and sends the result back,
+      // so the cleared output doesn't return on reload or stay in other views of the session.
+      term.attachCustomKeyEventHandler((event) => {
+        const newLine = event.key === 'Enter' && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey
+        const clear = event.code === 'KeyK' && event.metaKey && !event.shiftKey && !event.ctrlKey && !event.altKey
+        if (!newLine && !clear) return true
+        if (event.type === 'keydown') send(newLine ? { type: 'input', data: '\n' } : { type: 'clear' })
+        event.preventDefault()
+        return false
+      })
+
       // Focusing this view, including coming back to the window, puts it in control of the size.
       const onFocus = () => {
         report()

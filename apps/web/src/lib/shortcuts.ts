@@ -41,6 +41,8 @@ export const SHORTCUT_ROWS: ShortcutRow[] = [
   { label: 'Choose theme', leader: 'T' },
   { label: 'Show shortcuts', leader: '?' },
   { label: 'Send Ctrl+B to the terminal', leader: 'Ctrl+B' },
+  { label: 'Clear terminal', direct: '⌘K on Mac' },
+  { label: 'New line in Claude, Codex…', direct: 'Shift+Enter' },
 ]
 
 const ARROWS: Record<string, Direction> = {

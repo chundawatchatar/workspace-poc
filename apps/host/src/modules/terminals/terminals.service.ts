@@ -298,6 +298,18 @@ export class Session {
     })
   }
 
+  /**
+   * Clears the screen and scrollback, keeping the current line, as Cmd+K does
+   * in macOS terminals. Every view gets the cleared screen as a new snapshot.
+   * It waits for output already received, so none of it lands after the clear.
+   */
+  clear() {
+    this.term.write('', () => {
+      this.term.clear()
+      for (const client of this.clients) this.sync(client)
+    })
+  }
+
   detach(client: TermClient) {
     this.clients.delete(client)
     if (this.controller !== client) return

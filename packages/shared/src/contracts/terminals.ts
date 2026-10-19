@@ -25,5 +25,7 @@ export const terminalSocket = defineSocket({
     }),
     /** This view was focused, so the session should take its size. */
     z.object({ type: z.literal('focus') }),
+    /** Clears the screen and scrollback, keeping the current line, in every view of the session. */
+    z.object({ type: z.literal('clear') }),
   ]),
 })
