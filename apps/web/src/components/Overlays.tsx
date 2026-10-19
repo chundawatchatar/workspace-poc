@@ -1,9 +1,10 @@
 import { routes } from '@orch/shared'
-import { Modal } from '@orch/ui'
-import { useMutation } from '@tanstack/react-query'
+import { FolderBrowser, Modal } from '@orch/ui'
+import { FolderOpen } from '@orch/ui/icons'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { useState } from 'react'
-import { apiMutation } from '../lib/api'
+import { useEffect, useRef, useState } from 'react'
+import { apiKey, apiMutation, apiQuery } from '../lib/api'
 import { addWorkspace } from '../lib/commands'
 import { LEADER_LABEL, SHORTCUT_ROWS } from '../lib/shortcuts'
 import { setOverlay, useApp } from '../lib/store'
@@ -55,6 +56,49 @@ function NewWorkspace() {
   const [path, setPath] = useState('~')
   const [error, setError] = useState<string | null>(null)
   const resolveDir = useMutation(apiMutation(routes.fs.resolveDir))
+  // The folder shown in the browser, or null while it is closed.
+  const [browsePath, setBrowsePath] = useState<string | null>(null)
+  const listing = useQuery({
+    ...apiQuery(routes.fs.listDirs, { path: browsePath ?? '' }),
+    enabled: browsePath !== null,
+  })
+
+  const makeDir = useMutation(apiMutation(routes.fs.makeDir))
+  const queryClient = useQueryClient()
+  const pathField = useRef<HTMLDivElement>(null)
+
+  // Starts at the typed folder, or at home when that one doesn't exist.
+  if (listing.data && listing.data.path === null && browsePath !== '~') setBrowsePath('~')
+
+  // A click outside the folder field and its browser closes the browser.
+  const browsing = browsePath !== null
+  useEffect(() => {
+    if (!browsing) return
+    const onPointerDown = (event: PointerEvent) => {
+      if (!pathField.current?.contains(event.target as Node)) setBrowsePath(null)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => document.removeEventListener('pointerdown', onPointerDown)
+  }, [browsing])
+
+  function openFolder(folder: string) {
+    setBrowsePath(folder)
+    setPath(folder)
+  }
+
+  async function createFolder(folderName: string): Promise<string | null> {
+    const parent = listing.data?.path
+    if (!parent) return 'No folder is open.'
+    try {
+      const result = await makeDir.mutateAsync({ parent, name: folderName })
+      if (!result.path) return result.error ?? 'Could not create the folder.'
+      void queryClient.invalidateQueries({ queryKey: apiKey(routes.fs.listDirs) })
+      openFolder(result.path)
+      return null
+    } catch {
+      return 'Could not reach the host.'
+    }
+  }
 
   async function create(event: React.FormEvent) {
     event.preventDefault()
@@ -80,17 +124,43 @@ function NewWorkspace() {
   return (
     <Modal title="New workspace" onClose={() => setOverlay(null)}>
       <form onSubmit={create} className="space-y-3">
-        <label className="block">
-          <span className="mb-1 block text-xs text-dim">Folder on the host</span>
-          <input
-            autoFocus
-            value={path}
-            onChange={(event) => setPath(event.target.value)}
-            className={`${field} font-mono`}
-            placeholder="~/code/my-project"
-            spellCheck={false}
-          />
-        </label>
+        <div ref={pathField} className="relative">
+          <label className="block">
+            <span className="mb-1 block text-xs text-dim">Folder on the host</span>
+            <div className="relative">
+              <input
+                autoFocus
+                value={path}
+                onChange={(event) => setPath(event.target.value)}
+                className={`${field} pr-8 font-mono`}
+                placeholder="~/code/my-project"
+                spellCheck={false}
+              />
+              <button
+                type="button"
+                title="Browse folders"
+                aria-label="Browse folders"
+                aria-pressed={browsing}
+                className={`absolute inset-y-px right-px flex items-center rounded-r-[5px] px-2 hover:bg-raised ${
+                  browsing ? 'text-accent' : 'text-dim'
+                }`}
+                onClick={() => setBrowsePath(browsing ? null : path.trim() || '~')}
+              >
+                <FolderOpen size={15} />
+              </button>
+            </div>
+          </label>
+          {browsing && (
+            <div className="absolute inset-x-0 top-full z-10 mt-1">
+              <FolderBrowser
+                listing={listing.data?.path ? listing.data : undefined}
+                error={listing.isError ? 'Could not reach the host.' : null}
+                onOpen={openFolder}
+                onCreateFolder={createFolder}
+              />
+            </div>
+          )}
+        </div>
         <label className="block">
           <span className="mb-1 block text-xs text-dim">Name (optional)</span>
           <input

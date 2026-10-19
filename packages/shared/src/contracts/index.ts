@@ -5,7 +5,15 @@ import { systemContract } from './system'
 import { terminalSocket } from './terminals'
 
 export * from './contract'
-export { resolveDirQuery, resolveDirResponse } from './fs'
+export {
+  type DirListing,
+  listDirsQuery,
+  listDirsResponse,
+  makeDirBody,
+  makeDirResponse,
+  resolveDirQuery,
+  resolveDirResponse,
+} from './fs'
 export { type GitInfo, gitStatusQuery, gitStatusResponse } from './git'
 export { healthResponse } from './system'
 

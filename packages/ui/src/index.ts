@@ -1,3 +1,4 @@
+export * from './FolderBrowser'
 export * from './Icon'
 export * from './lib/utils'
 export * from './Modal'
