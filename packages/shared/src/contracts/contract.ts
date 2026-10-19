@@ -25,6 +25,8 @@ export interface Socket<Input extends z.ZodType = z.ZodType> {
   path: string
   description: string
   input: Input
+  /** The JSON text frames a client may send. The host reads them with `parseMessage`. */
+  clientMessage: z.ZodType
 }
 
 export type Contract = Record<string, Endpoint>
@@ -40,6 +42,19 @@ export function defineContract<C extends Contract>(contract: C): C {
 
 export function defineSocket<S extends Socket>(socket: S): S {
   return socket
+}
+
+/** Parses a JSON text frame against a socket's message schema. Returns null for anything that doesn't match. */
+export function parseMessage<M extends z.ZodType>(schema: M, data: unknown): z.infer<M> | null {
+  if (typeof data !== 'string') return null
+  let value: unknown
+  try {
+    value = JSON.parse(data)
+  } catch {
+    return null
+  }
+  const result = schema.safeParse(value)
+  return result.success ? result.data : null
 }
 
 /** Fills `:name` segments from `input` and returns the fields left over. */

@@ -2,8 +2,8 @@ import { z } from 'zod'
 import { defineSocket } from './contract'
 
 /**
- * Messages: `TermClientMsg` from the client and `TermServerMsg` from the host (see `protocol.ts`).
- * Terminal output travels as binary frames.
+ * Messages: `clientMessage` (`TermClientMsg`) from the client and `TermServerMsg` from the host
+ * (see `protocol.ts`). Terminal output travels as binary frames.
  */
 export const terminalSocket = defineSocket({
   path: '/ws/term/:id',
@@ -15,4 +15,15 @@ export const terminalSocket = defineSocket({
     cols: z.coerce.number().int().positive().default(80),
     rows: z.coerce.number().int().positive().default(24),
   }),
+  clientMessage: z.discriminatedUnion('type', [
+    z.object({ type: z.literal('input'), data: z.string().max(64 * 1024) }),
+    /** The size this view's pane can show. The host applies it only for the view in control. */
+    z.object({
+      type: z.literal('resize'),
+      cols: z.number().int().min(2).max(1000),
+      rows: z.number().int().min(2).max(1000),
+    }),
+    /** This view was focused, so the session should take its size. */
+    z.object({ type: z.literal('focus') }),
+  ]),
 })

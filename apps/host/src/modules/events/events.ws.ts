@@ -1,5 +1,5 @@
 import { upgradeWebSocket } from '@hono/bun'
-import { type AppState, type ClientEvent, type HostInfo, listSurfaces, routes } from '@orch/shared'
+import { type AppState, type HostInfo, listSurfaces, parseMessage, routes } from '@orch/shared'
 import { Hono } from 'hono'
 import type { LayoutRepository } from '../layout/layout.repository'
 import type { SessionManager } from '../terminals/terminals.service'
@@ -39,8 +39,8 @@ export function createEventsSocket({ hub, layout, sessions, info }: Deps) {
           })
         },
         onMessage(event) {
-          if (typeof event.data !== 'string' || !client) return
-          const message = JSON.parse(event.data) as ClientEvent
+          const message = parseMessage(routes.sockets.events.clientMessage, event.data)
+          if (!message || !client) return
           if (message.type === 'state') {
             layout.set(message.state)
             hub.broadcast({ type: 'state', state: layout.state }, client)

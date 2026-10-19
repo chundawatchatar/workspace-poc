@@ -1,5 +1,5 @@
 import { upgradeWebSocket } from '@hono/bun'
-import { routes, type TermClientMsg } from '@orch/shared'
+import { parseMessage, routes } from '@orch/shared'
 import type { ServerWebSocket } from 'bun'
 import { type Context, Hono } from 'hono'
 import { z } from 'zod'
@@ -40,8 +40,8 @@ export function createTerminalSocket(sessions: SessionManager) {
         },
         onMessage(event) {
           const session = sessions.get(id)
-          if (typeof event.data !== 'string' || !session || !client) return
-          const message = JSON.parse(event.data) as TermClientMsg
+          const message = parseMessage(socket.clientMessage, event.data)
+          if (!message || !session || !client) return
           if (message.type === 'input') session.input(message.data, client)
           else if (message.type === 'resize') session.resize(message.cols, message.rows, client)
           else if (message.type === 'focus') session.claim(client)

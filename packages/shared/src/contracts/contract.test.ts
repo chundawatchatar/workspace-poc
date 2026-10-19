@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { z } from 'zod'
-import { buildRequest, buildSocketUrl, defineSocket, type Endpoint } from './contract'
+import { buildRequest, buildSocketUrl, defineSocket, type Endpoint, parseMessage } from './contract'
 
 const endpoint = (method: Endpoint['method']): Endpoint => ({
   method,
@@ -31,7 +31,18 @@ describe('buildSocketUrl', () => {
       path: '/ws/term/:id',
       description: 'test',
       input: z.object({ id: z.string(), cols: z.number() }),
+      clientMessage: z.object({}),
     })
     expect(buildSocketUrl(socket, { id: 't1', cols: 80 })).toBe('/ws/term/t1?cols=80')
+  })
+})
+
+describe('parseMessage', () => {
+  test('returns the typed message, or null for bad JSON, a wrong shape or a binary frame', () => {
+    const schema = z.object({ type: z.literal('resize'), cols: z.number().int().min(2) })
+    expect(parseMessage(schema, '{"type":"resize","cols":80}')).toEqual({ type: 'resize', cols: 80 })
+    expect(parseMessage(schema, 'not json')).toBeNull()
+    expect(parseMessage(schema, '{"type":"resize","cols":-1}')).toBeNull()
+    expect(parseMessage(schema, new ArrayBuffer(4))).toBeNull()
   })
 })
