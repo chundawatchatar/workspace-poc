@@ -1,5 +1,6 @@
 import { upgradeWebSocket } from '@hono/bun'
 import { routes, type TermClientMsg } from '@orch/shared'
+import type { ServerWebSocket } from 'bun'
 import { type Context, Hono } from 'hono'
 import { z } from 'zod'
 import type { SessionManager, TermClient } from './terminals.service'
@@ -25,11 +26,15 @@ export function createTerminalSocket(sessions: SessionManager) {
       let client: TermClient | null = null
       return {
         onOpen(_event, ws) {
+          const raw = ws.raw as ServerWebSocket
           client = {
             ready: false,
             queue: [],
+            queued: 0,
+            stale: false,
             want: null,
-            send: (data) => ws.send(data as string | Uint8Array<ArrayBuffer>),
+            send: (data) => raw.send(data),
+            buffered: () => raw.getBufferedAmount(),
           }
           sessions.ensure(id, cwd, cols, rows).attach(client)
         },

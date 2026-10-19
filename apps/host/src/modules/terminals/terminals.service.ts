@@ -6,15 +6,47 @@ import { Terminal } from '@xterm/headless'
 
 /** One attached browser terminal. Output is held back until its snapshot is sent. */
 export interface TermClient {
-  send(data: string | Uint8Array): void
+  /** Bun's result: bytes sent, -1 when buffered under backpressure, 0 when the message was dropped. */
+  send(data: string | Uint8Array): number
+  /** Bytes the socket has accepted but not yet handed to the network. */
+  buffered(): number
   ready: boolean
   queue: Uint8Array[]
+  /** Bytes in `queue`. */
+  queued: number
+  /** It fell behind and skips output until a fresh snapshot brings it back up to date. */
+  stale: boolean
   /** The size this view last asked for. */
   want: { cols: number; rows: number } | null
 }
 
 const SHELL = process.env.SHELL || '/bin/zsh'
 const encoder = new TextEncoder()
+
+/** A client this far behind stops getting output, and is resynced once it drains below `CAUGHT_UP`. */
+const BEHIND = 1024 * 1024
+const CAUGHT_UP = 128 * 1024
+
+/**
+ * Sends one chunk of output to a client, or queues it until its snapshot is
+ * sent. A client that falls behind is marked stale instead of buffering
+ * without limit: only the current screen matters, so it skips the backlog and
+ * gets a new snapshot later.
+ */
+export function deliver(client: TermClient, data: Uint8Array) {
+  if (client.stale) return
+  if (!client.ready) {
+    client.queue.push(data)
+    client.queued += data.byteLength
+    if (client.queued > BEHIND) {
+      client.queue = []
+      client.queued = 0
+      client.stale = true
+    }
+    return
+  }
+  if (client.buffered() > BEHIND || client.send(data) === 0) client.stale = true
+}
 
 function usableCwd(cwd: string): string {
   try {
@@ -38,6 +70,8 @@ export class Session {
   private readonly term: Terminal
   private readonly serializer = new SerializeAddon()
   private proc: Bun.Subprocess | null = null
+  /** Runs while a client is stale, to resync it once it has caught up. */
+  private resyncTimer: ReturnType<typeof setInterval> | null = null
   /** The view whose size the session follows: the one last typed in or focused. */
   private controller: TermClient | null = null
   private cols: number
@@ -109,16 +143,42 @@ export class Session {
     })
   }
 
+  // Bun's PTY can't pause reading, so a flood of output is never slowed at the
+  // source. Clients that can't keep up skip it instead (see `deliver`).
   private output(data: Uint8Array) {
     this.term.write(data)
-    for (const client of this.clients) {
-      if (client.ready) client.send(data)
-      else client.queue.push(data)
+    for (const client of this.clients) deliver(client, data)
+    if (this.resyncTimer === null && [...this.clients].some((client) => client.stale)) {
+      this.resyncTimer = setInterval(() => this.resyncCaughtUp(), 100)
     }
+  }
+
+  private resyncCaughtUp() {
+    let waiting = false
+    for (const client of this.clients) {
+      if (!client.stale) continue
+      if (client.ready && client.buffered() < CAUGHT_UP) this.sync(client)
+      else waiting = true
+    }
+    if (!waiting) this.stopResync()
+  }
+
+  private stopResync() {
+    if (this.resyncTimer !== null) clearInterval(this.resyncTimer)
+    this.resyncTimer = null
   }
 
   attach(client: TermClient) {
     this.clients.add(client)
+    this.sync(client)
+  }
+
+  /** Sends the client the current screen, followed by any output that arrives meanwhile. */
+  private sync(client: TermClient) {
+    client.ready = false
+    client.stale = false
+    client.queue = []
+    client.queued = 0
     // The empty write is a marker: its callback runs once everything received
     // before it has been applied, so the snapshot and the queued output that
     // follows line up with nothing lost or repeated.
@@ -131,8 +191,10 @@ export class Session {
         rows: this.rows,
       }
       client.send(JSON.stringify(snapshot))
+      // A client whose queue overflowed stays stale and is resynced again.
       for (const chunk of client.queue) client.send(chunk)
       client.queue = []
+      client.queued = 0
       client.ready = true
     })
   }
@@ -193,6 +255,7 @@ export class Session {
   }
 
   kill() {
+    this.stopResync()
     const proc = this.proc
     this.proc = null
     this.alive = false
