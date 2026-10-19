@@ -262,9 +262,9 @@ function WorkspaceRow(props: { workspace: Workspace; index: number; active: bool
         {git?.branch && (
           <>
             <GitBranch size={10} className="shrink-0" />
-            <span className="max-w-24 truncate">{git.branch}</span>
-            {git.changes > 0 && <span>· {git.changes} changed</span>}
-            <span>·</span>
+            <span className="max-w-24 shrink-0 truncate">{git.branch}</span>
+            {git.changes > 0 && <span className="shrink-0 whitespace-nowrap">· {git.changes} changed</span>}
+            <span className="shrink-0">·</span>
           </>
         )}
         <span className="min-w-0 truncate" title={workspace.cwd}>
