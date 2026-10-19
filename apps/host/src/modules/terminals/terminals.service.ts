@@ -3,6 +3,7 @@ import { homedir } from 'node:os'
 import type { SessionInfo, TermServerMsg } from '@orch/shared'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { Terminal } from '@xterm/headless'
+import { type Foreground, inspectShells } from './processes.service'
 
 /** One attached browser terminal. Output is held back until its snapshot is sent. */
 export interface TermClient {
@@ -83,6 +84,19 @@ export function deliver(client: TermClient, data: Uint8Array) {
   if (client.buffered() > BEHIND || client.send(data) === 0) client.stale = true
 }
 
+/**
+ * Reads an OSC 9;4 progress report (`4;<state>;<percent>`), first used by
+ * ConEmu and now by tools like Claude Code and Cargo. State 0 clears it, 2 is
+ * an error, and the rest (normal, indeterminate, paused) mean busy. Returns
+ * undefined for any other OSC 9 payload, which is a notification.
+ */
+export function parseProgress(data: string): SessionInfo['progress'] | undefined {
+  if (data !== '4' && !data.startsWith('4;')) return undefined
+  const state = data.split(';')[1] ?? '0'
+  if (state === '2') return 'error'
+  return state === '' || state === '0' ? null : 'busy'
+}
+
 function usableCwd(cwd: string): string {
   try {
     if (cwd && existsSync(cwd) && statSync(cwd).isDirectory()) return cwd
@@ -101,6 +115,10 @@ export class Session {
   title = 'Terminal'
   alive = false
   attention: SessionInfo['attention'] = null
+  process: SessionInfo['process'] = null
+  /** Where the foreground program, or the idle shell, last was. */
+  workingDir: string | null = null
+  progress: SessionInfo['progress'] = null
 
   private readonly term: Terminal
   private readonly serializer = new SerializeAddon()
@@ -131,7 +149,12 @@ export class Session {
     this.term.onBell(() => this.raise('Bell'))
     // Desktop-notification escape sequences that coding agents and scripts emit.
     this.term.parser.registerOscHandler(9, (data) => {
-      this.raise(data || 'Notification')
+      const progress = parseProgress(data)
+      if (progress === undefined) this.raise(data || 'Notification')
+      else if (progress !== this.progress) {
+        this.progress = progress
+        this.onChange(this)
+      }
       return true
     })
     this.term.parser.registerOscHandler(777, (data) => {
@@ -143,7 +166,46 @@ export class Session {
   }
 
   info(): SessionInfo {
-    return { id: this.id, title: this.title, alive: this.alive, attention: this.attention }
+    return {
+      id: this.id,
+      title: this.title,
+      alive: this.alive,
+      attention: this.attention,
+      process: this.process,
+      cwd: this.workingDir,
+      progress: this.progress,
+    }
+  }
+
+  /** The shell's pid, while it runs. */
+  get pid(): number | undefined {
+    return this.proc?.pid
+  }
+
+  /** Records what the shell is running, as last seen by `SessionManager.inspect`. */
+  observe(found: (Foreground & { cwd: string | null }) | undefined) {
+    const running = found?.busy ? found.process : null
+    const process: SessionInfo['process'] = running && {
+      pid: running.pid,
+      name: running.name,
+      command: running.command,
+      // Kept from the first sighting, so rounding in `ps` doesn't make it jitter.
+      startedAt:
+        this.process?.pid === running.pid
+          ? this.process.startedAt
+          : Math.round(Date.now() / 1000 - running.elapsed) * 1000,
+    }
+    // A program that exits without clearing its progress would leave the spinner running.
+    const progress = process ? this.progress : null
+    const workingDir = found?.cwd ?? this.workingDir
+    if (
+      JSON.stringify([process, workingDir, progress]) === JSON.stringify([this.process, this.workingDir, this.progress])
+    )
+      return
+    this.process = process
+    this.workingDir = workingDir
+    this.progress = progress
+    this.onChange(this)
   }
 
   private raise(message: string) {
@@ -173,6 +235,8 @@ export class Session {
       if (this.proc !== proc) return
       this.alive = false
       this.proc = null
+      this.process = null
+      this.progress = null
       this.output(encoder.encode(`\r\n\x1b[2m[process exited with code ${code} — press Enter to restart]\x1b[0m\r\n`))
       this.onChange(this)
     })
@@ -334,6 +398,16 @@ export class SessionManager {
       session.kill()
       this.sessions.delete(id)
       this.onGone(id)
+    }
+  }
+
+  /** Refreshes what every live shell is running. Sessions report a change through `onChange`. */
+  async inspect() {
+    const live = this.list().filter((session) => session.pid !== undefined)
+    if (live.length === 0) return
+    const found = await inspectShells(live.map((session) => session.pid as number))
+    for (const session of live) {
+      if (session.pid !== undefined) session.observe(found.get(session.pid))
     }
   }
 

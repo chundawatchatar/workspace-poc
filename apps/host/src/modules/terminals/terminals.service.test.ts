@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { deliver, shellEnv, type TermClient } from './terminals.service'
+import { deliver, parseProgress, shellEnv, type TermClient } from './terminals.service'
 
 /** A client whose socket reports `backlog` unsent bytes, recording what it was sent. */
 function setup({ ready = true, backlog = 0, result = 1 } = {}) {
@@ -69,4 +69,12 @@ describe('shellEnv', () => {
       TERM_PROGRAM: 'workspace-poc',
     })
   })
+})
+
+test('parseProgress turns OSC 9;4 into a spinner state and leaves other OSC 9 payloads as notifications', () => {
+  expect(parseProgress('4;3;')).toBe('busy')
+  expect(parseProgress('4;1;45')).toBe('busy')
+  expect(parseProgress('4;2;100')).toBe('error')
+  expect(parseProgress('4;0;')).toBeNull()
+  expect(parseProgress('Build finished')).toBeUndefined()
 })

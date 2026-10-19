@@ -26,11 +26,25 @@ const sessions = new SessionManager(
   (id) => hub.broadcast({ type: 'session.gone', id }),
 )
 
+// Polls what each terminal is running. A slow round is never overlapped by the next.
+let inspecting = false
+const inspector = setInterval(() => {
+  if (inspecting) return
+  inspecting = true
+  sessions
+    .inspect()
+    .catch((error) => console.error('inspecting terminals failed', error))
+    .finally(() => {
+      inspecting = false
+    })
+}, 2000)
+
 const app = createApp({ hub, layout, sessions, info })
 const server = Bun.serve({ hostname: '127.0.0.1', port: HOST_PORT, fetch: app.fetch, websocket })
 console.log(`host listening on http://${server.hostname}:${server.port}`)
 
 function shutdown() {
+  clearInterval(inspector)
   layout.flush()
   sessions.killAll()
   process.exit(0)

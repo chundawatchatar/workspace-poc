@@ -1,8 +1,10 @@
-import type { LayoutNode, PaneNode, SplitNode, Surface, SurfaceKind, Workspace } from '@orch/shared'
+import type { LayoutNode, PaneNode, SessionInfo, SplitNode, Surface, SurfaceKind, Workspace } from '@orch/shared'
 import {
+  CircleAlert,
   Columns2,
   GitPullRequest,
   KanbanSquare,
+  LoaderCircle,
   Maximize2,
   Minimize2,
   Plus,
@@ -87,6 +89,13 @@ const KIND_ICON: Record<SurfaceKind, ReactNode> = {
   terminal: <SquareTerminal size={13} />,
   pulls: <GitPullRequest size={13} />,
   issues: <KanbanSquare size={13} />,
+}
+
+/** A tab's icon: its kind, or the progress its program reports. */
+export function SurfaceIcon({ kind, progress }: { kind: SurfaceKind; progress?: SessionInfo['progress'] }) {
+  if (progress === 'busy') return <LoaderCircle size={13} className="animate-spin" aria-label="Working" />
+  if (progress === 'error') return <CircleAlert size={13} className="text-bad" aria-label="Failed" />
+  return KIND_ICON[kind]
 }
 
 function PaneView({ workspace, pane }: { workspace: Workspace; pane: PaneNode }) {
@@ -212,6 +221,7 @@ function PaneView({ workspace, pane }: { workspace: Workspace; pane: PaneNode })
                 surface.kind === 'terminal' ? tidyTitle(sessions[surface.id]?.title ?? surface.title) : surface.title
               }
               attention={Boolean(sessions[surface.id]?.attention)}
+              progress={sessions[surface.id]?.progress}
             />
           ))}
         </div>
@@ -280,10 +290,11 @@ function Tab(props: {
   title: string
   paneFocused: boolean
   attention: boolean
+  progress?: SessionInfo['progress']
   /** Shows where a dragged tab would be inserted relative to this one. */
   marker?: 'before' | 'after'
 }) {
-  const { workspace, pane, surface, title, paneFocused, attention, marker } = props
+  const { workspace, pane, surface, title, paneFocused, attention, progress, marker } = props
   const active = pane.activeSurfaceId === surface.id
   return (
     <div
@@ -309,7 +320,9 @@ function Tab(props: {
             : ''
       }`}
     >
-      <span className={active && paneFocused ? 'text-accent' : ''}>{KIND_ICON[surface.kind]}</span>
+      <span className={active && paneFocused ? 'text-accent' : ''}>
+        <SurfaceIcon kind={surface.kind} progress={progress} />
+      </span>
       <span className="min-w-0 flex-1 truncate">{title}</span>
       {attention && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />}
       <button

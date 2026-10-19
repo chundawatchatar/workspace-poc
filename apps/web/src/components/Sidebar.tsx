@@ -1,5 +1,5 @@
 import { type GitInfo, listPanes, routes, type SessionInfo, type Workspace } from '@orch/shared'
-import { GitBranch, Keyboard, Moon, Palette, Plus, Sun, X } from '@orch/ui/icons'
+import { ChevronRight, GitBranch, Keyboard, Moon, Palette, Plus, Sun, X } from '@orch/ui/icons'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
@@ -8,6 +8,7 @@ import { removeWorkspace, renameWorkspace } from '../lib/commands'
 import { LEADER_LABEL } from '../lib/shortcuts'
 import { SIDEBAR_WIDTH, setSidebarWidth, sidebarWidth } from '../lib/sidebarWidth'
 import { setOverlay, toggleThemeMode, useApp } from '../lib/store'
+import { SidebarTerminals, terminalIds, useCollapsed } from './SidebarTerminals'
 
 export function shortPath(path: string, home: string | undefined) {
   return home && path.startsWith(home) ? `~${path.slice(home.length)}` : path
@@ -178,7 +179,9 @@ function WorkspaceRow(props: { workspace: Workspace; index: number; active: bool
   const git = useGitInfo(workspace.cwd)
   const navigate = useNavigate()
   const [renaming, setRenaming] = useState(false)
+  const [collapsed, toggleCollapsed] = useCollapsed(workspace.id)
   const pending = pendingAttention(workspace, sessions)
+  const terminalCount = terminalIds(workspace).length
 
   function remove(event: React.MouseEvent) {
     event.preventDefault()
@@ -200,6 +203,20 @@ function WorkspaceRow(props: { workspace: Workspace; index: number; active: bool
       }`}
     >
       <div className="flex items-center gap-2">
+        <button
+          type="button"
+          aria-expanded={!collapsed}
+          aria-label={`${collapsed ? 'Show' : 'Hide'} terminals of ${workspace.name}`}
+          title={`${collapsed ? 'Show' : 'Hide'} terminals`}
+          className={`-ml-1 -mr-1.5 shrink-0 rounded p-0.5 ${active ? 'hover:bg-on-accent/20' : 'hover:bg-line'}`}
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            toggleCollapsed()
+          }}
+        >
+          <ChevronRight size={12} className={`transition-transform ${collapsed ? '' : 'rotate-90'}`} />
+        </button>
         {renaming ? (
           <input
             autoFocus
@@ -226,6 +243,11 @@ function WorkspaceRow(props: { workspace: Workspace; index: number; active: bool
             }}
           >
             {workspace.name}
+          </span>
+        )}
+        {collapsed && terminalCount > 0 && (
+          <span className={`text-[10px] ${active ? 'text-on-accent/60' : 'text-faint'}`} title="Terminals">
+            {terminalCount}
           </span>
         )}
         {pending.length > 0 && (
@@ -271,6 +293,8 @@ function WorkspaceRow(props: { workspace: Workspace; index: number; active: bool
           {shortPath(workspace.cwd, home)}
         </span>
       </div>
+
+      {!collapsed && <SidebarTerminals workspace={workspace} active={active} />}
     </Link>
   )
 }

@@ -13,12 +13,29 @@ export interface HostInfo {
   projectRoot: string
 }
 
+/** The program a terminal's shell is running in the foreground. */
+export interface ProcessInfo {
+  pid: number
+  /** The program's name, such as `claude` or `vim`. */
+  name: string
+  /** The full command line. Arguments can hold secrets, so show it only on request. */
+  command: string
+  /** When it started, in epoch milliseconds. */
+  startedAt: number
+}
+
 export interface SessionInfo {
   id: string
   title: string
   alive: boolean
   /** Set when the session rang the bell or sent a notification nobody has seen. */
   attention: { at: number; message: string } | null
+  /** Null while the shell waits at its prompt. */
+  process: ProcessInfo | null
+  /** The working directory of the foreground program, or of the shell when idle. */
+  cwd: string | null
+  /** What the program reports with the OSC 9;4 progress sequence. */
+  progress: 'busy' | 'error' | null
 }
 
 /** Host to client, on the events socket. */
