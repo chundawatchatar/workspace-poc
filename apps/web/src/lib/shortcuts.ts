@@ -40,6 +40,7 @@ export const SHORTCUT_ROWS: ShortcutRow[] = [
   { label: 'Toggle sidebar', leader: 'B', direct: '⌘B on Mac' },
   { label: 'Choose theme', leader: 'T' },
   { label: 'Show shortcuts', leader: '?' },
+  { label: 'Send Ctrl+B to the terminal', leader: 'Ctrl+B' },
 ]
 
 const ARROWS: Record<string, Direction> = {
@@ -47,6 +48,10 @@ const ARROWS: Record<string, Direction> = {
   ArrowRight: 'right',
   ArrowUp: 'up',
   ArrowDown: 'down',
+}
+
+function isLeader(event: KeyboardEvent) {
+  return event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey && event.code === 'KeyB'
 }
 
 function digit(event: KeyboardEvent): number | null {
@@ -207,14 +212,15 @@ export function useShortcuts(workspace: Workspace | undefined, goToWorkspace: (i
       }
       if (snapshot.leader) {
         if (['Shift', 'Control', 'Alt', 'Meta'].includes(event.key)) return
-        swallow(event)
         clearTimeout(leaderTimer)
         setLeader(false)
+        // The leader twice lets the key through, so the terminal sends Ctrl+B itself, as in tmux.
+        if (isLeader(event)) return
+        swallow(event)
         if (event.key !== 'Escape') afterLeader(event)
         return
       }
-      const leader = event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey && event.code === 'KeyB'
-      if (leader) {
+      if (isLeader(event)) {
         swallow(event)
         setLeader(true)
         clearTimeout(leaderTimer)

@@ -68,8 +68,8 @@ A free developer workspace that runs on the user's own machine or VM and is used
 | KEY-2 | Common cmux shortcuts work on macOS: `Cmd+D` to split, `Cmd+B` for the sidebar, `Cmd+P` for the palette. | Done |
 | KEY-3 | A command palette searches workspaces, open tabs and commands. | Done |
 | KEY-4 | The full list of shortcuts is available in the app. | Done |
-| KEY-5 | Shell keys such as `Ctrl+C`, `Ctrl+P` and `Ctrl+R` always reach the terminal. The exception is `Ctrl+B`, which the product uses as its leader key, so readline, vim and tmux inside a terminal do not receive it. | Partly |
-| KEY-6 | Pressing the leader key twice (`Ctrl+B Ctrl+B`) sends `Ctrl+B` to the terminal, as in tmux. | Next |
+| KEY-5 | Shell keys such as `Ctrl+C`, `Ctrl+P` and `Ctrl+R` always reach the terminal. The exception is `Ctrl+B`, which the product uses as its leader key, so readline, vim and tmux inside a terminal receive it only when it is pressed twice (KEY-6). | Done |
+| KEY-6 | Pressing the leader key twice (`Ctrl+B Ctrl+B`) sends `Ctrl+B` to the terminal, as in tmux. | Done |
 
 ## Look and feel
 
