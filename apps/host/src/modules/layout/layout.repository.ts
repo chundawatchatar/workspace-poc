@@ -1,18 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
-import { type AppState, makePane, makeSurface, makeWorkspace, newId } from '@orch/shared'
+import { type AppState, makeWorkspace } from '@orch/shared'
 
 function seed(projectRoot: string): AppState {
-  // The first workspace shows a terminal beside the sample git and issue tabs.
-  const project = makeWorkspace(basename(projectRoot), projectRoot, {
-    type: 'split',
-    id: newId('split'),
-    direction: 'row',
-    ratio: 0.58,
-    a: makePane(),
-    b: makePane([makeSurface('pulls'), makeSurface('issues')]),
-  })
+  // The sample pull request and issue tabs are disabled for now, so the first workspace starts with a terminal only.
+  const project = makeWorkspace(basename(projectRoot), projectRoot)
   return { rev: 1, workspaces: [project, makeWorkspace('home', homedir())] }
 }
 

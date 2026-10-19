@@ -111,8 +111,9 @@ export function CommandPalette() {
       command('Split right', () => splitPane(current, pane().id, 'row'), 'Ctrl+Shift+D')
       command('Split down', () => splitPane(current, pane().id, 'column'), 'Ctrl+Shift+E')
       command('New terminal tab', () => addSurface(current, pane().id, 'terminal'), 'Ctrl+Shift+Enter')
-      command('New pull requests tab', () => addSurface(current, pane().id, 'pulls'))
-      command('New issues tab', () => addSurface(current, pane().id, 'issues'))
+      // Disabled for now while the app focuses on the terminal.
+      // command('New pull requests tab', () => addSurface(current, pane().id, 'pulls'))
+      // command('New issues tab', () => addSurface(current, pane().id, 'issues'))
       command('Close tab', () => closeSurface(current, pane().activeSurfaceId), 'Ctrl+Shift+X')
       command('Next tab', () => cycleSurface(current, 1), 'Ctrl+Shift+]')
       command('Previous tab', () => cycleSurface(current, -1), 'Ctrl+Shift+[')

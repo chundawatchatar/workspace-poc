@@ -222,12 +222,16 @@ function PaneView({ workspace, pane }: { workspace: Workspace; pane: PaneNode })
             </span>
           )}
           <AddMenu onAdd={(kind) => addSurface(workspace, pane.id, kind)} />
-          <IconButton label="Split right" onClick={() => splitPane(workspace, pane.id, 'row')}>
-            <Columns2 size={14} />
-          </IconButton>
-          <IconButton label="Split down" onClick={() => splitPane(workspace, pane.id, 'column')}>
-            <Rows2 size={14} />
-          </IconButton>
+          {!zoomed && (
+            <>
+              <IconButton label="Split right" onClick={() => splitPane(workspace, pane.id, 'row')}>
+                <Columns2 size={14} />
+              </IconButton>
+              <IconButton label="Split down" onClick={() => splitPane(workspace, pane.id, 'column')}>
+                <Rows2 size={14} />
+              </IconButton>
+            </>
+          )}
           <IconButton
             label={
               !zoomed
@@ -352,8 +356,9 @@ function AddMenu({ onAdd }: { onAdd: (kind: SurfaceKind) => void }) {
 
   const items: { kind: SurfaceKind; label: string }[] = [
     { kind: 'terminal', label: 'Terminal' },
-    { kind: 'pulls', label: 'Pull requests' },
-    { kind: 'issues', label: 'Issues' },
+    // Disabled for now while the app focuses on the terminal.
+    // { kind: 'pulls', label: 'Pull requests' },
+    // { kind: 'issues', label: 'Issues' },
   ]
 
   return (

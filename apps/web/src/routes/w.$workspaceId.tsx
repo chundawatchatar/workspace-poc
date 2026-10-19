@@ -1,11 +1,11 @@
 import type { Workspace } from '@orch/shared'
-import { Bell, Columns2, PanelLeft, Rows2 } from '@orch/ui/icons'
+import { Bell, PanelLeft } from '@orch/ui/icons'
 import { createFileRoute, Navigate, useNavigate } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 import { HostStatus } from '../components/HostStatus'
 import { LayoutView } from '../components/LayoutView'
 import { pendingAttention, shortPath } from '../components/Sidebar'
-import { currentPane, revealSurface, splitPane } from '../lib/commands'
+import { revealSurface } from '../lib/commands'
 import { toggleSidebar, useApp } from '../lib/store'
 
 export const Route = createFileRoute('/w/$workspaceId')({ component: WorkspacePage })
@@ -51,24 +51,6 @@ function Header({ workspace }: { workspace: Workspace }) {
       <span className="text-[13px] font-semibold">{workspace.name}</span>
       <span className="min-w-0 truncate font-mono text-xs text-faint">{shortPath(workspace.cwd, home)}</span>
       <div className="ml-auto flex items-center gap-0.5">
-        <button
-          type="button"
-          title="Split right"
-          aria-label="Split right"
-          className={button}
-          onClick={() => splitPane(workspace, currentPane(workspace).id, 'row')}
-        >
-          <Columns2 size={15} />
-        </button>
-        <button
-          type="button"
-          title="Split down"
-          aria-label="Split down"
-          className={button}
-          onClick={() => splitPane(workspace, currentPane(workspace).id, 'column')}
-        >
-          <Rows2 size={15} />
-        </button>
         <Notifications />
       </div>
     </header>
