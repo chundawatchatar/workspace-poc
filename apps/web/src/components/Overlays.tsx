@@ -1,8 +1,9 @@
 import { routes } from '@orch/shared'
 import { Modal } from '@orch/ui'
+import { useMutation } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
-import { callApi } from '../lib/api'
+import { apiMutation } from '../lib/api'
 import { addWorkspace } from '../lib/commands'
 import { LEADER_LABEL, SHORTCUT_ROWS } from '../lib/shortcuts'
 import { setOverlay, useApp } from '../lib/store'
@@ -53,12 +54,14 @@ function NewWorkspace() {
   const [name, setName] = useState('')
   const [path, setPath] = useState('~')
   const [error, setError] = useState<string | null>(null)
+  const resolveDir = useMutation(apiMutation(routes.fs.resolveDir))
 
   async function create(event: React.FormEvent) {
     event.preventDefault()
+    if (resolveDir.isPending) return
     setError(null)
     try {
-      const { path: resolved } = await callApi(routes.fs.resolveDir, { path: path.trim() })
+      const { path: resolved } = await resolveDir.mutateAsync({ path: path.trim() })
       if (!resolved) {
         setError('That folder does not exist on the host. Use an absolute path or one starting with ~.')
         return
@@ -106,7 +109,11 @@ function NewWorkspace() {
           >
             Cancel
           </button>
-          <button type="submit" className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-on-accent">
+          <button
+            type="submit"
+            disabled={resolveDir.isPending}
+            className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-on-accent disabled:opacity-60"
+          >
             Create workspace
           </button>
         </div>

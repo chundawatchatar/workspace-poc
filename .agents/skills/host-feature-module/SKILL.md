@@ -49,7 +49,7 @@ Add only the files a feature needs. `system` has just routes, and `events` has n
   - HTTP: `defineContract({...})` entries with method, the **full path** (`/api/<feature>/<action>`, kebab-case, `:id` for params) and description, plus Zod schemas named `<op>Query`/`<op>Body`/`<op>Response` and exported `z.infer` types. `createRouter(routes.<feature>, …)` won't compile until every operation has a handler, and it rejects invalid input with a 400.
   - WebSocket: `defineSocket({ path: '/ws/…', description, input })`, where `input` is the URL's params and query. The `.ws.ts` validates it the same way (see `terminals.ws.ts`). Message types stay in `protocol.ts`, and the socket's doc comment names them.
 - GET input comes from the query string, so fields are strings: use `z.coerce`. Use POST for anything that changes state.
-- Clients call endpoints only through `callApi(routes.git.status, { cwd })`, and open sockets with `` `${HOST_WS}${buildSocketUrl(routes.sockets.terminal, {...})}` `` (this also works in `@orch/ui`). No hand-written URLs, and no casting JSON.
+- In React components, call endpoints through TanStack Query with the helpers in `apps/web/src/lib/api.ts`: `useQuery(apiQuery(routes.git.status, { cwd }))` for reads, `useMutation(apiMutation(routes.<feature>.<op>))` for actions. Outside React, use `callApi(routes.git.status, { cwd })`. All three parse the response with the contract's output schema. Open sockets with `` `${HOST_WS}${buildSocketUrl(routes.sockets.terminal, {...})}` `` (this also works in `@orch/ui`). No hand-written URLs, and no casting JSON.
 - `lib/` is for infrastructure shared by every module. Feature logic never goes there.
 
 ## Adding an endpoint
@@ -57,6 +57,6 @@ Add only the files a feature needs. `system` has just routes, and `events` has n
 1. Schema + contract entry in `packages/shared/src/contracts/<feature>.ts`. A new feature file also gets an entry in the `routes` registry in `contracts/index.ts`, plus exports for the schemas and types clients need.
 2. Logic in `modules/<feature>/<feature>.service.ts`.
 3. Handler line in `<feature>.routes.ts`. A new module is mounted in `app.ts` with `app.route('/api', <feature>Routes)`.
-4. Call it from the web app with `callApi(routes.<feature>.<op>, input)`.
+4. Call it from the web app with `apiQuery`/`apiMutation` (or `callApi` outside React).
 5. Tests (follow the `write-tests` skill): service behavior in `<feature>.service.test.ts`. Don't re-test validation, params or 400s per endpoint, since `lib/createRouter.test.ts` covers them once.
 6. `bun test` and `bun run typecheck`. Changing a contract is a protocol change, and the typecheck shows every caller and handler to update. The `bun --watch` dev host restarts on save, which ends open shells.

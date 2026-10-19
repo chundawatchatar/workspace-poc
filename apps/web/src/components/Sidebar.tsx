@@ -1,8 +1,9 @@
 import { type GitInfo, listPanes, routes, type SessionInfo, type Workspace } from '@orch/shared'
 import { GitBranch, Keyboard, Moon, Palette, Plus, Sun, X } from '@orch/ui/icons'
+import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
-import { callApi } from '../lib/api'
+import { apiQuery } from '../lib/api'
 import { removeWorkspace, renameWorkspace } from '../lib/commands'
 import { LEADER_LABEL } from '../lib/shortcuts'
 import { SIDEBAR_WIDTH, setSidebarWidth, sidebarWidth } from '../lib/sidebarWidth'
@@ -13,21 +14,8 @@ export function shortPath(path: string, home: string | undefined) {
 }
 
 function useGitInfo(cwd: string): GitInfo | null {
-  const [info, setInfo] = useState<GitInfo | null>(null)
-  useEffect(() => {
-    let cancelled = false
-    const load = () =>
-      callApi(routes.git.status, { cwd })
-        .then((next) => !cancelled && setInfo(next))
-        .catch(() => {})
-    load()
-    const timer = setInterval(load, 15_000)
-    return () => {
-      cancelled = true
-      clearInterval(timer)
-    }
-  }, [cwd])
-  return info
+  const { data } = useQuery({ ...apiQuery(routes.git.status, { cwd }), refetchInterval: 15_000 })
+  return data ?? null
 }
 
 /** Sessions in a workspace that are waiting to be looked at, newest first. */
