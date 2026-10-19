@@ -21,6 +21,41 @@ export interface TermClient {
 }
 
 const SHELL = process.env.SHELL || '/bin/zsh'
+
+/** Who the user is and how they read text. Everything else comes from their own shell configuration. */
+const KEPT_ENV = new Set([
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'TMPDIR',
+  'LANG',
+  'TZ',
+  'SSH_AUTH_SOCK',
+  'DISPLAY',
+  'WAYLAND_DISPLAY',
+  'XDG_RUNTIME_DIR',
+  '__CF_USER_TEXT_ENCODING',
+])
+
+/**
+ * The environment a new shell starts with. It leaves out whatever the host was
+ * launched from (a package script, an agent session, an editor terminal), so
+ * agents run in it behave as in the user's own terminal and inherit no tokens.
+ */
+export function shellEnv(env: Record<string, string | undefined>): Record<string, string> {
+  const kept: Record<string, string> = {}
+  for (const [key, value] of Object.entries(env)) {
+    if (value !== undefined && (KEPT_ENV.has(key) || key.startsWith('LC_'))) kept[key] = value
+  }
+  // `bun run` puts package binaries and its own `node` shim first.
+  const path = (env.PATH ?? '')
+    .split(':')
+    .filter((dir) => dir && !dir.includes('/node_modules/.bin') && !dir.includes('/bun-node-'))
+    .join(':')
+  if (path) kept.PATH = path
+  return { ...kept, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'workspace-poc' }
+}
 const encoder = new TextEncoder()
 
 /** A client this far behind stops getting output, and is resynced once it drains below `CAUGHT_UP`. */
@@ -125,7 +160,7 @@ export class Session {
   private spawn() {
     const proc = Bun.spawn([SHELL, '-l'], {
       cwd: usableCwd(this.cwd),
-      env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'workspace-poc' },
+      env: shellEnv(process.env),
       terminal: {
         cols: this.cols,
         rows: this.rows,

@@ -37,7 +37,7 @@ A free developer workspace that runs on the user's own machine or VM and is used
 | TERM-4 | With one terminal open in several windows, it takes the size of the window being used, and the other windows do not shrink it. | Done |
 | TERM-5 | A shell that exits can be restarted in the same tab with Enter. | Done |
 | TERM-6 | Tabs are named after what the shell reports, shortened to the current folder. | Done |
-| TERM-7 | Shells started by the product do not inherit settings from the terminal or agent session the product was launched from. | Next |
+| TERM-7 | Shells started by the product do not inherit settings from the terminal or agent session the product was launched from. | Done |
 | TERM-8 | Shells and agents survive a restart of the host. | Later |
 
 ## Notifications

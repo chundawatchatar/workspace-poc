@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { deliver, type TermClient } from './terminals.service'
+import { deliver, shellEnv, type TermClient } from './terminals.service'
 
 /** A client whose socket reports `backlog` unsent bytes, recording what it was sent. */
 function setup({ ready = true, backlog = 0, result = 1 } = {}) {
@@ -47,5 +47,26 @@ describe('deliver', () => {
     deliver(client, chunk(2 * 1024 * 1024))
     expect(client).toMatchObject({ queue: [], queued: 0, stale: true })
     expect(sent).toHaveLength(0)
+  })
+})
+
+describe('shellEnv', () => {
+  test('keeps identity and locale, drops what launched the host, and cleans PATH', () => {
+    const env = shellEnv({
+      HOME: '/Users/me',
+      LC_ALL: 'en_US.UTF-8',
+      CLAUDECODE: '1',
+      npm_lifecycle_event: 'dev',
+      GITHUB_TOKEN: 'secret',
+      PATH: '/repo/node_modules/.bin:/tmp/bun-node-abc:/opt/homebrew/bin:/usr/bin',
+    })
+    expect(env).toEqual({
+      HOME: '/Users/me',
+      LC_ALL: 'en_US.UTF-8',
+      PATH: '/opt/homebrew/bin:/usr/bin',
+      TERM: 'xterm-256color',
+      COLORTERM: 'truecolor',
+      TERM_PROGRAM: 'workspace-poc',
+    })
   })
 })
