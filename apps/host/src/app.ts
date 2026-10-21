@@ -1,22 +1,15 @@
-import { API_PREFIX, type HostInfo } from '@orch/shared'
+import { API_PREFIX } from '@orch/shared'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { localOrigin } from './lib/localOrigin'
-import type { EventHub } from './modules/events/events.service'
-import { createEventsSocket } from './modules/events/events.ws'
+import { createEventsSocket, type EventsSocketDeps } from './modules/events/events.ws'
 import { fsRoutes } from './modules/fs/fs.routes'
 import { gitRoutes } from './modules/git/git.routes'
-import type { LayoutRepository } from './modules/layout/layout.repository'
 import { systemRoutes } from './modules/system/system.routes'
-import type { SessionManager } from './modules/terminals/terminals.service'
 import { createTerminalSocket } from './modules/terminals/terminals.ws'
 
-export interface AppDeps {
-  hub: EventHub
-  layout: LayoutRepository
-  sessions: SessionManager
-  info: HostInfo
-}
+/** Everything the modules need, built once in `index.ts`. Add another module's deps with `&`. */
+export type AppDeps = EventsSocketDeps
 
 /** The host's HTTP and WebSocket routes. Each feature module is mounted here. */
 export function createApp(deps: AppDeps): Hono {

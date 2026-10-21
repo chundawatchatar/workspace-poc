@@ -5,7 +5,8 @@ import type { LayoutRepository } from '../layout/layout.repository'
 import type { SessionManager } from '../terminals/terminals.service'
 import type { EventClient, EventHub } from './events.service'
 
-interface Deps {
+/** What the events socket needs from the host. */
+export interface EventsSocketDeps {
   hub: EventHub
   layout: LayoutRepository
   sessions: SessionManager
@@ -21,14 +22,17 @@ function liveSessionIds(state: AppState) {
 }
 
 /** Serves `routes.sockets.events`. */
-export function createEventsSocket({ hub, layout, sessions, info }: Deps) {
+export function createEventsSocket({ hub, layout, sessions, info }: EventsSocketDeps) {
   return new Hono().get(
     routes.sockets.events.path,
     upgradeWebSocket(() => {
       let client: EventClient | null = null
       return {
         onOpen(_event, ws) {
-          client = { id: crypto.randomUUID(), send: (event) => ws.send(JSON.stringify(event)) }
+          client = {
+            id: crypto.randomUUID(),
+            send: (event) => ws.send(JSON.stringify(event)),
+          }
           hub.add(client)
           client.send({
             type: 'hello',
