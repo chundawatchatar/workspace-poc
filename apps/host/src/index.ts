@@ -40,7 +40,12 @@ const inspector = setInterval(() => {
 }, 2000)
 
 const app = createApp({ hub, layout, sessions, info })
-const server = Bun.serve({ hostname: '127.0.0.1', port: HOST_PORT, fetch: app.fetch, websocket })
+const server = Bun.serve({
+  hostname: '127.0.0.1',
+  port: HOST_PORT,
+  fetch: app.fetch,
+  websocket,
+})
 console.log(`host listening on http://${server.hostname}:${server.port}`)
 
 function shutdown() {
