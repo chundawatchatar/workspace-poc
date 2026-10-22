@@ -1,5 +1,16 @@
 import { describe, expect, test } from 'bun:test'
-import { deliver, parseProgress, shellEnv, shellProgram, type TermClient } from './core'
+import { SerializeAddon } from '@xterm/addon-serialize'
+import { Terminal } from '@xterm/headless'
+import {
+  deliver,
+  modesTail,
+  parseProgress,
+  scrollRegion,
+  scrollRegionTail,
+  shellEnv,
+  shellProgram,
+  type TermClient,
+} from './core'
 
 test('shellProgram uses a platform fallback only when the user has not selected a shell', () => {
   expect(shellProgram({}, 'linux')).toBe('/bin/sh')
@@ -83,4 +94,59 @@ test('parseProgress turns OSC 9;4 into a spinner state and leaves other OSC 9 pa
   expect(parseProgress('4;2;100')).toBe('error')
   expect(parseProgress('4;0;')).toBeNull()
   expect(parseProgress('Build finished')).toBeUndefined()
+})
+
+/** A headless terminal that mirrors what the daemon keeps for a session. */
+function screen() {
+  const term = new Terminal({ cols: 12, rows: 5, scrollback: 100, allowProposedApi: true })
+  const serializer = new SerializeAddon()
+  term.loadAddon(serializer)
+  return { term, serializer }
+}
+const settle = (term: Terminal) => new Promise<void>((done) => term.write('', () => done()))
+function rows(term: Terminal): string {
+  const buffer = term.buffer.active
+  return Array.from({ length: term.rows }, (_, i) =>
+    (buffer.getLine(buffer.viewportY + i)?.translateToString(true) ?? '').trimEnd(),
+  ).join('\n')
+}
+
+test('scrollRegion reads DECSTBM bounds and ignores a sequence xterm would', () => {
+  expect(scrollRegion([2, 4], 24)).toEqual({ top: 1, bottom: 3 })
+  expect(scrollRegion([0], 24)).toEqual({ top: 0, bottom: 23 })
+  expect(scrollRegion([2, 0], 24)).toEqual({ top: 1, bottom: 23 })
+  expect(scrollRegion([2, 2], 24)).toBeNull()
+})
+
+test('modesTail restores the mouse encoding and alternate scroll the serializer drops', () => {
+  const modes = new Map([
+    [1006, true],
+    [1007, true],
+    [1005, false],
+  ])
+  expect(modesTail(modes)).toBe('\x1b[?1006h\x1b[?1007h\x1b[?1005l')
+})
+
+/**
+ * A full-screen program paints a status line outside a scrolling region and then
+ * scrolls inside it. xterm's serialize addon drops the region, so without the
+ * tail a restored terminal scrolls the whole screen instead.
+ */
+test('scrollRegionTail keeps a scrolling region a serialized snapshot drops', async () => {
+  const original = screen()
+  original.term.write('\x1b[1;1HTOP\x1b[5;1HBOT\x1b[2;4r\x1b[4;1Hone\r\ntwo\r\nthree\r\nfour\r\nfive')
+  await settle(original.term)
+
+  const restored = screen()
+  restored.term.write(original.serializer.serialize() + scrollRegionTail(original.term, { top: 1, bottom: 3 }))
+  await settle(restored.term)
+
+  original.term.write('\r\nsix')
+  restored.term.write('\r\nsix')
+  await settle(original.term)
+  await settle(restored.term)
+
+  expect(rows(restored.term)).toBe(rows(original.term))
+  expect(rows(restored.term).split('\n')[0]).toBe('TOP')
+  expect(rows(restored.term).split('\n')[4]).toBe('BOT')
 })

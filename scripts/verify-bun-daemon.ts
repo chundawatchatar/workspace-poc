@@ -87,28 +87,12 @@ const isSnapshot = (frame: AnyFrame) =>
   frame.kind === 'control' && (frame.value as { type?: string }).type === 'snapshot'
 const outputHas = (needle: string) => (frame: AnyFrame) => 'bytes' in frame && Buffer.from(frame.bytes).includes(needle)
 
-const child = Bun.spawn(
-  [
-    process.execPath,
-    daemonScript,
-    '--socket',
-    socketPath,
-    '--id',
-    id,
-    '--cols',
-    '100',
-    '--rows',
-    '30',
-    '--cwd',
-    runtime,
-    '--shell',
-    shell,
-  ],
-  { env: { ...process.env, ORCH_PTY_TOKEN: token }, stdio: ['ignore', 'inherit', 'inherit'] },
-)
+const child = Bun.spawn([process.execPath, daemonScript, '--socket', socketPath, '--shell', shell], {
+  stdio: ['ignore', 'inherit', 'inherit'],
+})
 
 async function hello(client: Client) {
-  client.send({ type: 'hello', protocol: DAEMON_PROTOCOL, id, token })
+  client.send({ type: 'hello', protocol: DAEMON_PROTOCOL, id, token, cwd: runtime, cols: 100, rows: 30 })
   const snapshot = await client.wait(isSnapshot)
   if (!isSnapshot(snapshot)) fail('first frame was not a snapshot')
   return snapshot
@@ -156,16 +140,21 @@ try {
   const size = (status.value as { status?: { cols?: number; rows?: number } }).status
   if (size?.cols !== 120 || size.rows !== 40) fail(`resize not applied: ${JSON.stringify(size)}`)
 
-  // 5. Close ends the shell and the daemon says so.
+  // 5. Close ends the session but not the daemon; the daemon stops only when asked.
   second.send({ type: 'close' })
   await second.wait((frame) => frame.kind === 'control' && (frame.value as { type?: string }).type === 'closed')
+  const stopper = await Client.connect()
+  stopper.send({ type: 'stop' })
   const exited = await child.exited
   if (exited !== 0) fail(`daemon exited with code ${exited}`)
 
-  console.log('PASS: Bun daemon handshake, binary output, reconnect persistence, resize and close')
+  console.log('PASS: shared daemon handshake, binary output, reconnect persistence, resize, close and stop')
 } catch (error) {
   fail(error instanceof Error ? error.message : String(error))
 } finally {
   child.kill()
   rmSync(runtime, { recursive: true, force: true })
 }
+
+// The client sockets may still be closing; exit without waiting on them.
+process.exit(0)

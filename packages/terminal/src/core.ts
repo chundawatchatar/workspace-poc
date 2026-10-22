@@ -95,6 +95,47 @@ const BEHIND = 1024 * 1024
 export const CAUGHT_UP = 128 * 1024
 
 /**
+ * Private modes xterm's serialize addon does not restore. Mouse encoding and
+ * alternate scroll are the ones a full-screen agent needs: without them the
+ * browser sends wheel events in the wrong format, or not at all.
+ */
+export const TRACKED_MODES = new Set([25, 1005, 1006, 1007])
+
+/** The tracked private modes as `CSI ? n h`/`l`, to append to a serialized snapshot. */
+export function modesTail(modes: ReadonlyMap<number, boolean>): string {
+  let out = ''
+  for (const [code, on] of modes) out += `\x1b[?${code}${on ? 'h' : 'l'}`
+  return out
+}
+
+/**
+ * A DECSTBM sequence (`CSI Pt ; Pb r`) as a 0-based scrolling region, or null
+ * when the bounds are invalid and xterm would ignore the sequence. A missing or
+ * zero bound means the default: the first and last row.
+ */
+export function scrollRegion(params: (number | number[])[], rows: number): { top: number; bottom: number } | null {
+  const first = typeof params[0] === 'number' && params[0] > 0 ? params[0] : 1
+  const last = typeof params[1] === 'number' && params[1] > 0 ? params[1] : rows
+  return first < last ? { top: first - 1, bottom: last - 1 } : null
+}
+
+/**
+ * The state a reconnecting view needs but the serialize addon does not restore:
+ * the scrolling region, and the cursor it moves when the region is set. Returns
+ * escape sequences to append to a serialized snapshot.
+ */
+export function scrollRegionTail(term: Terminal, region: { top: number; bottom: number } | null): string {
+  const rows = term.rows
+  const top = region ? Math.max(0, Math.min(region.top, rows - 1)) : 0
+  const bottom = region ? Math.max(top, Math.min(region.bottom, rows - 1)) : rows - 1
+  const active = term.buffer.active
+  const origin = term.modes.originMode
+  const restored = top !== 0 || bottom !== rows - 1 ? `\x1b[${top + 1};${bottom + 1}r` : ''
+  const row = origin ? Math.max(0, active.cursorY - top) : active.cursorY
+  return `${restored}\x1b[${row + 1};${active.cursorX + 1}H`
+}
+
+/**
  * Sends one chunk of output to a client, or queues it until its snapshot is
  * sent. A client that falls behind is marked stale instead of buffering
  * without limit: only the current screen matters, so it skips the backlog and
@@ -155,6 +196,10 @@ export class TerminalCore {
   private proc: Bun.Subprocess | null = null
   private cols: number
   private rows: number
+  /** The scrolling region, which xterm resets on resize and the serialize addon does not restore. */
+  private region: { top: number; bottom: number } | null = null
+  /** The private modes from `TRACKED_MODES` the program has set or reset. */
+  private readonly modes = new Map<number, boolean>()
 
   constructor(
     readonly id: string,
@@ -190,6 +235,29 @@ export class TerminalCore {
       this.raise([title, body].filter(Boolean).join(': ') || 'Notification')
       return true
     })
+    // Full-screen programs scroll a fixed region and keep a status line outside it. xterm's serialize
+    // addon drops the region, so a reconnecting view would scroll the whole screen. Track it to re-apply.
+    this.term.parser.registerCsiHandler({ final: 'r' }, (params) => {
+      const region = scrollRegion(params, this.rows)
+      if (region) this.region = region
+      return false
+    })
+    this.term.parser.registerCsiHandler({ prefix: '?', final: 'h' }, (params) => {
+      for (const code of params) if (typeof code === 'number' && TRACKED_MODES.has(code)) this.modes.set(code, true)
+      return false
+    })
+    this.term.parser.registerCsiHandler({ prefix: '?', final: 'l' }, (params) => {
+      for (const code of params) if (typeof code === 'number' && TRACKED_MODES.has(code)) this.modes.set(code, false)
+      return false
+    })
+    // A full reset (RIS, also sent when the shell restarts) and a soft reset (DECSTR) drop the region and modes.
+    const reset = () => {
+      this.region = null
+      this.modes.clear()
+      return false
+    }
+    this.term.parser.registerEscHandler({ final: 'c' }, reset)
+    this.term.parser.registerCsiHandler({ intermediates: '!', final: 'p' }, reset)
     this.spawn()
   }
 
@@ -287,7 +355,9 @@ export class TerminalCore {
    */
   snapshot(): Promise<string> {
     return new Promise((done) => {
-      this.term.write('', () => done(this.serializer.serialize()))
+      this.term.write('', () =>
+        done(this.serializer.serialize() + modesTail(this.modes) + scrollRegionTail(this.term, this.region)),
+      )
     })
   }
 
@@ -310,6 +380,8 @@ export class TerminalCore {
     this.rows = rows
     this.term.resize(cols, rows)
     this.proc?.terminal?.resize(cols, rows)
+    // xterm resets the scrolling region on resize, so forget it until the program sets one again.
+    this.region = null
   }
 
   /**

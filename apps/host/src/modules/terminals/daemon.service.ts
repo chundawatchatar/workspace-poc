@@ -1,10 +1,10 @@
 import { spawn } from 'node:child_process'
-import { closeSync, existsSync, openSync } from 'node:fs'
+import { closeSync, openSync } from 'node:fs'
 import { createConnection, type Socket } from 'node:net'
-import { homedir } from 'node:os'
-import { resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { type AppState, listPanes, type SessionInfo, type TermColors, type TermServerMsg } from '@orch/shared'
 import {
+  DAEMON_PROTOCOL,
   DaemonDecoder,
   type DaemonFrame,
   daemonMessage,
@@ -48,10 +48,9 @@ export class DaemonSession implements TerminalSession {
     cols: number,
     rows: number,
     private readonly onChange: (session: TerminalSession) => void,
-    private readonly repository: DaemonRepository,
-    private readonly command: string[],
+    private readonly shared: SharedDaemon,
   ) {
-    this.record = repository.get(id)
+    this.record = shared.repository.get(id)
     this.size = { cols, rows }
     this.resync = setInterval(() => {
       if ([...this.clients].some((client) => client.stale && client.buffered() < 128 * 1024)) this.requestSnapshot()
@@ -128,8 +127,10 @@ export class DaemonSession implements TerminalSession {
     if (from.want) this.apply(from.want.cols, from.want.rows)
   }
 
+  /** The daemon answers with a snapshot of the cleared screen; views take it only while not ready. */
   clear() {
-    this.send({ type: 'clear' })
+    if (!this.send({ type: 'clear' })) return
+    for (const client of this.clients) client.ready = false
   }
 
   ack() {
@@ -198,7 +199,8 @@ export class DaemonSession implements TerminalSession {
     }
     const message = daemonMessage.parse(frame.value)
     if (message.type === 'closed') {
-      if (!this.status || !this.closing) throw new Error('Unexpected daemon close acknowledgement')
+      // A session the daemon no longer has is acknowledged before any status.
+      if (!this.closing) throw new Error('Unexpected daemon close acknowledgement')
       this.closeAcknowledged = true
       return
     }
@@ -256,21 +258,9 @@ export class DaemonSession implements TerminalSession {
         const code = (error as NodeJS.ErrnoException).code
         if (!allowLaunch || this.closing || !['ENOENT', 'ECONNREFUSED'].includes(code ?? '')) throw error
         if (this.stopped) return
-        this.launch()
-        let connected = false
-        for (let attempt = 0; attempt < 100 && !this.stopped; attempt++) {
-          await Bun.sleep(50)
-          try {
-            await this.open()
-            connected = true
-            break
-          } catch (error) {
-            const code = (error as NodeJS.ErrnoException).code
-            if (!['ENOENT', 'ECONNREFUSED'].includes(code ?? '')) throw error
-          }
-        }
-        if (!connected && !this.stopped)
-          throw new Error('Terminal daemon did not start; inspect its log in the runtime folder')
+        await this.shared.ensureStarted()
+        if (this.stopped) return
+        await this.open()
       }
     } catch (error) {
       if (this.stopped) return
@@ -282,7 +272,7 @@ export class DaemonSession implements TerminalSession {
       if (this.closing) {
         // A refused socket means there is no owner to close; identity failures keep their record for diagnosis.
         if (['ENOENT', 'ECONNREFUSED'].includes((error as NodeJS.ErrnoException).code ?? ''))
-          this.repository.remove(this.id)
+          this.shared.repository.remove(this.id)
       } else this.scheduleRetry()
     } finally {
       this.connecting = false
@@ -291,7 +281,7 @@ export class DaemonSession implements TerminalSession {
 
   private open(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const socket = createConnection(this.record.socket)
+      const socket = createConnection(this.shared.repository.socket)
       const decoder = new DaemonDecoder()
       let verified = false
       const deadline = setTimeout(() => socket.destroy(new Error('Terminal daemon handshake timed out')), 3000)
@@ -302,7 +292,17 @@ export class DaemonSession implements TerminalSession {
         this.snapshotPending = true
         // Views missed whatever was written while disconnected, so all of them take this connection's snapshot.
         for (const client of this.clients) client.ready = false
-        this.send({ type: 'hello', protocol: this.record.protocol, id: this.id, token: this.record.token })
+        this.send({
+          type: 'hello',
+          protocol: DAEMON_PROTOCOL,
+          id: this.id,
+          token: this.record.token,
+          cwd: this.cwd,
+          cols: this.size.cols,
+          rows: this.size.rows,
+          // Closing must not start a shell the daemon has already lost.
+          create: !this.closing,
+        })
       })
       socket.on('data', (chunk: Buffer) => {
         if (this.stopped || this.socket !== socket) return
@@ -327,7 +327,7 @@ export class DaemonSession implements TerminalSession {
         if (this.socket === socket) this.socket = null
         this.snapshotPending = false
         if (!verified) reject(new Error('Terminal daemon closed before authentication'))
-        if (this.closing && this.closeAcknowledged) this.repository.remove(this.id)
+        if (this.closing && this.closeAcknowledged) this.shared.repository.remove(this.id)
         if (verified && !this.stopped && !this.closing) this.scheduleRetry()
       })
     })
@@ -336,40 +336,6 @@ export class DaemonSession implements TerminalSession {
   private scheduleRetry() {
     clearTimeout(this.retry)
     this.retry = setTimeout(() => void this.connect(), 1000)
-  }
-
-  private launch() {
-    const log = openSync(this.record.socket.replace(/\.sock$/, '.log'), 'a', 0o600)
-    try {
-      const [program, ...prefix] = this.command
-      const child = spawn(
-        program,
-        [
-          ...prefix,
-          '--socket',
-          this.record.socket,
-          '--id',
-          this.id,
-          '--cols',
-          String(this.size.cols),
-          '--rows',
-          String(this.size.rows),
-          '--cwd',
-          existsSync(this.cwd) ? this.cwd : homedir(),
-          '--shell',
-          shellProgram(),
-        ],
-        {
-          detached: true,
-          stdio: ['ignore', log, log],
-          env: { ...shellEnv(process.env), ORCH_PTY_TOKEN: this.record.token },
-        },
-      )
-      child.on('error', (error) => console.error('launching terminal daemon failed', error))
-      child.unref()
-    } finally {
-      closeSync(log)
-    }
   }
 }
 
@@ -382,14 +348,20 @@ export function closeDaemon(
   record: DaemonRecord,
 ): Promise<'closed' | 'stale' | 'failed'> {
   return new Promise((done) => {
-    const socket = createConnection(record.socket)
+    const socket = createConnection(repository.socket)
     const decoder = new DaemonDecoder()
     let verified = false
     let result: 'closed' | 'stale' | 'failed' = 'failed'
     const deadline = setTimeout(() => socket.destroy(new Error('Daemon close timed out')), 3000)
     socket.on('connect', () =>
       socket.write(
-        encodeControlFrame({ type: 'hello', protocol: record.protocol, id: record.id, token: record.token }),
+        encodeControlFrame({
+          type: 'hello',
+          protocol: DAEMON_PROTOCOL,
+          id: record.id,
+          token: record.token,
+          create: false,
+        }),
       ),
     )
     socket.on('data', (chunk: Buffer) => {
@@ -397,7 +369,7 @@ export function closeDaemon(
         for (const frame of decoder.push(chunk)) {
           if (frame.kind !== 'control') continue
           const message = daemonMessage.parse(frame.value)
-          if (verified) {
+          if (verified || message.type === 'closed') {
             if (message.type === 'closed') result = 'closed'
             continue
           }
@@ -447,20 +419,103 @@ export function restoreTerminals(
   return Promise.resolve()
 }
 
-/** Creates persistent Bun terminals with a private credentials directory. */
+/**
+ * One daemon for every terminal of this host. It owns each session's shell and
+ * screen so they outlive the host, while sharing one Bun runtime between them.
+ */
+export class SharedDaemon {
+  private starting: Promise<void> | null = null
+
+  constructor(
+    readonly repository: DaemonRepository,
+    private readonly command: string[],
+    private readonly shell: string,
+  ) {}
+
+  /**
+   * Starts the daemon if its socket is not answering. Concurrent callers share
+   * one attempt, and a daemon that has since exited is started again rather than
+   * trusted because it was up once.
+   */
+  async ensureStarted(): Promise<void> {
+    if (await this.ping()) return
+    if (!this.starting) {
+      this.starting = this.start().finally(() => {
+        this.starting = null
+      })
+    }
+    return this.starting
+  }
+
+  private async start() {
+    this.launch()
+    for (let attempt = 0; attempt < 100; attempt++) {
+      await Bun.sleep(50)
+      if (await this.ping()) return
+    }
+    throw new Error('Terminal daemon did not start; inspect its log in the runtime folder')
+  }
+
+  private async ping(): Promise<boolean> {
+    try {
+      const socket = await Bun.connect({ unix: this.repository.socket, socket: {} })
+      socket.end()
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  private launch() {
+    const log = openSync(join(this.repository.runtime, 'host.log'), 'a', 0o600)
+    try {
+      const [program, ...prefix] = this.command
+      const child = spawn(program, [...prefix, '--socket', this.repository.socket, '--shell', this.shell], {
+        detached: true,
+        stdio: ['ignore', log, log],
+        env: shellEnv(process.env),
+      })
+      child.on('error', (error) => console.error('launching terminal daemon failed', error))
+      child.unref()
+    } finally {
+      closeSync(log)
+    }
+  }
+}
+
+/** Asks the shared daemon to end every session and exit. Used by `terminals:stop`. */
+export function stopDaemon(repository: DaemonRepository): Promise<'stopped' | 'absent'> {
+  return new Promise((done) => {
+    const socket = createConnection(repository.socket)
+    socket.on('connect', () => {
+      socket.end(encodeControlFrame({ type: 'stop' }))
+      done('stopped')
+    })
+    socket.on('error', (error: NodeJS.ErrnoException) => {
+      done(['ENOENT', 'ECONNREFUSED'].includes(error.code ?? '') ? 'absent' : 'stopped')
+    })
+  })
+}
+
+/** Creates the one persistent daemon and the terminals that attach to it. */
 export function daemonFactory(hostRoot: string) {
   const repository = new DaemonRepository(hostRoot)
-  const command = [process.execPath, resolve(hostRoot, '../ptyd-bun/src/main.ts')]
+  const shared = new SharedDaemon(
+    repository,
+    [process.execPath, resolve(hostRoot, '../ptyd-bun/src/main.ts')],
+    shellProgram(),
+  )
   return {
     repository,
+    shared,
     create: (id: string, cwd: string, cols: number, rows: number, onChange: (session: TerminalSession) => void) =>
-      new DaemonSession(id, cwd, cols, rows, onChange, repository, command),
-    /** Ends daemons whose terminal is no longer in the layout. Call it only with a layout that loaded or was absent. */
+      new DaemonSession(id, cwd, cols, rows, onChange, shared),
+    /** Ends sessions whose terminal is no longer in the layout. Call it only with a layout that loaded or was absent. */
     reconcile: async (liveIds: Set<string>) => {
       const orphans = repository.list().filter((record) => !liveIds.has(record.id))
       const results = await Promise.all(orphans.map((record) => closeDaemon(repository, record)))
       const closed = results.filter((result) => result === 'closed').length
-      if (closed) console.log(`closed ${closed} terminal daemon(s) that are no longer in the layout`)
+      if (closed) console.log(`closed ${closed} terminal session(s) that are no longer in the layout`)
     },
   }
 }

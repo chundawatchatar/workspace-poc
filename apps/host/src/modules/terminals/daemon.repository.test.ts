@@ -16,7 +16,7 @@ test('retains credentials across host instances and never uses terminal ids as p
   roots.push(repository.runtime)
   const record = repository.get('../terminal/中文')
   expect(new DaemonRepository(root).get(record.id)).toEqual(record)
-  expect(Buffer.byteLength(record.socket)).toBeLessThanOrEqual(100)
+  expect(Buffer.byteLength(repository.socket)).toBeLessThanOrEqual(100)
   expect(repository.list()).toEqual([record])
   const folder = join(root, '.data', 'terminal-daemons')
   expect(JSON.parse(readFileSync(join(folder, readdirSync(folder).at(0) ?? ''), 'utf8'))).toEqual(record)

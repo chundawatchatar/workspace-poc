@@ -19,13 +19,13 @@ Then open http://127.0.0.1:3210. The host listens on 127.0.0.1:4599.
 To try terminals that survive a host restart, switch to the persistent backend:
 
 ```bash
-bun run terminals:backend bun      # one Bun daemon per terminal
+bun run terminals:backend bun      # one shared Bun daemon for every terminal
 bun run terminals:backend memory   # back to the default, in-process Bun PTY
 ```
 
-The `bun` backend runs a daemon per terminal, so closing or restarting the host
-leaves the shell running. See [terminal backends](docs/terminal-backends.md) for
-how it works.
+The `bun` backend runs one daemon (shared by every terminal), so closing or
+restarting the host leaves the shells running. See
+[terminal backends](docs/terminal-backends.md) for how it works.
 
 ## Layout
 
