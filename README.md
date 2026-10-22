@@ -16,13 +16,26 @@ bun run dev
 
 Then open http://127.0.0.1:3210. The host listens on 127.0.0.1:4599.
 
+To try terminals that survive a host restart, switch to the persistent backend:
+
+```bash
+bun run terminals:backend bun      # one Bun daemon per terminal
+bun run terminals:backend memory   # back to the default, in-process Bun PTY
+```
+
+The `bun` backend runs a daemon per terminal, so closing or restarting the host
+leaves the shell running. See [terminal backends](docs/terminal-backends.md) for
+how it works.
+
 ## Layout
 
 | Path | What it is |
 | --- | --- |
 | `apps/web` | The UI: TanStack Start, React, Tailwind, xterm.js |
-| `apps/host` | The host service: Bun and Hono. Owns the shells and the layout |
-| `packages/shared` | The layout model, its reducer, and the wire protocol |
+| `apps/host` | The host service: Bun and Hono. Owns the layout and talks to terminals |
+| `apps/ptyd-bun` | The Bun terminal daemon: owns the PTY and screen so shells outlive the host |
+| `packages/terminal` | The PTY, the mirrored screen, the in-process session, and the daemon wire protocol |
+| `packages/shared` | The layout model, its reducer, and the browser wire protocol |
 | `packages/ui` | Shared UI: themes, styles and store-free components (modal, theme picker, terminal) |
 
 ## What is real
@@ -58,7 +71,8 @@ Then open http://127.0.0.1:3210. The host listens on 127.0.0.1:4599.
 ## What is not
 
 - The Pull requests and Issues tabs show hard-coded sample data.
-- Restarting the host ends the shells; the layout is restored with new ones.
+- With the default `memory` backend, restarting the host ends the shells; the
+  layout is restored with new ones. Switch to `bun` for shells that survive.
 - The host has no sign-in. It binds to the loopback address and rejects
   requests from pages on other origins, which is enough for a local demo only.
 - Uses Bun's built-in pseudo-terminal support, so macOS and Linux only.

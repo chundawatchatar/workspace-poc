@@ -1,8 +1,8 @@
 import { upgradeWebSocket } from '@hono/bun'
 import { type AppState, type HostInfo, listSurfaces, parseMessage, routes } from '@orch/shared'
+import type { SessionManager } from '@orch/terminal'
 import { Hono } from 'hono'
 import type { LayoutRepository } from '../layout/layout.repository'
-import type { SessionManager } from '../terminals/terminals.service'
 import type { EventClient, EventHub } from './events.service'
 
 /** What the events socket needs from the host. */
@@ -46,9 +46,14 @@ export function createEventsSocket({ hub, layout, sessions, info }: EventsSocket
           const message = parseMessage(routes.sockets.events.clientMessage, event.data)
           if (!message || !client) return
           if (message.type === 'state') {
+            const previous = liveSessionIds(layout.state)
             layout.set(message.state)
             hub.broadcast({ type: 'state', state: layout.state }, client)
-            sessions.collect(liveSessionIds(layout.state))
+            const live = liveSessionIds(layout.state)
+            for (const id of previous) {
+              if (!live.has(id)) sessions.close(id)
+            }
+            sessions.collect(live)
           } else if (message.type === 'ack') {
             sessions.get(message.sessionId)?.ack()
           }

@@ -1,9 +1,9 @@
 import { existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import type { SessionInfo, TermServerMsg } from '@orch/shared'
+import type { SessionInfo, TermColors } from '@orch/shared'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { Terminal } from '@xterm/headless'
-import { type Foreground, inspectShells } from './processes.service'
+import type { Foreground } from './processes'
 
 /** One attached browser terminal. Output is held back until its snapshot is sent. */
 export interface TermClient {
@@ -21,7 +21,38 @@ export interface TermClient {
   want: { cols: number; rows: number } | null
 }
 
-const SHELL = process.env.SHELL || '/bin/zsh'
+/**
+ * A terminal that can be attached to views, inspected, and explicitly closed.
+ * Both backends implement it, so the host does not know who owns the shell.
+ */
+export interface TerminalSession {
+  readonly id: string
+  readonly createdAt: number
+  readonly pid: number | undefined
+  info(): SessionInfo
+  observe(found: (Foreground & { cwd: string | null }) | undefined): void
+  attach(client: TermClient): void
+  detach(client: TermClient): void
+  input(data: string, from: TermClient): void
+  resize(cols: number, rows: number, from: TermClient): void
+  claim(from: TermClient): void
+  clear(): void
+  ack(): void
+  /** The view's theme colours, for a backend that answers colour queries without a browser. */
+  colors(palette: TermColors): void
+  kill(): void
+  shutdown(): void
+}
+
+/** Selects the user's shell, with a default available on the current platform. */
+export function shellProgram(
+  env: Record<string, string | undefined> = process.env,
+  platform: NodeJS.Platform = process.platform,
+) {
+  return env.SHELL || (platform === 'darwin' ? '/bin/zsh' : '/bin/sh')
+}
+
+const SHELL = shellProgram()
 
 /** Who the user is and how they read text. Everything else comes from their own shell configuration. */
 const KEPT_ENV = new Set([
@@ -61,7 +92,7 @@ const encoder = new TextEncoder()
 
 /** A client this far behind stops getting output, and is resynced once it drains below `CAUGHT_UP`. */
 const BEHIND = 1024 * 1024
-const CAUGHT_UP = 128 * 1024
+export const CAUGHT_UP = 128 * 1024
 
 /**
  * Sends one chunk of output to a client, or queues it until its snapshot is
@@ -105,13 +136,12 @@ function usableCwd(cwd: string): string {
 }
 
 /**
- * A shell on a pseudo-terminal that outlives any browser connection. A
- * headless terminal mirrors the screen so a client attaching later gets the
- * current state instead of a replay of raw output.
+ * A shell on a pseudo-terminal and its mirrored screen, with no opinion about
+ * who is watching. The in-process backend fans `onOutput` out to browser views;
+ * the daemon backend forwards it over its socket. Both snapshot the same way.
  */
-export class Session {
+export class TerminalCore {
   readonly createdAt = Date.now()
-  readonly clients = new Set<TermClient>()
   title = 'Terminal'
   alive = false
   attention: SessionInfo['attention'] = null
@@ -123,10 +153,6 @@ export class Session {
   private readonly term: Terminal
   private readonly serializer = new SerializeAddon()
   private proc: Bun.Subprocess | null = null
-  /** Runs while a client is stale, to resync it once it has caught up. */
-  private resyncTimer: ReturnType<typeof setInterval> | null = null
-  /** The view whose size the session follows: the one last typed in or focused. */
-  private controller: TermClient | null = null
   private cols: number
   private rows: number
 
@@ -135,7 +161,9 @@ export class Session {
     private readonly cwd: string,
     cols: number,
     rows: number,
-    private readonly onChange: (session: Session) => void,
+    private readonly onOutput: (data: Uint8Array) => void,
+    private readonly onChange: () => void,
+    private readonly shell: string = SHELL,
   ) {
     this.cols = cols
     this.rows = rows
@@ -144,7 +172,7 @@ export class Session {
     this.term.onTitleChange((title) => {
       if (!title || title === this.title) return
       this.title = title
-      this.onChange(this)
+      this.onChange()
     })
     this.term.onBell(() => this.raise('Bell'))
     // Desktop-notification escape sequences that coding agents and scripts emit.
@@ -153,7 +181,7 @@ export class Session {
       if (progress === undefined) this.raise(data || 'Notification')
       else if (progress !== this.progress) {
         this.progress = progress
-        this.onChange(this)
+        this.onChange()
       }
       return true
     })
@@ -163,6 +191,14 @@ export class Session {
       return true
     })
     this.spawn()
+  }
+
+  get pid(): number | undefined {
+    return this.proc?.pid
+  }
+
+  get size(): { cols: number; rows: number } {
+    return { cols: this.cols, rows: this.rows }
   }
 
   info(): SessionInfo {
@@ -175,11 +211,6 @@ export class Session {
       cwd: this.workingDir,
       progress: this.progress,
     }
-  }
-
-  /** The shell's pid, while it runs. */
-  get pid(): number | undefined {
-    return this.proc?.pid
   }
 
   /** Records what the shell is running, as last seen by `SessionManager.inspect`. */
@@ -205,22 +236,22 @@ export class Session {
     this.process = process
     this.workingDir = workingDir
     this.progress = progress
-    this.onChange(this)
-  }
-
-  private raise(message: string) {
-    this.attention = { at: Date.now(), message }
-    this.onChange(this)
+    this.onChange()
   }
 
   ack() {
     if (!this.attention) return
     this.attention = null
-    this.onChange(this)
+    this.onChange()
+  }
+
+  private raise(message: string) {
+    this.attention = { at: Date.now(), message }
+    this.onChange()
   }
 
   private spawn() {
-    const proc = Bun.spawn([SHELL, '-l'], {
+    const proc = Bun.spawn([this.shell, '-l'], {
       cwd: usableCwd(this.cwd),
       env: shellEnv(process.env),
       terminal: {
@@ -238,88 +269,29 @@ export class Session {
       this.process = null
       this.progress = null
       this.output(encoder.encode(`\r\n\x1b[2m[process exited with code ${code} — press Enter to restart]\x1b[0m\r\n`))
-      this.onChange(this)
+      this.onChange()
     })
   }
 
   // Bun's PTY can't pause reading, so a flood of output is never slowed at the
-  // source. Clients that can't keep up skip it instead (see `deliver`).
+  // source. Whoever forwards this output skips it for clients that can't keep up.
   private output(data: Uint8Array) {
     this.term.write(data)
-    for (const client of this.clients) deliver(client, data)
-    if (this.resyncTimer === null && [...this.clients].some((client) => client.stale)) {
-      this.resyncTimer = setInterval(() => this.resyncCaughtUp(), 100)
-    }
-  }
-
-  private resyncCaughtUp() {
-    let waiting = false
-    for (const client of this.clients) {
-      if (!client.stale) continue
-      if (client.ready && client.buffered() < CAUGHT_UP) this.sync(client)
-      else waiting = true
-    }
-    if (!waiting) this.stopResync()
-  }
-
-  private stopResync() {
-    if (this.resyncTimer !== null) clearInterval(this.resyncTimer)
-    this.resyncTimer = null
-  }
-
-  attach(client: TermClient) {
-    this.clients.add(client)
-    this.sync(client)
-  }
-
-  /** Sends the client the current screen, followed by any output that arrives meanwhile. */
-  private sync(client: TermClient) {
-    client.ready = false
-    client.stale = false
-    client.queue = []
-    client.queued = 0
-    // The empty write is a marker: its callback runs once everything received
-    // before it has been applied, so the snapshot and the queued output that
-    // follows line up with nothing lost or repeated.
-    this.term.write('', () => {
-      if (!this.clients.has(client)) return
-      const snapshot: TermServerMsg = {
-        type: 'snapshot',
-        data: this.serializer.serialize(),
-        cols: this.cols,
-        rows: this.rows,
-      }
-      client.send(JSON.stringify(snapshot))
-      // A client whose queue overflowed stays stale and is resynced again.
-      for (const chunk of client.queue) client.send(chunk)
-      client.queue = []
-      client.queued = 0
-      client.ready = true
-    })
+    this.onOutput(data)
   }
 
   /**
-   * Clears the screen and scrollback, keeping the current line, as Cmd+K does
-   * in macOS terminals. Every view gets the cleared screen as a new snapshot.
-   * It waits for output already received, so none of it lands after the clear.
+   * The screen at a write boundary: the callback runs once everything written
+   * before it has been applied, so a snapshot and the output that follows line
+   * up with nothing lost or repeated.
    */
-  clear() {
-    this.term.write('', () => {
-      this.term.clear()
-      for (const client of this.clients) this.sync(client)
+  snapshot(): Promise<string> {
+    return new Promise((done) => {
+      this.term.write('', () => done(this.serializer.serialize()))
     })
   }
 
-  detach(client: TermClient) {
-    this.clients.delete(client)
-    if (this.controller !== client) return
-    this.controller = null
-    const next = this.clients.values().next().value
-    if (next) this.claim(next)
-  }
-
-  input(data: string, from: TermClient) {
-    this.claim(from)
+  input(data: string) {
     if (this.alive) {
       this.proc?.terminal?.write(data)
       return
@@ -327,104 +299,39 @@ export class Session {
     if (data.includes('\r')) {
       this.output(encoder.encode('\x1bc'))
       this.spawn()
-      this.onChange(this)
+      this.onChange()
     }
   }
 
-  /**
-   * A view reports the size its pane can show. With several views open at
-   * different sizes, only the controller's is applied; the others are told
-   * the size in force and display that.
-   */
-  resize(cols: number, rows: number, from: TermClient) {
+  resize(cols: number, rows: number) {
     if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 2 || rows < 2) return
-    from.want = { cols, rows }
-    if (!this.controller || !this.clients.has(this.controller)) this.controller = from
-    if (this.controller === from) this.apply(cols, rows)
-    else this.tell(from)
-  }
-
-  /** Typing in a view or focusing it puts it in control, and the session takes its size. */
-  claim(from: TermClient) {
-    if (this.controller === from) return
-    this.controller = from
-    if (from.want) this.apply(from.want.cols, from.want.rows)
-  }
-
-  private apply(cols: number, rows: number) {
     if (cols === this.cols && rows === this.rows) return
     this.cols = cols
     this.rows = rows
     this.term.resize(cols, rows)
     this.proc?.terminal?.resize(cols, rows)
-    for (const client of this.clients) this.tell(client)
   }
 
-  private tell(client: TermClient) {
-    if (!client.ready) return
-    client.send(JSON.stringify({ type: 'size', cols: this.cols, rows: this.rows } satisfies TermServerMsg))
+  /**
+   * Clears the screen and scrollback, keeping the current line, as Cmd+K does
+   * in macOS terminals. It waits for output already received, so none of it
+   * lands after the clear.
+   */
+  clear(): Promise<void> {
+    return new Promise((done) => {
+      this.term.write('', () => {
+        this.term.clear()
+        done()
+      })
+    })
   }
 
   kill() {
-    this.stopResync()
     const proc = this.proc
     this.proc = null
     this.alive = false
     proc?.kill()
     proc?.terminal?.close()
     this.term.dispose()
-    this.clients.clear()
-  }
-}
-
-export class SessionManager {
-  private readonly sessions = new Map<string, Session>()
-
-  constructor(
-    private readonly onChange: (session: Session) => void,
-    private readonly onGone: (id: string) => void,
-  ) {}
-
-  get(id: string) {
-    return this.sessions.get(id)
-  }
-
-  list() {
-    return [...this.sessions.values()]
-  }
-
-  ensure(id: string, cwd: string, cols: number, rows: number): Session {
-    let session = this.sessions.get(id)
-    if (!session) {
-      session = new Session(id, cwd, cols, rows, this.onChange)
-      this.sessions.set(id, session)
-      this.onChange(session)
-    }
-    return session
-  }
-
-  /** Ends sessions whose tab no longer exists. New ones get a grace period to appear in the layout. */
-  collect(liveIds: Set<string>) {
-    for (const [id, session] of this.sessions) {
-      if (liveIds.has(id) || Date.now() - session.createdAt < 10_000) continue
-      session.kill()
-      this.sessions.delete(id)
-      this.onGone(id)
-    }
-  }
-
-  /** Refreshes what every live shell is running. Sessions report a change through `onChange`. */
-  async inspect() {
-    const live = this.list().filter((session) => session.pid !== undefined)
-    if (live.length === 0) return
-    const found = await inspectShells(live.map((session) => session.pid as number))
-    for (const session of live) {
-      if (session.pid !== undefined) session.observe(found.get(session.pid))
-    }
-  }
-
-  killAll() {
-    for (const session of this.sessions.values()) session.kill()
-    this.sessions.clear()
   }
 }

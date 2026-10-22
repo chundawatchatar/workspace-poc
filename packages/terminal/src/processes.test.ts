@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { findForeground, parseElapsed, parsePs } from './processes.service'
+import { findForeground, parseElapsed, parsePs } from './processes'
 
 // Shell 100 runs claude (200). Shell 300 is idle. Shell 400 runs `cat log | less`, whose `cat` (500) has exited.
 const PS = `

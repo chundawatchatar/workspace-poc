@@ -1,6 +1,6 @@
 import type { z } from 'zod'
 import type { eventsSocket } from './contracts/events'
-import type { terminalSocket } from './contracts/terminals'
+import type { termColors, terminalSocket } from './contracts/terminals'
 import type { AppState } from './model'
 
 export const HOST_PORT = 4599
@@ -11,6 +11,8 @@ export interface HostInfo {
   shell: string
   platform: string
   projectRoot: string
+  /** The backend selected for newly opened terminals. */
+  terminalBackend?: 'memory' | 'bun'
 }
 
 /** The program a terminal's shell is running in the foreground. */
@@ -50,8 +52,11 @@ export type ClientEvent = z.infer<typeof eventsSocket.clientMessage>
 
 /** Host to client, on a terminal socket. Terminal output itself travels as binary frames. */
 export type TermServerMsg =
-  | { type: 'snapshot'; data: string; cols: number; rows: number }
+  | { type: 'snapshot'; data: string; cols: number; rows: number; serverQueries?: boolean }
   | { type: 'size'; cols: number; rows: number }
 
 /** Client to host, on a terminal socket. */
 export type TermClientMsg = z.infer<typeof terminalSocket.clientMessage>
+
+/** A view's terminal colours, sent so a terminal daemon can answer colour queries. */
+export type TermColors = z.infer<typeof termColors>

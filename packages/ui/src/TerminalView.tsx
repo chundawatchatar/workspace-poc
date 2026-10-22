@@ -1,4 +1,4 @@
-import { buildSocketUrl, routes, type TermClientMsg, type TermServerMsg } from '@orch/shared'
+import { buildSocketUrl, routes, type TermClientMsg, type TermColors, type TermServerMsg } from '@orch/shared'
 import type { ITheme, Terminal } from '@xterm/xterm'
 import { useEffect, useRef, useState } from 'react'
 
@@ -10,6 +10,37 @@ interface Props {
   /** True when this terminal is the visible tab of the focused pane. */
   active: boolean
   theme?: ITheme
+}
+
+const ANSI = [
+  'black',
+  'red',
+  'green',
+  'yellow',
+  'blue',
+  'magenta',
+  'cyan',
+  'white',
+  'brightBlack',
+  'brightRed',
+  'brightGreen',
+  'brightYellow',
+  'brightBlue',
+  'brightMagenta',
+  'brightCyan',
+  'brightWhite',
+] as const
+
+/** The theme's `#rrggbb` colours, leaving out any the theme doesn't set in that form. */
+function themeColors(theme: ITheme | undefined): TermColors {
+  const hex = (value: string | undefined) => (value && /^#[0-9a-fA-F]{6}$/.test(value) ? value : undefined)
+  const ansi = ANSI.map((name) => hex(theme?.[name]))
+  return {
+    foreground: hex(theme?.foreground),
+    background: hex(theme?.background),
+    cursor: hex(theme?.cursor),
+    ansi: ansi.every((value) => value !== undefined) ? ansi : undefined,
+  }
 }
 
 /**
@@ -27,6 +58,8 @@ export function TerminalView({ hostUrl, sessionId, cwd, active, theme }: Props) 
   // Read when the terminal is created, without making the theme a reason to recreate it.
   const initialTheme = useRef(theme)
   initialTheme.current = theme
+  // Tells the host the current theme's colours; set while a connection exists.
+  const sendColors = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     const element = container.current
@@ -55,10 +88,30 @@ export function TerminalView({ hostUrl, sessionId, cwd, active, theme }: Props) 
 
       let socket: WebSocket | null = null
       let retry: ReturnType<typeof setTimeout> | undefined
+      let serverQueries = false
+      let pendingBytes = 0
+      let writes = Promise.resolve()
+
+      // The persistent backend answers queries even while every browser is disconnected.
+      const queryHandlers = [
+        term.parser.registerCsiHandler({ final: 'n' }, () => serverQueries),
+        term.parser.registerCsiHandler({ prefix: '?', final: 'n' }, () => serverQueries),
+        term.parser.registerCsiHandler({ final: 'c' }, () => serverQueries),
+        term.parser.registerCsiHandler({ prefix: '>', final: 'c' }, () => serverQueries),
+        term.parser.registerCsiHandler({ prefix: '=', final: 'c' }, () => serverQueries),
+        term.parser.registerCsiHandler({ final: 't' }, () => serverQueries),
+        term.parser.registerCsiHandler({ intermediates: '$', final: 'p' }, () => serverQueries),
+        term.parser.registerCsiHandler({ prefix: '?', intermediates: '$', final: 'p' }, () => serverQueries),
+        term.parser.registerDcsHandler({ intermediates: '$', final: 'q' }, () => serverQueries),
+        ...[4, 10, 11, 12, 52].map((code) =>
+          term.parser.registerOscHandler(code, (data) => serverQueries && data.split(';').includes('?')),
+        ),
+      ]
 
       const send = (message: TermClientMsg) => {
         if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message))
       }
+      sendColors.current = () => send({ type: 'colors', ...themeColors(initialTheme.current) })
 
       /** Tells the host what size this pane can show. */
       const report = () => {
@@ -73,26 +126,61 @@ export function TerminalView({ hostUrl, sessionId, cwd, active, theme }: Props) 
         if (cols !== term.cols || rows !== term.rows) term.resize(cols, rows)
       }
 
+      const render = (
+        ws: WebSocket,
+        data: string | Uint8Array,
+        snapshot?: Extract<TermServerMsg, { type: 'snapshot' }>,
+      ) => {
+        const bytes = typeof data === 'string' ? data.length * 2 : data.byteLength
+        pendingBytes += bytes
+        if (pendingBytes > 32 * 1024 * 1024) {
+          pendingBytes -= bytes
+          ws.close()
+          return
+        }
+        writes = writes.then(
+          () =>
+            new Promise<void>((done) => {
+              if (disposed || socket !== ws) {
+                pendingBytes -= bytes
+                done()
+                return
+              }
+              if (snapshot) {
+                serverQueries = snapshot.serverQueries ?? false
+                term.reset()
+                adopt(snapshot.cols, snapshot.rows)
+              }
+              term.write(data, () => {
+                pendingBytes -= bytes
+                if (snapshot) {
+                  report()
+                  if (document.hasFocus() && term.textarea === document.activeElement) send({ type: 'focus' })
+                }
+                done()
+              })
+            }),
+        )
+      }
+
       const connect = () => {
         const url = buildSocketUrl(routes.sockets.terminal, { id: sessionId, cwd, cols: term.cols, rows: term.rows })
         const ws = new WebSocket(`${hostUrl}${url}`)
         ws.binaryType = 'arraybuffer'
         socket = ws
+        ws.onopen = () => sendColors.current?.()
         ws.onmessage = (event) => {
           if (typeof event.data !== 'string') {
-            term.write(new Uint8Array(event.data as ArrayBuffer))
+            render(ws, new Uint8Array(event.data as ArrayBuffer))
             return
           }
           const message = JSON.parse(event.data) as TermServerMsg
           if (message.type === 'snapshot') {
-            // Match the session's size before drawing its screen, then ask for ours.
-            term.reset()
-            adopt(message.cols, message.rows)
-            term.write(message.data)
-            report()
-            if (document.hasFocus() && term.textarea === document.activeElement) send({ type: 'focus' })
+            render(ws, message.data, message)
           } else if (message.type === 'size') {
-            adopt(message.cols, message.rows)
+            writes = writes.then(() => {
+              if (!disposed && socket === ws) adopt(message.cols, message.rows)
+            })
           }
         }
         ws.onclose = () => {
@@ -149,6 +237,8 @@ export function TerminalView({ hostUrl, sessionId, cwd, active, theme }: Props) 
         clearTimeout(retry)
         term.textarea?.removeEventListener('focus', onFocus)
         onData.dispose()
+        for (const handler of queryHandlers) handler.dispose()
+        sendColors.current = null
         socket?.close()
         term.dispose()
         terminal.current = null
@@ -167,6 +257,7 @@ export function TerminalView({ hostUrl, sessionId, cwd, active, theme }: Props) 
 
   useEffect(() => {
     if (ready && terminal.current) terminal.current.options.theme = theme
+    sendColors.current?.()
   }, [ready, theme])
 
   return <div ref={container} className="h-full w-full overflow-hidden bg-panel" />

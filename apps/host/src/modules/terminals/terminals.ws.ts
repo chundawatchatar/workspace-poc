@@ -1,9 +1,9 @@
 import { upgradeWebSocket } from '@hono/bun'
 import { parseMessage, routes } from '@orch/shared'
+import type { SessionManager, TermClient } from '@orch/terminal'
 import type { ServerWebSocket } from 'bun'
 import { type Context, Hono } from 'hono'
 import { z } from 'zod'
-import type { SessionManager, TermClient } from './terminals.service'
 
 const socket = routes.sockets.terminal
 
@@ -46,6 +46,10 @@ export function createTerminalSocket(sessions: SessionManager) {
           else if (message.type === 'resize') session.resize(message.cols, message.rows, client)
           else if (message.type === 'focus') session.claim(client)
           else if (message.type === 'clear') session.clear()
+          else if (message.type === 'colors') {
+            const { type: _type, ...palette } = message
+            session.colors(palette)
+          }
         },
         onClose() {
           if (client) sessions.get(id)?.detach(client)

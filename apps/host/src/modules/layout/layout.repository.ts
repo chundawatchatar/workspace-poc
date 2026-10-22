@@ -12,22 +12,26 @@ function seed(projectRoot: string): AppState {
 /** The layout, kept in memory and written to a JSON file so it survives a restart. */
 export class LayoutRepository {
   state: AppState
+  /** Where the starting layout came from. An `invalid` file was replaced by the seed and says nothing about what existed. */
+  readonly origin: 'file' | 'missing' | 'invalid'
   private timer: ReturnType<typeof setTimeout> | null = null
 
   constructor(
     private readonly file: string,
     projectRoot: string,
   ) {
-    this.state = this.load() ?? seed(projectRoot)
+    const loaded = this.load()
+    this.origin = loaded === 'missing' || loaded === 'invalid' ? loaded : 'file'
+    this.state = typeof loaded === 'object' ? loaded : seed(projectRoot)
   }
 
-  private load(): AppState | null {
+  private load(): AppState | 'missing' | 'invalid' {
     try {
-      if (!existsSync(this.file)) return null
+      if (!existsSync(this.file)) return 'missing'
       const parsed = JSON.parse(readFileSync(this.file, 'utf8')) as AppState
-      return Array.isArray(parsed.workspaces) ? parsed : null
+      return Array.isArray(parsed.workspaces) ? parsed : 'invalid'
     } catch {
-      return null
+      return 'invalid'
     }
   }
 

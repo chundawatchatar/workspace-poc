@@ -5,14 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "bun --watch src/index.ts",
+    "dev:bun": "ORCH_TERMINAL_BACKEND=bun bun run dev",
     "start": "bun src/index.ts",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
     "@hono/bun": "^1.0.1",
     "@orch/shared": "workspace:*",
-    "@xterm/addon-serialize": "^0.14.0",
-    "@xterm/headless": "^6.0.0",
+    "@orch/terminal": "workspace:*",
     "hono": "^4.13.13",
     "zod": "^4.6.7"
   },

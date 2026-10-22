@@ -8,6 +8,10 @@
   ],
   "scripts": {
     "dev": "bun run --filter '*' dev",
+    "dev:bun": "ORCH_TERMINAL_BACKEND=bun bun run dev",
+    "terminals:stop": "bun scripts/stop-terminals.ts",
+    "terminals:backend": "bun scripts/set-terminal-backend.ts",
+    "test:bun-daemon": "bun scripts/verify-bun-daemon.ts",
     "typecheck": "bun run --filter '*' typecheck",
     "lint": "biome check .",
     "format": "biome check --write .",

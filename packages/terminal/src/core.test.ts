@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test'
-import { deliver, parseProgress, shellEnv, type TermClient } from './terminals.service'
+import { deliver, parseProgress, shellEnv, shellProgram, type TermClient } from './core'
+
+test('shellProgram uses a platform fallback only when the user has not selected a shell', () => {
+  expect(shellProgram({}, 'linux')).toBe('/bin/sh')
+  expect(shellProgram({}, 'darwin')).toBe('/bin/zsh')
+  expect(shellProgram({ SHELL: '/custom/fish' }, 'linux')).toBe('/custom/fish')
+})
 
 /** A client whose socket reports `backlog` unsent bytes, recording what it was sent. */
 function setup({ ready = true, backlog = 0, result = 1 } = {}) {

@@ -2,29 +2,36 @@ import { homedir } from 'node:os'
 import { resolve } from 'node:path'
 import { websocket } from '@hono/bun'
 import { HOST_PORT, type HostInfo } from '@orch/shared'
+import { SessionManager, shellProgram } from '@orch/terminal'
 import { createApp } from './app'
 import { EventHub } from './modules/events/events.service'
 import { dataFile, LayoutRepository } from './modules/layout/layout.repository'
-import { SessionManager } from './modules/terminals/terminals.service'
+import { terminalBackend } from './modules/terminals/backend.repository'
+import { daemonFactory, restoreTerminals } from './modules/terminals/daemon.service'
 
 // Composition root: creates the long-lived services, wires them together and starts the server.
 
 const hostRoot = resolve(import.meta.dir, '..')
 const projectRoot = resolve(hostRoot, '../..')
+const backend = terminalBackend(hostRoot)
 
 const info: HostInfo = {
   home: homedir(),
-  shell: process.env.SHELL || '/bin/zsh',
+  shell: shellProgram(),
   platform: process.platform,
   projectRoot,
+  terminalBackend: backend,
 }
 
 const hub = new EventHub()
 const layout = new LayoutRepository(dataFile(hostRoot), projectRoot)
+const daemon = backend === 'memory' ? null : daemonFactory(hostRoot)
 const sessions = new SessionManager(
   (session) => hub.broadcast({ type: 'session', session: session.info() }),
   (id) => hub.broadcast({ type: 'session.gone', id }),
+  daemon?.create,
 )
+if (daemon) void restoreTerminals(layout, sessions, daemon)
 
 // Polls what each terminal is running. A slow round is never overlapped by the next.
 let inspecting = false
@@ -47,11 +54,12 @@ const server = Bun.serve({
   websocket,
 })
 console.log(`host listening on http://${server.hostname}:${server.port}`)
+console.log(`terminal backend: ${backend} (${daemon ? 'persistent Bun PTY' : 'in-process Bun PTY'})`)
 
 function shutdown() {
   clearInterval(inspector)
   layout.flush()
-  sessions.killAll()
+  sessions.shutdown()
   process.exit(0)
 }
 process.on('SIGINT', shutdown)

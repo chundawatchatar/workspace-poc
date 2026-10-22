@@ -1,6 +1,16 @@
 import { z } from 'zod'
 import { defineSocket } from './contract'
 
+const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/)
+
+/** A terminal theme's colours as `#rrggbb`: `ansi` holds the 16 base colours, black through bright white. */
+export const termColors = z.object({
+  foreground: hex.optional(),
+  background: hex.optional(),
+  cursor: hex.optional(),
+  ansi: z.array(hex).length(16).optional(),
+})
+
 /**
  * Messages: `clientMessage` (`TermClientMsg`) from the client and `TermServerMsg` from the host
  * (see `protocol.ts`). Terminal output travels as binary frames.
@@ -27,5 +37,7 @@ export const terminalSocket = defineSocket({
     z.object({ type: z.literal('focus') }),
     /** Clears the screen and scrollback, keeping the current line, in every view of the session. */
     z.object({ type: z.literal('clear') }),
+    /** The view's theme, so a host that answers terminal queries itself reports the colours the user sees. */
+    z.object({ type: z.literal('colors'), ...termColors.shape }),
   ]),
 })
