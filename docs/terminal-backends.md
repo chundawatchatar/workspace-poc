@@ -22,7 +22,9 @@ bun run terminals:backend memory   # the default, in-process Bun PTY
 The command writes `apps/host/.data/terminal-backend.json` and reloads a running
 dev host. `ORCH_TERMINAL_BACKEND` overrides the file for one launch, so
 `bun run dev:bun` selects the daemon without touching the setting. To stop the
-daemon and every session it owns, run `bun run terminals:stop`.
+daemon and every session it owns, stop `bun run dev` first, then run
+`bun run terminals:stop`. It refuses while a host is listening, because that host
+would start the daemon again for its open tabs.
 
 A switch cannot migrate a shell that is already running: `memory` shells die with
 the host, and a daemon shell is only reattached while the daemon lives. The
@@ -74,15 +76,41 @@ Measured with 11 terminals:
 | Shells | 21.1 MB | 20.8 MB |
 
 The tradeoff is isolation. Each shell is still its own OS process, so a shell
-crash cannot hurt the others. But a bug or out-of-memory in the shared daemon
-ends every terminal at once, and upgrading the daemon restarts them all. For a
-local tool that is the same exposure the in-process `memory` backend already
-has, and it is worth the memory.
+crash cannot hurt the others. A failing request costs only its connection (the
+host reconnects), and an uncaught error is logged rather than ending the
+process. But out-of-memory or a crash in Bun itself ends every terminal at once,
+and upgrading the daemon restarts them all. For a local tool that is the same
+exposure the in-process `memory` backend already has, and it is worth the
+memory.
+
+## Reattaching and queries
+
+- **Terminal queries are answered once.** Programs ask the terminal for its
+  device attributes, cursor position or colours, and read the reply as input.
+  Exactly one browser view answers: the one in control of the size (or any view,
+  if that one is gone). The host tells each view with a `queries` message. While
+  no view is attached, the session answers itself from its headless emulator,
+  and colour queries from the last theme a view sent.
+- **Full-screen programs repaint on attach.** When a view attaches to a program
+  on the alternate screen (Codex, pi, vim), the PTY shrinks by one row for 30 ms
+  and back, so the program gets SIGWINCH and redraws. A snapshot restores the
+  screen and the input modes, but the program's own redraw is always right. The
+  normal screen is left alone, because a resize there would reflow history.
+- **Input modes survive a snapshot.** The serializer drops the mouse encoding
+  (`?1006`, `?1016`), alternate scroll (`?1007`) and the cursor shape, so the
+  core tracks and re-applies them. A test checks every mode a full-screen program
+  sets against a terminal restored from the snapshot.
+- **A daemon running old code is reported.** The daemon never reloads, so a fix
+  to it reaches its terminals only after a restart. Its status carries a hash of
+  its code, and the host logs a warning when that differs from the code on disk.
+  Newer hosts only send requests an older daemon understands, and the daemon
+  ignores request types it does not know.
 
 ## Differences to be aware of
 
-- **Colour queries.** With no browser attached, a program that asks the terminal
-  for its colours gets no answer. While a browser is attached, it answers.
+- **Colour queries before any view.** The session can answer colour queries
+  only after a view has sent its theme; a daemon started with no view attached
+  leaves them unanswered until then.
 - **Idle cost.** The daemon stays resident (about 44 MB) while the host runs,
   even if every tab is closed, until `terminals:stop`.
 - **Packaging.** The daemon runs as TypeScript on the host's Bun; it is not yet
@@ -93,7 +121,7 @@ has, and it is worth the memory.
 ```sh
 bun run typecheck          # every workspace, including @orch/terminal and @orch/ptyd-bun
 bun test                   # unit tests, including the daemon protocol codecs
-bun run test:bun-daemon    # end-to-end: handshake, binary output, reconnect, resize, close
+bun run test:bun-daemon    # end-to-end: handshake, binary output, reconnect, queries, redraw, resize, close
 bun run terminals:stop     # end any daemon left running
 ```
 

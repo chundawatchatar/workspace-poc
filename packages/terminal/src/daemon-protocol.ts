@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto'
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { z } from 'zod'
 
 /**
@@ -25,9 +28,28 @@ export const daemonStatus = z.object({
   progress: z.enum(['busy', 'error']).nullable(),
   cols: z.number().int().min(2).max(500),
   rows: z.number().int().min(2).max(200),
-  /** The daemon answers terminal colour queries itself, so the browser stays quiet. */
+  /** The daemon takes the views' theme, to answer colour queries while no view is attached. */
   colors: z.boolean().optional(),
+  /** The daemon accepts `viewing` and `redraw`. Daemons started by an older build drop unknown requests. */
+  queries: z.boolean().optional(),
+  /** A hash of the daemon's code, from `daemonBuild`. Absent from daemons started by an older build. */
+  build: z.string().optional(),
 })
+
+/**
+ * A hash of the code a daemon runs: its entry file and this package's sources.
+ * The daemon computes it at startup and the host from the files on disk, so a
+ * daemon still running code from before an edit or a branch switch is noticed.
+ */
+export function daemonBuild(entry: string): string {
+  const sources = readdirSync(import.meta.dir)
+    .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
+    .sort()
+    .map((name) => join(import.meta.dir, name))
+  const hash = createHash('sha256')
+  for (const file of [entry, ...sources]) hash.update(readFileSync(file))
+  return hash.digest('hex').slice(0, 16)
+}
 
 /** A validated control message from the persistent terminal. Terminal output travels as binary frames. */
 export const daemonMessage = z.discriminatedUnion('type', [
@@ -57,24 +79,48 @@ export function encodeOutputFrame(bytes: Uint8Array): Buffer {
   return Buffer.concat([header, bytes])
 }
 
-/** Decodes bounded frames across arbitrary socket chunk boundaries. */
+/**
+ * Decodes bounded frames across arbitrary socket chunk boundaries. Chunks are
+ * kept as a list and joined only once a whole frame has arrived, so a large
+ * snapshot costs one copy rather than one per chunk.
+ */
 export class DaemonDecoder {
-  private pending = Buffer.alloc(0)
+  private chunks: Buffer[] = []
+  private size = 0
 
   push(chunk: Buffer): DaemonFrame[] {
-    this.pending = Buffer.concat([this.pending, chunk])
+    if (chunk.length > 0) {
+      this.chunks.push(chunk)
+      this.size += chunk.length
+    }
     const frames: DaemonFrame[] = []
-    while (this.pending.length >= 5) {
-      const kind = this.pending.readUInt8(0)
-      const length = this.pending.readUInt32BE(1)
+    while (this.size >= 5) {
+      const head = this.first(5)
+      const kind = head.readUInt8(0)
+      const length = head.readUInt32BE(1)
       if (length === 0 || length > MAX_FRAME) throw new Error('Invalid terminal daemon frame length')
-      if (this.pending.length < length + 5) break
-      const payload = this.pending.subarray(5, 5 + length)
-      this.pending = this.pending.subarray(5 + length)
+      if (this.size < length + 5) break
+      const payload = this.take(length + 5).subarray(5)
       if (kind === OUTPUT) frames.push({ kind: 'output', bytes: payload })
       else if (kind === CONTROL) frames.push({ kind: 'control', value: JSON.parse(payload.toString()) })
       else throw new Error('Invalid terminal daemon frame kind')
     }
     return frames
+  }
+
+  /** The first chunk, joined with the following ones if it is shorter than `bytes`. */
+  private first(bytes: number): Buffer {
+    if (this.chunks[0].length < bytes) this.chunks = [Buffer.concat(this.chunks)]
+    return this.chunks[0]
+  }
+
+  /** Removes and returns the next `bytes` bytes. */
+  private take(bytes: number): Buffer {
+    const head = this.first(bytes)
+    const rest = head.subarray(bytes)
+    if (rest.length > 0) this.chunks[0] = rest
+    else this.chunks.shift()
+    this.size -= bytes
+    return head.subarray(0, bytes)
   }
 }

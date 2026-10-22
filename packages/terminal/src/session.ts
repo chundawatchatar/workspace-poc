@@ -1,5 +1,5 @@
-import type { SessionInfo, TermServerMsg } from '@orch/shared'
-import { CAUGHT_UP, deliver, type TermClient, TerminalCore, type TerminalSession } from './core'
+import type { SessionInfo, TermColors, TermServerMsg } from '@orch/shared'
+import { assignResponder, CAUGHT_UP, deliver, type TermClient, TerminalCore, type TerminalSession } from './core'
 import { type Foreground, inspectShells } from './processes'
 
 /**
@@ -33,6 +33,8 @@ export class Session implements TerminalSession {
       () => this.onChange(this),
     )
     this.createdAt = this.core.createdAt
+    // No view is attached yet, so the session answers terminal queries itself.
+    this.core.answerQueries(true)
   }
 
   get pid(): number | undefined {
@@ -53,7 +55,9 @@ export class Session implements TerminalSession {
 
   attach(client: TermClient) {
     this.clients.add(client)
+    this.answer()
     this.sync(client)
+    this.core.redraw()
   }
 
   detach(client: TermClient) {
@@ -62,6 +66,7 @@ export class Session implements TerminalSession {
     this.controller = null
     const next = this.clients.values().next().value
     if (next) this.claim(next)
+    this.answer()
   }
 
   input(data: string, from: TermClient) {
@@ -80,6 +85,7 @@ export class Session implements TerminalSession {
     if (!this.controller || !this.clients.has(this.controller)) this.controller = from
     if (this.controller === from) this.apply(cols, rows)
     else this.tell(from)
+    this.answer()
   }
 
   /** Typing in a view or focusing it puts it in control, and the session takes its size. */
@@ -87,6 +93,7 @@ export class Session implements TerminalSession {
     if (this.controller === from) return
     this.controller = from
     if (from.want) this.apply(from.want.cols, from.want.rows)
+    this.answer()
   }
 
   clear() {
@@ -95,8 +102,10 @@ export class Session implements TerminalSession {
     })
   }
 
-  /** Colour queries reach the browser's own terminal, which answers them, so this backend needs no theme. */
-  colors() {}
+  /** The views' theme, for colour queries answered while no view is attached. */
+  colors(palette: TermColors) {
+    this.core.setPalette(palette)
+  }
 
   kill() {
     this.stopResync()
@@ -107,6 +116,11 @@ export class Session implements TerminalSession {
   /** Ends this in-process shell when its host stops. */
   shutdown() {
     this.kill()
+  }
+
+  /** The controlling view answers queries, and the session itself does while no view is attached. */
+  private answer() {
+    this.core.answerQueries(!assignResponder(this.clients, this.controller))
   }
 
   private apply(cols: number, rows: number) {
@@ -147,7 +161,9 @@ export class Session implements TerminalSession {
     void this.core.snapshot().then((data) => {
       if (!this.clients.has(client)) return
       const { cols, rows } = this.core.size
-      client.send(JSON.stringify({ type: 'snapshot', data, cols, rows } satisfies TermServerMsg))
+      client.send(
+        JSON.stringify({ type: 'snapshot', data, cols, rows, serverQueries: !client.answers } satisfies TermServerMsg),
+      )
       // A client whose queue overflowed stays stale and is resynced again.
       for (const chunk of client.queue) client.send(chunk)
       client.queue = []
@@ -205,13 +221,27 @@ export class SessionManager {
     return session
   }
 
-  /** Ends sessions whose tab no longer exists. New ones get a grace period to appear in the layout. */
-  collect(liveIds: Set<string>) {
-    for (const [id, session] of this.sessions) {
-      if (liveIds.has(id) || Date.now() - session.createdAt < 10_000) continue
-      this.close(id)
-    }
+  /** Whether a session is still within the grace period in which a missing tab may just be a layout lagging behind. */
+  isNew(id: string): boolean {
+    const session = this.sessions.get(id)
+    return session !== undefined && Date.now() - session.createdAt < SessionManager.GRACE
   }
+
+  /**
+   * Ends sessions whose tab no longer exists. New ones get a grace period to appear in the layout. Returns
+   * whether any was spared for that reason, so the caller can collect again once the grace period is over.
+   */
+  collect(liveIds: Set<string>): boolean {
+    let spared = false
+    for (const id of this.sessions.keys()) {
+      if (liveIds.has(id)) continue
+      if (this.isNew(id)) spared = true
+      else this.close(id)
+    }
+    return spared
+  }
+
+  static readonly GRACE = 10_000
 
   /** Refreshes what every live shell is running. Sessions report a change through `onChange`. */
   async inspect() {

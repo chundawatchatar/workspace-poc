@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { Terminal } from '@xterm/headless'
 import {
+  assignResponder,
   deliver,
   modesTail,
   parseProgress,
@@ -10,6 +11,7 @@ import {
   shellEnv,
   shellProgram,
   type TermClient,
+  TerminalCore,
 } from './core'
 
 test('shellProgram uses a platform fallback only when the user has not selected a shell', () => {
@@ -27,6 +29,7 @@ function setup({ ready = true, backlog = 0, result = 1 } = {}) {
     queued: 0,
     stale: false,
     want: null,
+    answers: false,
     send: (data) => {
       sent.push(data)
       return result
@@ -150,3 +153,106 @@ test('scrollRegionTail keeps a scrolling region a serialized snapshot drops', as
   expect(rows(restored.term).split('\n')[0]).toBe('TOP')
   expect(rows(restored.term).split('\n')[4]).toBe('BOT')
 })
+
+test('assignResponder lets exactly one view answer queries, preferring the controller', () => {
+  const a = setup()
+  const b = setup()
+  const clients = new Set([a.client, b.client])
+  expect(assignResponder(clients, b.client)).toBe(true)
+  expect([a.client.answers, b.client.answers]).toEqual([false, true])
+  expect(b.sent).toEqual([JSON.stringify({ type: 'queries', answer: true })])
+  expect(a.sent).toEqual([])
+
+  clients.delete(b.client)
+  assignResponder(clients, b.client)
+  expect(a.client.answers).toBe(true)
+  expect(assignResponder(new Set(), null)).toBe(false)
+})
+
+/** A real shell on a PTY, as a daemon session runs it. */
+async function shell() {
+  const core = new TerminalCore(
+    'test',
+    process.cwd(),
+    80,
+    24,
+    () => {},
+    () => {},
+    '/bin/bash',
+  )
+  const waitFor = async (text: string) => {
+    for (let tries = 0; tries < 100; tries++) {
+      const screen = await core.snapshot()
+      if (screen.includes(text)) return screen
+      await Bun.sleep(50)
+    }
+    throw new Error(`timed out waiting for ${text} in ${JSON.stringify(await core.snapshot())}`)
+  }
+  // Prompt themes and rc files differ between machines; a bare prompt keeps the screen predictable.
+  core.input("PS1='$ '; clear; echo RE''ADY\r")
+  await waitFor('READY')
+  return { core, waitFor }
+}
+
+/** The modes a program sets that change what the terminal sends back to it, read from a restored terminal. */
+function inputModes(term: Terminal) {
+  const core = (term as unknown as { _core: Record<string, Record<string, unknown>> })._core
+  const decModes = (core.coreService as { decPrivateModes: Record<string, unknown> }).decPrivateModes
+  return {
+    buffer: term.buffer.active.type,
+    ...term.modes,
+    encoding: core.coreMouseService.activeEncoding,
+    cursorHidden: core.coreService.isCursorHidden,
+    cursorStyle: decModes.cursorStyle,
+    cursorBlink: decModes.cursorBlink,
+  }
+}
+
+/**
+ * Codex and pi enable SGR mouse reporting on the alternate screen; a snapshot
+ * that dropped the encoding made their scrolling stop after a reconnect.
+ */
+test('a snapshot restores every input mode a full-screen program sets', async () => {
+  const { core, waitFor } = await shell()
+  core.input(
+    "printf '\\033[?1049h\\033[?1h\\033=\\033[?2004h\\033[?1004h\\033[?1003h\\033[?1016h\\033[?25l\\033[4 q%s' MA''RK\r",
+  )
+  const snapshot = await waitFor('MARK')
+  core.kill()
+
+  const restored = new Terminal({ cols: 80, rows: 24, allowProposedApi: true })
+  await new Promise<void>((done) => restored.write(snapshot, done))
+  expect(inputModes(restored)).toMatchObject({
+    buffer: 'alternate',
+    applicationCursorKeysMode: true,
+    applicationKeypadMode: true,
+    bracketedPasteMode: true,
+    sendFocusMode: true,
+    mouseTrackingMode: 'any',
+    encoding: 'SGR_PIXELS',
+    cursorHidden: true,
+    cursorStyle: 'underline',
+    cursorBlink: false,
+  })
+}, 15_000)
+
+test('a session answers terminal queries only while no view answers them', async () => {
+  const { core, waitFor } = await shell()
+  core.setPalette({ background: '#102030' })
+  // Reads the reply to a query; with nobody answering, `read` gives up after a second and `r` stays empty.
+  const ask = (query: string, end: string, mark: string) =>
+    core.input(`r=; printf '${query}'; IFS= read -rs -t 1 -d '${end}' r; echo "${mark}<\${r//[^a-z0-9:;?\\/]/}>"\r`)
+
+  core.answerQueries(true)
+  ask('\\033[c', 'c', 'DA')
+  // The typed command line holds `DA<$`, so only the reply itself matches.
+  await waitFor('DA<?1;2>')
+  ask('\\033]11;?\\033\\\\', '\\', 'BG')
+  await waitFor('BG<11;rgb:1010/2020/3030>')
+
+  core.answerQueries(false)
+  ask('\\033[c', 'c', 'NONE')
+  // `read` times out with nothing, so the line prints empty brackets; any reply would have filled them.
+  await waitFor('NONE<>')
+  core.kill()
+}, 15_000)

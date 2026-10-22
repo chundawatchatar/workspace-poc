@@ -1,6 +1,6 @@
 import { upgradeWebSocket } from '@hono/bun'
 import { type AppState, type HostInfo, listSurfaces, parseMessage, routes } from '@orch/shared'
-import type { SessionManager } from '@orch/terminal'
+import { SessionManager } from '@orch/terminal'
 import { Hono } from 'hono'
 import type { LayoutRepository } from '../layout/layout.repository'
 import type { EventClient, EventHub } from './events.service'
@@ -46,14 +46,13 @@ export function createEventsSocket({ hub, layout, sessions, info }: EventsSocket
           const message = parseMessage(routes.sockets.events.clientMessage, event.data)
           if (!message || !client) return
           if (message.type === 'state') {
-            const previous = liveSessionIds(layout.state)
             layout.set(message.state)
             hub.broadcast({ type: 'state', state: layout.state }, client)
-            const live = liveSessionIds(layout.state)
-            for (const id of previous) {
-              if (!live.has(id)) sessions.close(id)
+            // A closed tab's terminal ends now. One opened moments ago may be missing only because this window's
+            // layout is behind, so it is checked again once its grace period is over, against the layout by then.
+            if (sessions.collect(liveSessionIds(layout.state))) {
+              setTimeout(() => sessions.collect(liveSessionIds(layout.state)), SessionManager.GRACE + 100)
             }
-            sessions.collect(live)
           } else if (message.type === 'ack') {
             sessions.get(message.sessionId)?.ack()
           }

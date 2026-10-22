@@ -92,7 +92,7 @@ export function TerminalView({ hostUrl, sessionId, cwd, active, theme }: Props) 
       let pendingBytes = 0
       let writes = Promise.resolve()
 
-      // The persistent backend answers queries even while every browser is disconnected.
+      // Only one view of a session answers queries; the host says which, and answers them itself while none is attached.
       const queryHandlers = [
         term.parser.registerCsiHandler({ final: 'n' }, () => serverQueries),
         term.parser.registerCsiHandler({ prefix: '?', final: 'n' }, () => serverQueries),
@@ -180,6 +180,11 @@ export function TerminalView({ hostUrl, sessionId, cwd, active, theme }: Props) 
           } else if (message.type === 'size') {
             writes = writes.then(() => {
               if (!disposed && socket === ws) adopt(message.cols, message.rows)
+            })
+          } else if (message.type === 'queries') {
+            // Applied in order with the output, so a query already written is answered as it was decided.
+            writes = writes.then(() => {
+              if (!disposed && socket === ws) serverQueries = !message.answer
             })
           }
         }

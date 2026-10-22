@@ -1,6 +1,6 @@
 import { existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import type { SessionInfo, TermColors } from '@orch/shared'
+import type { SessionInfo, TermColors, TermServerMsg } from '@orch/shared'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { Terminal } from '@xterm/headless'
 import type { Foreground } from './processes'
@@ -19,6 +19,26 @@ export interface TermClient {
   stale: boolean
   /** The size this view last asked for. */
   want: { cols: number; rows: number } | null
+  /** This view answers terminal queries. Exactly one attached view does; see `assignResponder`. */
+  answers: boolean
+}
+
+/**
+ * Picks the one view that answers terminal queries (device attributes, cursor
+ * position, colours): the controller, or else any attached view. Every view's
+ * xterm would otherwise answer, and the program would read each reply as
+ * typed input. Views that are ready are told at once; one waiting for its
+ * snapshot learns it from the snapshot. Returns whether any view answers.
+ */
+export function assignResponder(clients: ReadonlySet<TermClient>, controller: TermClient | null): boolean {
+  const responder = controller && clients.has(controller) ? controller : (clients.values().next().value ?? null)
+  for (const client of clients) {
+    const answers = client === responder
+    if (client.answers === answers) continue
+    client.answers = answers
+    if (client.ready) client.send(JSON.stringify({ type: 'queries', answer: answers } satisfies TermServerMsg))
+  }
+  return responder !== null
 }
 
 /**
@@ -99,13 +119,66 @@ export const CAUGHT_UP = 128 * 1024
  * alternate scroll are the ones a full-screen agent needs: without them the
  * browser sends wheel events in the wrong format, or not at all.
  */
-export const TRACKED_MODES = new Set([25, 1005, 1006, 1007])
+export const TRACKED_MODES = new Set([25, 1005, 1006, 1007, 1016])
 
-/** The tracked private modes as `CSI ? n h`/`l`, to append to a serialized snapshot. */
-export function modesTail(modes: ReadonlyMap<number, boolean>): string {
+/**
+ * The tracked private modes as `CSI ? n h`/`l`, and the cursor shape as DECSCUSR
+ * (`CSI Ps SP q`), to append to a serialized snapshot.
+ */
+export function modesTail(modes: ReadonlyMap<number, boolean>, cursorStyle: number | null = null): string {
   let out = ''
   for (const [code, on] of modes) out += `\x1b[?${code}${on ? 'h' : 'l'}`
+  if (cursorStyle !== null) out += `\x1b[${cursorStyle} q`
   return out
+}
+
+/** The 256-colour palette entry xterm uses when a theme does not set it: the 6×6×6 cube, then 24 greys. */
+export function defaultColor(index: number): string | null {
+  if (index >= 16 && index < 232) {
+    const level = (n: number) => (n === 0 ? 0 : 55 + n * 40)
+    const n = index - 16
+    return rgbHex(level(Math.floor(n / 36)), level(Math.floor(n / 6) % 6), level(n % 6))
+  }
+  if (index >= 232 && index < 256) {
+    const grey = 8 + (index - 232) * 10
+    return rgbHex(grey, grey, grey)
+  }
+  return null
+}
+
+function rgbHex(r: number, g: number, b: number) {
+  return `#${[r, g, b].map((n) => n.toString(16).padStart(2, '0')).join('')}`
+}
+
+/** `#rrggbb` as the X11 `rgb:rrrr/gggg/bbbb` that OSC colour replies use. */
+export function x11Color(hex: string): string {
+  const [r, g, b] = [1, 3, 5].map((at) => hex.slice(at, at + 2).repeat(2))
+  return `rgb:${r}/${g}/${b}`
+}
+
+/**
+ * The replies to OSC 4/10/11/12 colour queries (`?`), from the view's theme.
+ * Entries the theme does not give are left unanswered rather than guessed.
+ */
+export function colorReplies(code: number, data: string, palette: TermColors): string[] {
+  const reply = (body: string) => `\x1b]${body}\x1b\\`
+  const parts = data.split(';')
+  if (code === 4) {
+    const out: string[] = []
+    for (let at = 0; at + 1 < parts.length; at += 2) {
+      const index = Number(parts[at])
+      if (parts[at + 1] !== '?' || !Number.isInteger(index)) continue
+      const color = index < 16 ? palette.ansi?.[index] : defaultColor(index)
+      if (color) out.push(reply(`4;${index};${x11Color(color)}`))
+    }
+    return out
+  }
+  // OSC 10 may ask for the following dynamic colours too: `10;?;?` is foreground then background.
+  const dynamic = [palette.foreground, palette.background, palette.cursor]
+  return parts.flatMap((part, offset) => {
+    const color = dynamic[code - 10 + offset]
+    return part === '?' && color ? [reply(`${code + offset};${x11Color(color)}`)] : []
+  })
 }
 
 /**
@@ -200,6 +273,16 @@ export class TerminalCore {
   private region: { top: number; bottom: number } | null = null
   /** The private modes from `TRACKED_MODES` the program has set or reset. */
   private readonly modes = new Map<number, boolean>()
+  /** The cursor shape last set with DECSCUSR, which the serialize addon does not restore. */
+  private cursorStyle: number | null = null
+  /**
+   * Whether this core answers terminal queries itself. It does only while no
+   * view is attached; otherwise one view answers, so a reply is never doubled.
+   */
+  private answering = false
+  /** The attached views' theme, for answering colour queries while none is attached. */
+  private palette: TermColors | null = null
+  private lastRedraw = 0
 
   constructor(
     readonly id: string,
@@ -250,14 +333,33 @@ export class TerminalCore {
       for (const code of params) if (typeof code === 'number' && TRACKED_MODES.has(code)) this.modes.set(code, false)
       return false
     })
+    this.term.parser.registerCsiHandler({ intermediates: ' ', final: 'q' }, (params) => {
+      const style = typeof params[0] === 'number' ? params[0] : 0
+      this.cursorStyle = style >= 0 && style <= 6 ? style : this.cursorStyle
+      return false
+    })
     // A full reset (RIS, also sent when the shell restarts) and a soft reset (DECSTR) drop the region and modes.
     const reset = () => {
       this.region = null
       this.modes.clear()
+      this.cursorStyle = null
       return false
     }
     this.term.parser.registerEscHandler({ final: 'c' }, reset)
     this.term.parser.registerCsiHandler({ intermediates: '!', final: 'p' }, reset)
+    // xterm answers device, cursor and mode queries through onData; pass them on only while no view answers.
+    this.term.onData((reply) => {
+      if (this.answering) this.proc?.terminal?.write(reply)
+    })
+    // The headless terminal has no theme, so colour queries are answered here from the views' palette.
+    for (const code of [4, 10, 11, 12]) {
+      this.term.parser.registerOscHandler(code, (data) => {
+        if (this.answering && this.palette) {
+          for (const reply of colorReplies(code, data, this.palette)) this.proc?.terminal?.write(reply)
+        }
+        return false
+      })
+    }
     this.spawn()
   }
 
@@ -356,9 +458,43 @@ export class TerminalCore {
   snapshot(): Promise<string> {
     return new Promise((done) => {
       this.term.write('', () =>
-        done(this.serializer.serialize() + modesTail(this.modes) + scrollRegionTail(this.term, this.region)),
+        done(
+          this.serializer.serialize() +
+            modesTail(this.modes, this.cursorStyle) +
+            scrollRegionTail(this.term, this.region),
+        ),
       )
     })
+  }
+
+  /** Answer queries here (no view is attached) or leave them to the one view that answers. */
+  answerQueries(on: boolean) {
+    this.answering = on
+  }
+
+  /** The views' theme, used for colour queries answered while no view is attached. */
+  setPalette(palette: TermColors) {
+    this.palette = palette
+  }
+
+  /**
+   * Makes a full-screen program repaint itself for a view that just attached.
+   * A snapshot cannot capture everything such a program assumes about the
+   * screen, but its own redraw is always right. The PTY briefly shrinks by one
+   * row, so the program gets two SIGWINCHes and draws at the real size last.
+   * The shell's own screen is left alone: a resize there would reflow history.
+   */
+  redraw() {
+    const terminal = this.proc?.terminal
+    if (!terminal || !this.alive || this.term.buffer.active.type !== 'alternate') return
+    if (Date.now() - this.lastRedraw < 1000) return
+    this.lastRedraw = Date.now()
+    const { cols, rows } = this
+    terminal.resize(cols, rows - 1)
+    setTimeout(() => {
+      // A real resize in the meantime already set the size.
+      if (this.proc?.terminal === terminal && this.cols === cols && this.rows === rows) terminal.resize(cols, rows)
+    }, 30)
   }
 
   input(data: string) {

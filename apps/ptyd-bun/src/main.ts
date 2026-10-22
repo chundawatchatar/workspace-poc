@@ -1,8 +1,10 @@
 import { randomBytes } from 'node:crypto'
 import { existsSync, unlinkSync } from 'node:fs'
+import { routes } from '@orch/shared'
 import {
   DAEMON_PROTOCOL,
   DaemonDecoder,
+  daemonBuild,
   encodeControlFrame,
   encodeOutputFrame,
   shellProgram,
@@ -37,6 +39,8 @@ const shell = process.argv.includes('--shell') ? option('--shell') : shellProgra
 // Keep the socket and any files it writes readable only by this user.
 process.umask(0o077)
 const instance = randomBytes(16).toString('hex')
+/** The code this daemon runs. A host built from different code warns, since a running daemon never reloads. */
+const build = daemonBuild(import.meta.path)
 
 /** The host-to-daemon messages. Every session request is bound to the connection that attached it. */
 const request = z.discriminatedUnion('type', [
@@ -50,6 +54,8 @@ const request = z.discriminatedUnion('type', [
     rows: z.coerce.number().int().positive().default(24),
     /** False when the host only wants to close the session: a missing one is answered `closed`, not started. */
     create: z.boolean().default(true),
+    /** Whether a browser view is attached through this connection; one that is answers terminal queries. */
+    viewing: z.boolean().default(false),
   }),
   z.object({ type: z.literal('input'), data: z.string().max(64 * 1024) }),
   z.object({ type: z.literal('resize'), cols: z.number().int(), rows: z.number().int() }),
@@ -58,9 +64,13 @@ const request = z.discriminatedUnion('type', [
   z.object({ type: z.literal('colors') }).passthrough(),
   z.object({ type: z.literal('close') }),
   z.object({ type: z.literal('snapshot') }),
+  z.object({ type: z.literal('viewing'), on: z.boolean() }),
+  /** Asks a full-screen program to repaint itself for a view that just attached. */
+  z.object({ type: z.literal('redraw') }),
   /** Ends every session and the daemon. Sent by `terminals:stop`, never by a running host. */
   z.object({ type: z.literal('stop') }),
 ])
+const requestTypes = new Set<string>(request.options.map((option) => option.shape.type.value))
 
 interface Peer {
   socket: Bun.Socket<unknown>
@@ -78,6 +88,8 @@ interface Peer {
   pending: Buffer[] | null
   /** Identifies the latest snapshot request; an older one that resolves late is ignored. */
   snapshotSeq: number
+  /** A browser view is attached through this connection, so the session leaves queries to it. */
+  viewing: boolean
   authTimer: ReturnType<typeof setTimeout>
 }
 
@@ -110,8 +122,18 @@ function statusMessage(entry: SessionEntry) {
       progress: info.progress,
       cols,
       rows,
+      /** It takes the views' theme, and answers queries itself while no view is attached. */
+      colors: true,
+      /** It accepts `viewing` and `redraw`. */
+      queries: true,
+      build,
     },
   }
+}
+
+/** The session answers queries itself only while no connection has a view attached. */
+function updateAnswering(entry: SessionEntry) {
+  entry.core.answerQueries(![...entry.peers].some((peer) => peer.viewing))
 }
 
 function broadcast(entry: SessionEntry, value: unknown) {
@@ -155,7 +177,7 @@ function enqueue(peer: Peer, frame: Buffer) {
 /** Forgets a connection everywhere it is referenced, so a dead peer never keeps queueing output. */
 function drop(peer: Peer) {
   clearTimeout(peer.authTimer)
-  peer.session?.peers.delete(peer)
+  if (peer.session?.peers.delete(peer)) updateAnswering(peer.session)
   peers.delete(peer.socket)
   peer.socket.terminate()
 }
@@ -228,6 +250,9 @@ function acknowledgeClose(peer: Peer) {
 }
 
 function handle(peer: Peer, value: unknown) {
+  // A newer host may send requests this daemon predates; ignoring them keeps the connection usable.
+  const type = (value as { type?: unknown } | null)?.type
+  if (typeof type === 'string' && !requestTypes.has(type)) return
   let message: z.infer<typeof request>
   try {
     message = request.parse(value)
@@ -258,7 +283,9 @@ function handle(peer: Peer, value: unknown) {
     }
     clearTimeout(peer.authTimer)
     peer.session = entry
+    peer.viewing = message.viewing
     entry.peers.add(peer)
+    updateAnswering(entry)
     sendSnapshot(peer, entry)
     return
   }
@@ -291,8 +318,20 @@ function handle(peer: Peer, value: unknown) {
     case 'snapshot':
       sendSnapshot(peer, entry)
       break
-    case 'colors':
-      // This backend lets the browser answer colour queries, so the palette is unused.
+    case 'colors': {
+      const parsed = routes.sockets.terminal.clientMessage.safeParse(message)
+      if (parsed.success && parsed.data.type === 'colors') {
+        const { type: _type, ...palette } = parsed.data
+        entry.core.setPalette(palette)
+      }
+      break
+    }
+    case 'viewing':
+      peer.viewing = message.on
+      updateAnswering(entry)
+      break
+    case 'redraw':
+      entry.core.redraw()
       break
     case 'close':
       closeSession(entry, peer)
@@ -318,6 +357,7 @@ function listen() {
           blocked: false,
           pending: null,
           snapshotSeq: 0,
+          viewing: false,
           authTimer: setTimeout(() => {}, 0),
         }
         // A connection that never authenticates must not hold a slot forever.
@@ -333,7 +373,9 @@ function listen() {
           for (const frame of peer.decoder.push(Buffer.from(data))) {
             if (frame.kind === 'control') handle(peer, frame.value)
           }
-        } catch {
+        } catch (error) {
+          // A bad frame or a failing request costs this connection, never the other sessions.
+          console.error('ptyd-bun: dropping a connection after an error', error)
           drop(peer)
         }
       },
@@ -401,5 +443,8 @@ function shutdown(code: number) {
 
 process.on('SIGINT', () => shutdown(0))
 process.on('SIGTERM', () => shutdown(0))
+// Every terminal of the host lives in this process, so a bug in one session's callbacks must not end them all.
+process.on('uncaughtException', (error) => console.error('ptyd-bun: uncaught error', error))
+process.on('unhandledRejection', (error) => console.error('ptyd-bun: unhandled rejection', error))
 
 await start()

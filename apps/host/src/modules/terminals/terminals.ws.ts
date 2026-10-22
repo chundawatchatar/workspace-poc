@@ -33,6 +33,7 @@ export function createTerminalSocket(sessions: SessionManager) {
             queued: 0,
             stale: false,
             want: null,
+            answers: false,
             send: (data) => raw.send(data),
             buffered: () => raw.getBufferedAmount(),
           }

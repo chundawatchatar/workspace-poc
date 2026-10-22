@@ -4,9 +4,12 @@ import { createConnection, type Socket } from 'node:net'
 import { join, resolve } from 'node:path'
 import { type AppState, listPanes, type SessionInfo, type TermColors, type TermServerMsg } from '@orch/shared'
 import {
+  assignResponder,
+  CAUGHT_UP,
   DAEMON_PROTOCOL,
   DaemonDecoder,
   type DaemonFrame,
+  daemonBuild,
   daemonMessage,
   type daemonStatus,
   deliver,
@@ -36,7 +39,10 @@ export class DaemonSession implements TerminalSession {
   private connecting = false
   private snapshotPending = false
   private retry: ReturnType<typeof setTimeout> | undefined
-  private readonly resync: ReturnType<typeof setInterval>
+  /** Runs while a view is stale, to resync it once it has caught up. */
+  private resync: ReturnType<typeof setInterval> | null = null
+  /** What the daemon was last told about attached views, so it answers queries only while there are none. */
+  private viewing: boolean | null = null
   private readonly record: DaemonRecord
   private size: { cols: number; rows: number }
   /** The latest view theme, resent on every connection so a new daemon answers colour queries with it. */
@@ -52,10 +58,6 @@ export class DaemonSession implements TerminalSession {
   ) {
     this.record = shared.repository.get(id)
     this.size = { cols, rows }
-    this.resync = setInterval(() => {
-      if ([...this.clients].some((client) => client.stale && client.buffered() < 128 * 1024)) this.requestSnapshot()
-    }, 100)
-    this.resync.unref()
     void this.connect()
   }
 
@@ -98,15 +100,19 @@ export class DaemonSession implements TerminalSession {
   attach(client: TermClient) {
     client.ready = false
     this.clients.add(client)
+    this.answer()
     this.requestSnapshot()
+    if (this.status?.queries) this.send({ type: 'redraw' })
   }
 
   detach(client: TermClient) {
     this.clients.delete(client)
-    if (this.controller !== client) return
-    this.controller = null
-    const next = this.clients.values().next().value
-    if (next) this.claim(next)
+    if (this.controller === client) {
+      this.controller = null
+      const next = this.clients.values().next().value
+      if (next) this.claim(next)
+    }
+    this.answer()
   }
 
   input(data: string, from: TermClient) {
@@ -119,12 +125,14 @@ export class DaemonSession implements TerminalSession {
     if (!this.controller || !this.clients.has(this.controller)) this.controller = from
     if (this.controller === from) this.apply(cols, rows)
     else this.tell(from)
+    this.answer()
   }
 
   claim(from: TermClient) {
     if (this.controller === from) return
     this.controller = from
     if (from.want) this.apply(from.want.cols, from.want.rows)
+    this.answer()
   }
 
   /** The daemon answers with a snapshot of the cleared screen; views take it only while not ready. */
@@ -145,7 +153,7 @@ export class DaemonSession implements TerminalSession {
   kill() {
     this.closing = true
     clearTimeout(this.retry)
-    clearInterval(this.resync)
+    this.stopResync()
     if (this.socket) {
       this.send({ type: 'close' })
     } else if (!this.connecting) {
@@ -156,9 +164,35 @@ export class DaemonSession implements TerminalSession {
   shutdown() {
     this.stopped = true
     clearTimeout(this.retry)
-    clearInterval(this.resync)
+    this.stopResync()
     this.socket?.destroy()
     this.clients.clear()
+  }
+
+  /**
+   * One attached view answers terminal queries; the daemon answers them only
+   * while no view is attached, and is told when that changes.
+   */
+  private answer() {
+    const viewing = assignResponder(this.clients, this.controller)
+    if (viewing === this.viewing || !this.status?.queries) return
+    if (this.send({ type: 'viewing', on: viewing })) this.viewing = viewing
+  }
+
+  /** Resyncs stale views once their sockets have drained; the timer runs only while one is stale. */
+  private watchStale() {
+    if (this.resync !== null || ![...this.clients].some((client) => client.stale)) return
+    this.resync = setInterval(() => {
+      const stale = [...this.clients].filter((client) => client.stale)
+      if (stale.length === 0) this.stopResync()
+      else if (stale.some((client) => client.buffered() < CAUGHT_UP)) this.requestSnapshot()
+    }, 100)
+    this.resync.unref()
+  }
+
+  private stopResync() {
+    if (this.resync !== null) clearInterval(this.resync)
+    this.resync = null
   }
 
   private apply(cols: number, rows: number) {
@@ -195,6 +229,7 @@ export class DaemonSession implements TerminalSession {
     if (frame.kind === 'output') {
       if (!this.status) throw new Error('Terminal output arrived before its identity')
       for (const client of this.clients) deliver(client, frame.bytes)
+      this.watchStale()
       return
     }
     const message = daemonMessage.parse(frame.value)
@@ -213,7 +248,13 @@ export class DaemonSession implements TerminalSession {
     // The first status of a connection says whether this daemon takes the theme; one from an older build doesn't.
     const first = this.status === null
     this.status = message.status
-    if (first && message.status.colors && this.palette) this.send({ type: 'colors', ...this.palette })
+    if (first) {
+      if (message.status.colors && this.palette) this.send({ type: 'colors', ...this.palette })
+      this.shared.checkBuild(message.status)
+      // The daemon learned whether views are attached from `hello`; ask a full-screen program to repaint for them.
+      this.viewing = this.clients.size > 0
+      if (message.status.queries && this.viewing) this.send({ type: 'redraw' })
+    }
     if (!message.status.alive) this.process = null
     this.onChange(this)
     if (this.closing) {
@@ -224,21 +265,19 @@ export class DaemonSession implements TerminalSession {
     if (resized) for (const client of this.clients) this.tell(client)
     if (message.type !== 'snapshot') return
     this.snapshotPending = false
-    const snapshot: TermServerMsg = {
+    const snapshot: Extract<TermServerMsg, { type: 'snapshot' }> = {
       type: 'snapshot',
       data: message.data,
       cols: message.status.cols,
       rows: message.status.rows,
-      // A daemon that answers colour queries itself tells the browser to stay quiet; the Bun backend does not.
-      serverQueries: message.status.colors === true,
     }
-    const encoded = JSON.stringify(snapshot)
     // Only views that are behind get the snapshot; redrawing the others would flicker and lose their scroll position.
     for (const client of this.clients) {
       if (client.ready && !client.stale) continue
       client.queue = []
       client.queued = 0
-      if (client.buffered() > 1024 * 1024 || client.send(encoded) === 0) {
+      const serverQueries = !client.answers
+      if (client.buffered() > 1024 * 1024 || client.send(JSON.stringify({ ...snapshot, serverQueries })) === 0) {
         client.stale = true
         client.ready = false
         continue
@@ -246,6 +285,7 @@ export class DaemonSession implements TerminalSession {
       client.ready = true
       client.stale = false
     }
+    this.watchStale()
   }
 
   private async connect(allowLaunch = true) {
@@ -302,6 +342,7 @@ export class DaemonSession implements TerminalSession {
           rows: this.size.rows,
           // Closing must not start a shell the daemon has already lost.
           create: !this.closing,
+          viewing: this.clients.size > 0,
         })
       })
       socket.on('data', (chunk: Buffer) => {
@@ -425,12 +466,32 @@ export function restoreTerminals(
  */
 export class SharedDaemon {
   private starting: Promise<void> | null = null
+  /** The build of the daemon code on disk, which a newly started daemon runs. */
+  private readonly build: string
+  /** Daemon incarnations already reported as running other code, so each is reported once. */
+  private readonly reported = new Set<string>()
 
   constructor(
     readonly repository: DaemonRepository,
     private readonly command: string[],
     private readonly shell: string,
-  ) {}
+  ) {
+    this.build = daemonBuild(command[command.length - 1])
+  }
+
+  /**
+   * Warns when the daemon runs code other than what is on disk. It never reloads, so a fix made since it
+   * started (or a branch switch) does not reach the terminals it owns until it is stopped and started again.
+   */
+  checkBuild(status: z.infer<typeof daemonStatus>) {
+    if (status.build === this.build || this.reported.has(status.instance)) return
+    this.reported.add(status.instance)
+    console.warn(
+      `terminal daemon (pid ${status.daemonPid}) runs ${status.build ? 'different' : 'older'} code than this host. ` +
+        'Its terminals keep working, but changes to the daemon reach them only after a restart: stop `bun run dev`, ' +
+        'then run `bun run terminals:stop` (this ends its shells).',
+    )
+  }
 
   /**
    * Starts the daemon if its socket is not answering. Concurrent callers share

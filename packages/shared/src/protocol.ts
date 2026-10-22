@@ -54,6 +54,8 @@ export type ClientEvent = z.infer<typeof eventsSocket.clientMessage>
 export type TermServerMsg =
   | { type: 'snapshot'; data: string; cols: number; rows: number; serverQueries?: boolean }
   | { type: 'size'; cols: number; rows: number }
+  /** Whether this view answers terminal queries. Only one view of a session does, so replies are not doubled. */
+  | { type: 'queries'; answer: boolean }
 
 /** Client to host, on a terminal socket. */
 export type TermClientMsg = z.infer<typeof terminalSocket.clientMessage>
