@@ -17,5 +17,7 @@ export const eventsSocket = defineSocket({
       }),
     }),
     z.object({ type: z.literal('ack'), sessionId: z.string() }),
+    /** Starts an interrupted terminal again: its agent on the saved conversation, or a plain shell. */
+    z.object({ type: z.literal('restore'), sessionId: z.string(), mode: z.enum(['agent', 'shell']) }),
   ]),
 })

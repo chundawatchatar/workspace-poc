@@ -12,7 +12,7 @@ import {
   splitPane,
   toggleZoom,
 } from '../lib/commands'
-import { selectTheme, setOverlay, setThemeChoice, toggleSidebar, useApp } from '../lib/store'
+import { restoreSession, selectTheme, setOverlay, setThemeChoice, toggleSidebar, useApp } from '../lib/store'
 import { tidyTitle } from './LayoutView'
 import { shortPath } from './Sidebar'
 
@@ -118,6 +118,11 @@ export function CommandPalette() {
       command('Next tab', () => cycleSurface(current, 1), 'Ctrl+Shift+]')
       command('Previous tab', () => cycleSurface(current, -1), 'Ctrl+Shift+[')
       command('Toggle full screen', () => toggleZoom(current), 'Ctrl+Shift+F')
+      const activeId = pane().activeSurfaceId
+      if (sessions[activeId]?.interrupted) {
+        command('Resume interrupted agent', () => restoreSession(activeId, 'agent'))
+        command('Open a plain shell instead', () => restoreSession(activeId, 'shell'))
+      }
     }
     command('New workspace', () => setOverlay('new-workspace'), 'Ctrl+B W')
     command('Toggle sidebar', toggleSidebar, 'Ctrl+B B  ·  ⌘B')

@@ -55,6 +55,8 @@ export function createEventsSocket({ hub, layout, sessions, info }: EventsSocket
             }
           } else if (message.type === 'ack') {
             sessions.get(message.sessionId)?.ack()
+          } else if (message.type === 'restore') {
+            sessions.get(message.sessionId)?.restore(message.mode)
           }
         },
         onClose() {

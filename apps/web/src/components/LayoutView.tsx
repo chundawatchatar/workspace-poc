@@ -1,4 +1,14 @@
-import type { LayoutNode, PaneNode, SessionInfo, SplitNode, Surface, SurfaceKind, Workspace } from '@orch/shared'
+import {
+  AGENT_LABELS,
+  type LayoutNode,
+  type PaneNode,
+  type SessionInfo,
+  type SplitNode,
+  type Surface,
+  type SurfaceKind,
+  type Workspace,
+} from '@orch/shared'
+import { TerminalInterrupted } from '@orch/ui'
 import {
   CircleAlert,
   Columns2,
@@ -14,9 +24,18 @@ import {
 } from '@orch/ui/icons'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { addSurface, closeSurface, moveSurface, selectSurface, splitPane, toggleZoom } from '../lib/commands'
-import { ackSession, dispatch, focusedPaneId, pushState, setFocus, useApp, zoomedPaneId } from '../lib/store'
+import {
+  ackSession,
+  dispatch,
+  focusedPaneId,
+  pushState,
+  restoreSession,
+  setFocus,
+  useApp,
+  zoomedPaneId,
+} from '../lib/store'
 import { IssuesView, PullsView } from './SampleSurfaces'
-import { pendingAttention } from './Sidebar'
+import { pendingAttention, shortPath } from './Sidebar'
 import { TerminalView } from './TerminalView'
 
 const DRAG_TYPE = 'application/x-poc-surface'
@@ -266,7 +285,14 @@ function PaneView({ workspace, pane }: { workspace: Workspace; pane: PaneNode })
           return (
             <div key={surface.id} className={`absolute inset-0 ${visible ? '' : 'pointer-events-none invisible'}`}>
               {surface.kind === 'terminal' ? (
-                <TerminalView sessionId={surface.id} cwd={workspace.cwd} active={visible && focused && !overlayOpen} />
+                <>
+                  <TerminalView
+                    sessionId={surface.id}
+                    cwd={workspace.cwd}
+                    active={visible && focused && !overlayOpen}
+                  />
+                  <Interrupted sessionId={surface.id} />
+                </>
               ) : surface.kind === 'pulls' ? (
                 <PullsView />
               ) : (
@@ -280,6 +306,23 @@ function PaneView({ workspace, pane }: { workspace: Workspace; pane: PaneNode })
       {zoomed && <div className="zoom-frame anim-fade pointer-events-none absolute inset-0 z-20" />}
       {activeAttention && <div className="attention-ring pointer-events-none absolute inset-0 z-20" />}
     </div>
+  )
+}
+
+/** Offers to resume the agent of a terminal the daemon lost, while it is interrupted. */
+function Interrupted({ sessionId }: { sessionId: string }) {
+  const interrupted = useApp((s) => s.sessions[sessionId]?.interrupted)
+  const home = useApp((s) => s.info?.home)
+  if (!interrupted) return null
+  return (
+    <TerminalInterrupted
+      agent={AGENT_LABELS[interrupted.agent.kind]}
+      sessionId={interrupted.agent.sessionId}
+      cwd={shortPath(interrupted.cwd, home)}
+      command={interrupted.command}
+      onResume={() => restoreSession(sessionId, 'agent')}
+      onShell={() => restoreSession(sessionId, 'shell')}
+    />
   )
 }
 

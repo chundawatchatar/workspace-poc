@@ -1,4 +1,4 @@
-import { listPanes, type SessionInfo, type Workspace } from '@orch/shared'
+import { AGENT_LABELS, listPanes, type SessionInfo, type Workspace } from '@orch/shared'
 import { CircleAlert, LoaderCircle } from '@orch/ui/icons'
 import { useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
@@ -82,7 +82,10 @@ export function SidebarTerminals({ workspace, active }: { workspace: Workspace; 
       {ids.map((id) => {
         const session = sessions[id] as SessionInfo | undefined
         const running = session?.process
-        const name = running?.name ?? (session && !session.alive ? 'exited' : shell)
+        const interrupted = session?.interrupted
+        const name = interrupted
+          ? `${AGENT_LABELS[interrupted.agent.kind]} · interrupted`
+          : (running?.name ?? (session && !session.alive ? 'exited' : shell))
         return (
           <li key={id}>
             <button
@@ -122,6 +125,7 @@ function StatusMark({ session, active }: { session: SessionInfo | undefined; act
   if (session?.attention) return <span className={`${dot} ${active ? 'bg-on-accent' : 'bg-accent'}`} />
   // On the selected tile's accent background, an outline keeps the green and red dots visible.
   const outline = active ? 'ring-1 ring-on-accent' : ''
+  if (session?.interrupted) return <span className={`${dot} bg-warn ${outline}`} title="Interrupted" />
   if (session?.process) return <span className={`${dot} bg-good ${outline}`} />
   if (session && !session.alive) return <span className={`${dot} ${active ? 'bg-bad' : 'bg-bad/70'} ${outline}`} />
   return <span className={`${dot} border ${active ? 'border-on-accent/60' : 'border-faint'}`} />

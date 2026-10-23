@@ -1,6 +1,6 @@
 import { existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import type { SessionInfo, TermColors, TermServerMsg } from '@orch/shared'
+import type { AgentRef, SessionInfo, TermColors, TermServerMsg } from '@orch/shared'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { Terminal } from '@xterm/headless'
 import type { Foreground } from './processes'
@@ -43,7 +43,7 @@ export function assignResponder(clients: ReadonlySet<TermClient>, controller: Te
 
 /**
  * A terminal that can be attached to views, inspected, and explicitly closed.
- * Both backends implement it, so the host does not know who owns the shell.
+ * The host implements it over the daemon socket; `SessionManager` keeps one per tab.
  */
 export interface TerminalSession {
   readonly id: string
@@ -51,6 +51,13 @@ export interface TerminalSession {
   readonly pid: number | undefined
   info(): SessionInfo
   observe(found: (Foreground & { cwd: string | null }) | undefined): void
+  /**
+   * The agent in the foreground as last identified by `SessionManager.inspect`, or null when there is none.
+   * `ambiguous` means another of its kind runs in the same folder, so a missing conversation id is unknown, not none.
+   */
+  observeAgent(agent: AgentRef | null, ambiguous: boolean): void
+  /** Starts an interrupted terminal again: its agent on the saved conversation, or a plain shell. */
+  restore(mode: 'agent' | 'shell'): void
   attach(client: TermClient): void
   detach(client: TermClient): void
   input(data: string, from: TermClient): void
@@ -251,17 +258,14 @@ function usableCwd(cwd: string): string {
 
 /**
  * A shell on a pseudo-terminal and its mirrored screen, with no opinion about
- * who is watching. The in-process backend fans `onOutput` out to browser views;
- * the daemon backend forwards it over its socket. Both snapshot the same way.
+ * who is watching. The daemon owns one per terminal and forwards `onOutput`
+ * over its socket to the host.
  */
 export class TerminalCore {
   readonly createdAt = Date.now()
   title = 'Terminal'
   alive = false
   attention: SessionInfo['attention'] = null
-  process: SessionInfo['process'] = null
-  /** Where the foreground program, or the idle shell, last was. */
-  workingDir: string | null = null
   progress: SessionInfo['progress'] = null
 
   private readonly term: Terminal
@@ -371,42 +375,9 @@ export class TerminalCore {
     return { cols: this.cols, rows: this.rows }
   }
 
-  info(): SessionInfo {
-    return {
-      id: this.id,
-      title: this.title,
-      alive: this.alive,
-      attention: this.attention,
-      process: this.process,
-      cwd: this.workingDir,
-      progress: this.progress,
-    }
-  }
-
-  /** Records what the shell is running, as last seen by `SessionManager.inspect`. */
-  observe(found: (Foreground & { cwd: string | null }) | undefined) {
-    const running = found?.busy ? found.process : null
-    const process: SessionInfo['process'] = running && {
-      pid: running.pid,
-      name: running.name,
-      command: running.command,
-      // Kept from the first sighting, so rounding in `ps` doesn't make it jitter.
-      startedAt:
-        this.process?.pid === running.pid
-          ? this.process.startedAt
-          : Math.round(Date.now() / 1000 - running.elapsed) * 1000,
-    }
-    // A program that exits without clearing its progress would leave the spinner running.
-    const progress = process ? this.progress : null
-    const workingDir = found?.cwd ?? this.workingDir
-    if (
-      JSON.stringify([process, workingDir, progress]) === JSON.stringify([this.process, this.workingDir, this.progress])
-    )
-      return
-    this.process = process
-    this.workingDir = workingDir
-    this.progress = progress
-    this.onChange()
+  /** What the daemon reports in its status. The host adds what it inspects itself, such as the foreground program. */
+  info(): Pick<SessionInfo, 'id' | 'title' | 'alive' | 'attention' | 'progress'> {
+    return { id: this.id, title: this.title, alive: this.alive, attention: this.attention, progress: this.progress }
   }
 
   ack() {
@@ -436,7 +407,6 @@ export class TerminalCore {
       if (this.proc !== proc) return
       this.alive = false
       this.proc = null
-      this.process = null
       this.progress = null
       this.output(encoder.encode(`\r\n\x1b[2m[process exited with code ${code} — press Enter to restart]\x1b[0m\r\n`))
       this.onChange()

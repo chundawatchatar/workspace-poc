@@ -2,7 +2,15 @@ import { spawn } from 'node:child_process'
 import { closeSync, openSync } from 'node:fs'
 import { createConnection, type Socket } from 'node:net'
 import { join, resolve } from 'node:path'
-import { type AppState, listPanes, type SessionInfo, type TermColors, type TermServerMsg } from '@orch/shared'
+import {
+  AGENT_LABELS,
+  type AgentRef,
+  type AppState,
+  listPanes,
+  type SessionInfo,
+  type TermColors,
+  type TermServerMsg,
+} from '@orch/shared'
 import {
   assignResponder,
   CAUGHT_UP,
@@ -15,6 +23,7 @@ import {
   deliver,
   encodeControlFrame,
   type Foreground,
+  resumeCommand,
   type SessionManager,
   shellEnv,
   shellProgram,
@@ -43,7 +52,14 @@ export class DaemonSession implements TerminalSession {
   private resync: ReturnType<typeof setInterval> | null = null
   /** What the daemon was last told about attached views, so it answers queries only while there are none. */
   private viewing: boolean | null = null
-  private readonly record: DaemonRecord
+  private record: DaemonRecord
+  /** The agent in the foreground, as last identified, and its process. */
+  private agent: AgentRef | null = null
+  private agentPid: number | undefined
+  /** Set while the daemon has lost this session and an agent was running in it; see `restore`. */
+  private interrupted: SessionInfo['interrupted'] = null
+  /** Set by `restore` until the daemon has started the new shell. */
+  private restoring: { cwd: string; command: string | null } | null = null
   private size: { cols: number; rows: number }
   /** The latest view theme, resent on every connection so a new daemon answers colour queries with it. */
   private palette: TermColors | null = null
@@ -61,8 +77,9 @@ export class DaemonSession implements TerminalSession {
     void this.connect()
   }
 
+  /** The shell's pid, only while connected: a status kept from before a disconnect may name a shell that is gone. */
   get pid() {
-    return this.status?.pid ?? undefined
+    return (this.socket && this.status?.alive && this.status.pid) || undefined
   }
 
   info(): SessionInfo {
@@ -73,7 +90,9 @@ export class DaemonSession implements TerminalSession {
       attention: this.status?.attention ?? null,
       progress: this.status?.progress ?? null,
       process: this.process,
-      cwd: this.workingDir ?? this.cwd,
+      cwd: this.interrupted?.cwd ?? this.workingDir ?? this.record.cwd ?? this.cwd,
+      agent: this.agent,
+      interrupted: this.interrupted,
     }
   }
 
@@ -91,15 +110,53 @@ export class DaemonSession implements TerminalSession {
         }
       : null
     const cwd = found?.cwd ?? this.workingDir
+    // The idle shell's directory is where it reopens should the daemon lose it.
+    if (found && !found.busy && found.cwd) this.save({ cwd: found.cwd })
     if (JSON.stringify([next, cwd]) === JSON.stringify([this.process, this.workingDir])) return
     this.process = next
     this.workingDir = cwd
     this.onChange(this)
   }
 
+  /**
+   * Keeps the agent and its conversation on record as soon as they are known, so they can be resumed if the
+   * daemon loses the session. While the conversation can't be told apart from another agent's in the folder, the
+   * one this process had before is kept.
+   */
+  observeAgent(agent: AgentRef | null, ambiguous: boolean) {
+    if (this.closing || this.interrupted) return
+    const known = this.agent
+    const pid = agent ? this.process?.pid : undefined
+    const same = pid !== undefined && pid === this.agentPid && known?.kind === agent?.kind && known?.cwd === agent?.cwd
+    const next =
+      agent && !agent.sessionId && ambiguous && same ? { ...agent, sessionId: known?.sessionId ?? null } : agent
+    this.agentPid = pid
+    this.save({ agent: next })
+    if (JSON.stringify(next) === JSON.stringify(known)) return
+    this.agent = next
+    this.onChange(this)
+  }
+
+  /** Starts an interrupted terminal again, in a new shell that runs the agent's resume command if asked to. */
+  restore(mode: 'agent' | 'shell') {
+    const interrupted = this.interrupted
+    if (!interrupted || this.closing) return
+    this.restoring = { cwd: interrupted.cwd, command: mode === 'agent' ? interrupted.command : null }
+    this.interrupted = null
+    // A plain shell was chosen over the agent, so it is not offered again.
+    if (mode === 'shell') this.save({ agent: null })
+    this.onChange(this)
+    clearTimeout(this.retry)
+    void this.connect()
+  }
+
   attach(client: TermClient) {
     client.ready = false
     this.clients.add(client)
+    if (this.interrupted) {
+      this.showInterrupted(client)
+      return
+    }
     this.answer()
     this.requestSnapshot()
     if (this.status?.queries) this.send({ type: 'redraw' })
@@ -117,6 +174,11 @@ export class DaemonSession implements TerminalSession {
 
   input(data: string, from: TermClient) {
     this.claim(from)
+    // As with an exited shell, Enter in an interrupted terminal starts a plain shell.
+    if (this.interrupted) {
+      if (data.includes('\r')) this.restore('shell')
+      return
+    }
     this.send({ type: 'input', data })
   }
 
@@ -167,6 +229,50 @@ export class DaemonSession implements TerminalSession {
     this.stopResync()
     this.socket?.destroy()
     this.clients.clear()
+  }
+
+  private save(patch: Partial<Pick<DaemonRecord, 'cwd' | 'agent'>>) {
+    if (this.closing || this.stopped) return
+    const record: Partial<DaemonRecord> = this.record
+    const same = Object.entries(patch).every(([key, value]) => {
+      return JSON.stringify(record[key as keyof DaemonRecord] ?? null) === JSON.stringify(value ?? null)
+    })
+    if (same) return
+    try {
+      this.record = this.shared.repository.update(this.id, patch)
+    } catch (error) {
+      console.error(`terminal ${this.id}: saving its record failed`, error)
+    }
+  }
+
+  /** Shows a view the interrupted notice. The overlay in the web app offers the choices. */
+  private showInterrupted(client: TermClient) {
+    const interrupted = this.interrupted
+    if (!interrupted) return
+    const label = AGENT_LABELS[interrupted.agent.kind]
+    const text =
+      `\x1b[2m[The terminal daemon restarted while ${label} was running in ${interrupted.cwd}.\r\n` +
+      ` Resume ${label}, or press Enter for a plain shell.]\x1b[0m\r\n`
+    const { cols, rows } = this.size
+    client.send(JSON.stringify({ type: 'snapshot', data: text, cols, rows } satisfies TermServerMsg))
+    client.queue = []
+    client.queued = 0
+    client.stale = false
+    client.ready = true
+  }
+
+  /** The daemon no longer has this session. An agent's terminal waits for the user rather than losing it silently. */
+  private lose() {
+    const agent = this.record.agent
+    const command = agent && resumeCommand(agent)
+    if (!agent || !command) throw new Error('Terminal daemon lost a session it was asked to create')
+    this.interrupted = { agent, cwd: agent.cwd, command }
+    this.agent = null
+    this.agentPid = undefined
+    this.process = null
+    this.snapshotPending = false
+    for (const client of this.clients) this.showInterrupted(client)
+    this.onChange(this)
   }
 
   /**
@@ -234,8 +340,12 @@ export class DaemonSession implements TerminalSession {
     }
     const message = daemonMessage.parse(frame.value)
     if (message.type === 'closed') {
-      // A session the daemon no longer has is acknowledged before any status.
-      if (!this.closing) throw new Error('Unexpected daemon close acknowledgement')
+      // A session the daemon no longer has is acknowledged before any status. Unless closing, it was asked to
+      // attach without creating one because an agent ran in it: the daemon restarted and lost it.
+      if (!this.closing) {
+        this.lose()
+        return
+      }
       this.closeAcknowledged = true
       return
     }
@@ -249,6 +359,10 @@ export class DaemonSession implements TerminalSession {
     const first = this.status === null
     this.status = message.status
     if (first) {
+      // A restored agent's resume command is typed ahead into its new shell, so it also lands in shell history.
+      const command = this.restoring?.command
+      this.restoring = null
+      if (command) this.send({ type: 'input', data: `${command}\r` })
       if (message.status.colors && this.palette) this.send({ type: 'colors', ...this.palette })
       this.shared.checkBuild(message.status)
       // The daemon learned whether views are attached from `hello`; ask a full-screen program to repaint for them.
@@ -305,7 +419,7 @@ export class DaemonSession implements TerminalSession {
     } catch (error) {
       if (this.stopped) return
       console.error(`terminal ${this.id}:`, error)
-      const text = `\r\nTerminal backend unavailable: ${error instanceof Error ? error.message : String(error)}\r\n`
+      const text = `\r\nTerminal daemon unavailable: ${error instanceof Error ? error.message : String(error)}\r\n`
       for (const client of this.clients) {
         client.send(JSON.stringify({ type: 'snapshot', cols: 80, rows: 24, data: text } satisfies TermServerMsg))
       }
@@ -337,11 +451,13 @@ export class DaemonSession implements TerminalSession {
           protocol: DAEMON_PROTOCOL,
           id: this.id,
           token: this.record.token,
-          cwd: this.cwd,
+          // A lost plain shell reopens where it last was.
+          cwd: this.restoring?.cwd ?? this.record.cwd ?? this.cwd,
           cols: this.size.cols,
           rows: this.size.rows,
-          // Closing must not start a shell the daemon has already lost.
-          create: !this.closing,
+          // Closing must not start a shell the daemon has already lost, and neither may a terminal that ran an
+          // agent: it is shown as interrupted instead, so the agent can be resumed.
+          create: !this.closing && (this.restoring !== null || !this.record.agent),
           viewing: this.clients.size > 0,
         })
       })
@@ -369,7 +485,7 @@ export class DaemonSession implements TerminalSession {
         this.snapshotPending = false
         if (!verified) reject(new Error('Terminal daemon closed before authentication'))
         if (this.closing && this.closeAcknowledged) this.shared.repository.remove(this.id)
-        if (verified && !this.stopped && !this.closing) this.scheduleRetry()
+        if (verified && !this.stopped && !this.closing && !this.interrupted) this.scheduleRetry()
       })
     })
   }
@@ -517,14 +633,16 @@ export class SharedDaemon {
     throw new Error('Terminal daemon did not start; inspect its log in the runtime folder')
   }
 
-  private async ping(): Promise<boolean> {
-    try {
-      const socket = await Bun.connect({ unix: this.repository.socket, socket: {} })
-      socket.end()
-      return true
-    } catch {
-      return false
-    }
+  // `Bun.connect` refuses a probe without data handlers, so this uses `node:net` like `stopDaemon`.
+  private ping(): Promise<boolean> {
+    return new Promise((done) => {
+      const socket = createConnection(this.repository.socket)
+      socket.on('connect', () => {
+        socket.end()
+        done(true)
+      })
+      socket.on('error', () => done(false))
+    })
   }
 
   private launch() {

@@ -11,8 +11,6 @@ export interface HostInfo {
   shell: string
   platform: string
   projectRoot: string
-  /** The backend selected for newly opened terminals. */
-  terminalBackend?: 'memory' | 'bun'
 }
 
 /** The program a terminal's shell is running in the foreground. */
@@ -24,6 +22,27 @@ export interface ProcessInfo {
   command: string
   /** When it started, in epoch milliseconds. */
   startedAt: number
+}
+
+/** The coding agents whose conversations can be found and resumed. */
+export type AgentKind = 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi' | 'commandcode'
+
+export const AGENT_LABELS: Record<AgentKind, string> = {
+  claude: 'Claude Code',
+  codex: 'Codex',
+  opencode: 'OpenCode',
+  cursor: 'Cursor Agent',
+  pi: 'pi',
+  commandcode: 'Command Code',
+}
+
+/** An agent conversation running in a terminal, as far as it could be identified. */
+export interface AgentRef {
+  kind: AgentKind
+  /** The agent's own session id. Null when only the agent is known, so resuming continues its latest conversation. */
+  sessionId: string | null
+  /** Where the agent runs, which is where it looks for its conversations. */
+  cwd: string
 }
 
 export interface SessionInfo {
@@ -38,6 +57,14 @@ export interface SessionInfo {
   cwd: string | null
   /** What the program reports with the OSC 9;4 progress sequence. */
   progress: 'busy' | 'error' | null
+  /** The agent in the foreground, once identified. */
+  agent: AgentRef | null
+  /**
+   * Set when the terminal daemon lost this session (it restarted or the machine rebooted) while an agent ran in
+   * it. Nothing runs until the user resumes the agent or opens a plain shell.
+   */
+  /** `command` is what Resume runs: the agent on its conversation, or fresh when it had not started one. */
+  interrupted: { agent: AgentRef; cwd: string; command: string } | null
 }
 
 /** Host to client, on the events socket. */

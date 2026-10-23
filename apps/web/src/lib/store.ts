@@ -170,6 +170,11 @@ export function ackSession(sessionId: string) {
   send({ type: 'ack', sessionId })
 }
 
+/** Starts an interrupted terminal again: its agent on the saved conversation, or a plain shell. */
+export function restoreSession(sessionId: string, mode: 'agent' | 'shell') {
+  send({ type: 'restore', sessionId, mode })
+}
+
 export function setFocus(workspaceId: string, paneId: string) {
   const zoomed = snapshot.zoom[workspaceId]
   // Moving to another pane leaves full screen, so that pane is not hidden behind it.

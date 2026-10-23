@@ -1,35 +1,17 @@
-# Terminal backends
+# Terminal daemon
 
-The host can own a shell in two ways, selected at runtime. Both present the same
-`TerminalSession` interface, so the browser and the rest of the host do not know
-which one is running.
+Every terminal's shell runs in one shared Bun daemon (`apps/ptyd-bun`), not in
+the host. The daemon outlives the host, so updating or restarting the app
+leaves shells and agents running, which is `TERM-8` in
+[REQUIREMENTS.md](REQUIREMENTS.md). The host talks to it over a Unix socket:
+JSON control messages and binary terminal output.
 
-| Backend | Who owns the shell | Survives host restart | Wire |
-| --- | --- | --- | --- |
-| `memory` (default) | The host process (Bun PTY) | No | browser WebSocket only |
-| `bun` | One shared Bun daemon for every terminal (`apps/ptyd-bun`) | Yes | Unix socket: JSON control + binary output |
+## Starting and stopping
 
-`bun` keeps shells and agents alive across a host restart, which is `TERM-8` in
-[REQUIREMENTS.md](REQUIREMENTS.md).
-
-## Switching
-
-```bash
-bun run terminals:backend bun      # persistent: one shared Bun daemon
-bun run terminals:backend memory   # the default, in-process Bun PTY
-```
-
-The command writes `apps/host/.data/terminal-backend.json` and reloads a running
-dev host. `ORCH_TERMINAL_BACKEND` overrides the file for one launch, so
-`bun run dev:bun` selects the daemon without touching the setting. To stop the
-daemon and every session it owns, stop `bun run dev` first, then run
+The host starts the daemon on demand and reattaches to it after a restart. To
+stop the daemon and every session it owns, stop `bun run dev` first, then run
 `bun run terminals:stop`. It refuses while a host is listening, because that host
 would start the daemon again for its open tabs.
-
-A switch cannot migrate a shell that is already running: `memory` shells die with
-the host, and a daemon shell is only reattached while the daemon lives. The
-daemon keeps each session's credential, so switching back to `bun` reattaches to
-its still-running sessions rather than orphaning them.
 
 ## How it fits together
 
@@ -37,12 +19,12 @@ its still-running sessions rather than orphaning them.
 browser ──ws──> host (apps/host)  ── unix socket ──> daemon (apps/ptyd-bun)
                       │                            │  ── PTY ──> $SHELL -l (term A)
                       │                            └─ ── PTY ──> $SHELL -l (term B)
-                      └── packages/terminal: the in-process backend and the shared core
+                      └── packages/terminal: the shared core, process inspection, agents
 ```
 
 - `packages/terminal` holds `TerminalCore` (the PTY, the headless emulator and a
-  terminal's metadata), the in-process `Session`/`SessionManager`, process
-  inspection, and the daemon wire protocol. Both the host and the daemon import
+  terminal's metadata), the host's `SessionManager`, process inspection, agent
+  detection and the daemon wire protocol. Both the host and the daemon import
   it.
 - `apps/ptyd-bun/src/main.ts` is one standalone process, started detached by the
   host. It reuses `TerminalCore` and owns a map of sessions, each with its own
@@ -52,6 +34,50 @@ browser ──ws──> host (apps/host)  ── unix socket ──> daemon (app
 - `apps/host/src/modules/terminals/daemon.service.ts` is the host adapter: it
   starts the shared daemon once, attaches each terminal, and forwards output to
   browser views. It is the only host code that knows the shell lives elsewhere.
+
+## Restoring after the daemon restarts
+
+The daemon keeps shells alive across host restarts, but it can still go away: a
+change to its code (it never reloads), a crash, `terminals:stop` or a reboot.
+So that this does not silently lose work, the host keeps more than the
+credential in each terminal's record under `.data/terminal-daemons/`:
+
+- `cwd`: the idle shell's working directory, saved whenever it changes.
+- `agent`: the coding agent in the foreground and its own conversation id,
+  saved as soon as they are identified and cleared when the shell is back at
+  its prompt.
+
+Agents are recognised by program name in `packages/terminal/src/agents.ts`,
+which also knows where each one keeps its conversations:
+
+| Agent | Program | Conversation id from | Resume |
+| --- | --- | --- | --- |
+| Claude Code | `claude` | `~/.claude/sessions/<pid>.json` (an id counts once `~/.claude/projects/<cwd>/<id>.jsonl` exists), else `--resume` | `claude --resume <id>` |
+| Codex | `codex` | the newest rollout for this cwd written since it started, under the last 30 days of `~/.codex/sessions/`, else `resume <id>` | `codex resume <id>` |
+| OpenCode | `opencode` | `--session` only (its store is SQLite) | `opencode --session <id>` / `--continue` |
+| Cursor Agent | `cursor-agent` | `--resume` only (its store is undocumented) | `cursor-agent --resume <id>` / `resume` |
+| pi | `pi` | `~/.pi/agent/sessions/--<cwd>--/`, else `--session` | `pi --session <id>` |
+| Command Code | `cmd` | `~/.commandcode/projects/*/`, else `--session`/`--resume` | `cmd --session <id>` |
+
+Agents only write a conversation with its first message, so an id is saved
+only once its conversation is on disk: resuming one that was just opened would
+fail. Without an id, Claude Code, Codex, pi and Command Code had not started a
+conversation, so they start fresh; OpenCode and Cursor Agent, whose ids can't
+be found, continue their latest conversation in that folder. Codex, pi and Command
+Code find a conversation by folder, so when two of the same agent run in one
+folder neither takes an id that way. The agent's files come before its
+command line, which only names the conversation it began in, not one it
+switched to with `/resume`, `/new` or `/clear`. An agent run by `node`, `bun` or
+`deno` is recognised by its script. Ids are only typed into a shell if they
+are plain word characters.
+
+When the host reattaches a terminal whose record holds an agent, it sends
+`hello` with `create: false`. If the daemon no longer has the session it
+answers `closed`, and the terminal is shown as **interrupted** instead of
+getting a fresh shell. The web app offers **Resume agent**, which starts a shell
+in the agent's folder and types its resume command, or **Open shell** (also
+Enter). Terminals without an agent are created again as usual, in their saved
+`cwd`. The same happens when the daemon dies while the host is running.
 
 ## Why output is binary
 
@@ -79,9 +105,8 @@ The tradeoff is isolation. Each shell is still its own OS process, so a shell
 crash cannot hurt the others. A failing request costs only its connection (the
 host reconnects), and an uncaught error is logged rather than ending the
 process. But out-of-memory or a crash in Bun itself ends every terminal at once,
-and upgrading the daemon restarts them all. For a local tool that is the same
-exposure the in-process `memory` backend already has, and it is worth the
-memory.
+and upgrading the daemon restarts them all (see below for how agents are then
+resumed). For a local tool that is worth the memory.
 
 ## Reattaching and queries
 
@@ -111,6 +136,8 @@ memory.
 - **Colour queries before any view.** The session can answer colour queries
   only after a view has sent its theme; a daemon started with no view attached
   leaves them unanswered until then.
+- **Restarting the daemon still ends programs.** Agents can be resumed, but a
+  turn in progress is cut off, and other programs and their scrollback are lost.
 - **Idle cost.** The daemon stays resident (about 44 MB) while the host runs,
   even if every tab is closed, until `terminals:stop`.
 - **Packaging.** The daemon runs as TypeScript on the host's Bun; it is not yet

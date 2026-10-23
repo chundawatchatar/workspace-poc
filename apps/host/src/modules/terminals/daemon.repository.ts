@@ -1,11 +1,36 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { join, resolve } from 'node:path'
 import { z } from 'zod'
 
-const recordSchema = z.object({ id: z.string(), token: z.string().uuid() })
+const agentSchema = z.object({
+  kind: z.enum(['claude', 'codex', 'opencode', 'cursor', 'pi', 'commandcode']),
+  sessionId: z.string().nullable(),
+  cwd: z.string(),
+})
 
-/** The credential a host presents when it attaches one terminal to the shared daemon. */
+const recordSchema = z.object({
+  id: z.string(),
+  token: z.string().uuid(),
+  /** The shell's last working directory, where it reopens if the daemon loses it. */
+  cwd: z.string().optional(),
+  /** The agent running in the terminal, kept so it can be resumed if the daemon loses the session. */
+  agent: agentSchema.nullable().optional(),
+})
+
+/**
+ * The credential a host presents when it attaches one terminal to the shared daemon, and what it needs to start
+ * the terminal again should the daemon lose it. Records written before `cwd` and `agent` existed still parse.
+ */
 export type DaemonRecord = z.infer<typeof recordSchema>
 
 /** Keeps one shared daemon's socket and the per-terminal credentials in private, short paths. */
@@ -67,6 +92,19 @@ export class DaemonRepository {
           return []
         }
       })
+  }
+
+  /** Saves what is known about a terminal's shell and agent. Writes only when something changed. */
+  update(id: string, patch: Partial<Pick<DaemonRecord, 'cwd' | 'agent'>>): DaemonRecord {
+    const current = this.get(id)
+    const next = { ...current, ...patch }
+    if (JSON.stringify(next) === JSON.stringify(current)) return current
+    const file = join(this.records, `${this.key(id)}.json`)
+    // Written aside and renamed into place, so a crash mid-write never leaves a record that fails to parse.
+    const temp = `${file}.${process.pid}.tmp`
+    writeFileSync(temp, JSON.stringify(next), { mode: 0o600 })
+    renameSync(temp, file)
+    return next
   }
 
   remove(id: string) {
