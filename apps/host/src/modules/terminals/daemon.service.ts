@@ -110,8 +110,11 @@ export class DaemonSession implements TerminalSession {
         }
       : null
     const cwd = found?.cwd ?? this.workingDir
-    // The idle shell's directory is where it reopens should the daemon lose it.
-    if (found && !found.busy && found.cwd) this.save({ cwd: found.cwd })
+    if (found && !found.busy) {
+      // The idle shell's directory is where it reopens should the daemon lose it.
+      if (found.cwd) this.save({ cwd: found.cwd })
+      if (this.status?.progress) this.send({ type: 'idle' })
+    }
     if (JSON.stringify([next, cwd]) === JSON.stringify([this.process, this.workingDir])) return
     this.process = next
     this.workingDir = cwd

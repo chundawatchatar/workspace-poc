@@ -135,6 +135,29 @@ test('modesTail restores the mouse encoding and alternate scroll the serializer 
  * scrolls inside it. xterm's serialize addon drops the region, so without the
  * tail a restored terminal scrolls the whole screen instead.
  */
+test('scrollRegionTail keeps a wrap pending at the right margin', async () => {
+  const original = screen()
+  original.term.write('123456789012')
+  await settle(original.term)
+
+  const restored = screen()
+  restored.term.write(original.serializer.serialize() + scrollRegionTail(original.term, null))
+  restored.term.write('X')
+  await settle(restored.term)
+  expect(rows(restored.term).split('\n').slice(0, 2)).toEqual(['123456789012', 'X'])
+})
+
+test('scrollRegionTail puts the cursor back after origin mode homes it', async () => {
+  const original = screen()
+  original.term.write('\x1b[?6h\x1b[3;1H123456789012')
+  await settle(original.term)
+
+  const restored = screen()
+  restored.term.write(original.serializer.serialize() + scrollRegionTail(original.term, null))
+  await settle(restored.term)
+  expect(restored.term.buffer.active.cursorY).toBe(2)
+})
+
 test('scrollRegionTail keeps a scrolling region a serialized snapshot drops', async () => {
   const original = screen()
   original.term.write('\x1b[1;1HTOP\x1b[5;1HBOT\x1b[2;4r\x1b[4;1Hone\r\ntwo\r\nthree\r\nfour\r\nfive')

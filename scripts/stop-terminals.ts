@@ -23,8 +23,9 @@ if (await hostRunning()) {
 
 const repository = new DaemonRepository(resolve(import.meta.dir, '../apps/host'))
 const result = await stopDaemon(repository)
+// Records are kept: the next host offers to resume their agents and reopens shells in their folders, and ends
+// the records of terminals no longer in its layout.
 if (result === 'stopped') {
-  for (const record of repository.list()) repository.remove(record.id)
   console.log('Stopped the terminal daemon and every session it owned')
 } else {
   console.log('No terminal daemon was running')

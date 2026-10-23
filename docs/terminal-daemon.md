@@ -11,7 +11,9 @@ JSON control messages and binary terminal output.
 The host starts the daemon on demand and reattaches to it after a restart. To
 stop the daemon and every session it owns, stop `bun run dev` first, then run
 `bun run terminals:stop`. It refuses while a host is listening, because that host
-would start the daemon again for its open tabs.
+would start the daemon again for its open tabs. Each terminal's record is kept,
+so the next host reopens shells in their folders and offers to resume agents
+(see below); it ends the records of terminals no longer in its layout.
 
 ## How it fits together
 

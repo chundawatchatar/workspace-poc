@@ -211,8 +211,12 @@ export function scrollRegionTail(term: Terminal, region: { top: number; bottom: 
   const active = term.buffer.active
   const origin = term.modes.originMode
   const restored = top !== 0 || bottom !== rows - 1 ? `\x1b[${top + 1};${bottom + 1}r` : ''
+  // Output that ended at the right margin leaves a wrap pending, which the serialized cursor keeps but a cursor
+  // move would cancel. A restored region or origin mode (whose sequence in the snapshot homes the cursor) needs
+  // the move anyway, and then the next character overwrites.
+  if (!restored && !origin && active.cursorX >= term.cols) return ''
   const row = origin ? Math.max(0, active.cursorY - top) : active.cursorY
-  return `${restored}\x1b[${row + 1};${active.cursorX + 1}H`
+  return `${restored}\x1b[${row + 1};${Math.min(active.cursorX, term.cols - 1) + 1}H`
 }
 
 /**
@@ -454,6 +458,13 @@ export class TerminalCore {
    * row, so the program gets two SIGWINCHes and draws at the real size last.
    * The shell's own screen is left alone: a resize there would reflow history.
    */
+  /** Clears the progress a program left behind when it exited without clearing it, which would spin forever. */
+  idle() {
+    if (this.progress === null) return
+    this.progress = null
+    this.onChange()
+  }
+
   redraw() {
     const terminal = this.proc?.terminal
     if (!terminal || !this.alive || this.term.buffer.active.type !== 'alternate') return

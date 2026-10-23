@@ -98,6 +98,16 @@ test('finds a resumed Codex conversation in the folder of the day it began', () 
     `${JSON.stringify({ type: 'session_meta', payload: { id: 'resumed', cwd: '/repo' } })}\n`,
   )
   expect(detectAgent(proc('codex resume --last'), '/repo', home)?.sessionId).toBe('resumed')
+
+  // Switching back to today's conversation makes it the newest again.
+  const now = new Date()
+  const today = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getDate()).padStart(2, '0')}`
+  write(
+    join(home, '.codex', 'sessions', today, 'rollout-new.jsonl'),
+    `${JSON.stringify({ type: 'session_meta', payload: { id: 'today', cwd: '/repo' } })}\n`,
+    Date.now() - 20_000,
+  )
+  expect(detectAgent(proc('codex'), '/repo', home)?.sessionId).toBe('resumed')
 })
 
 test('never puts an unsafe id into a command line', () => {

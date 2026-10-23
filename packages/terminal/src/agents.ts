@@ -84,18 +84,19 @@ function safeJson(text: string): Record<string, unknown> | null {
   }
 }
 
-/** `.jsonl` files in `dir` written since the process started, newest first. A missing directory has none. */
-function recentTranscripts(dir: string, since: number): string[] {
-  let names: string[]
-  try {
-    names = readdirSync(dir)
-  } catch {
-    return []
-  }
-  return names
-    .filter((name) => name.endsWith('.jsonl'))
-    .flatMap((name) => {
-      const file = join(dir, name)
+/** `.jsonl` files in `dirs` written since the process started, newest first across all of them. */
+function recentTranscripts(dirs: string[], since: number): string[] {
+  return dirs
+    .flatMap((dir) => {
+      try {
+        return readdirSync(dir)
+          .filter((name) => name.endsWith('.jsonl'))
+          .map((name) => join(dir, name))
+      } catch {
+        return []
+      }
+    })
+    .flatMap((file) => {
       try {
         const { mtimeMs } = statSync(file)
         return mtimeMs >= since - CLOCK_SLACK ? [{ file, mtimeMs }] : []
@@ -148,12 +149,11 @@ const codex: AgentAdapter = {
   // written with the first message, so before that there is nothing to resume. A resumed conversation keeps
   // appending to the file of the day it began, so older days are searched for files written since the start.
   findSessionId({ cwd, startedAt }, home) {
-    for (const day of recentDays()) {
-      for (const file of recentTranscripts(join(home, '.codex', 'sessions', day), startedAt)) {
-        const meta = safeJson(firstLine(file))
-        const payload = meta?.type === 'session_meta' ? (meta.payload as Record<string, unknown>) : null
-        if (payload?.cwd === cwd && typeof payload.id === 'string') return payload.id
-      }
+    const days = recentDays().map((day) => join(home, '.codex', 'sessions', day))
+    for (const file of recentTranscripts(days, startedAt)) {
+      const meta = safeJson(firstLine(file))
+      const payload = meta?.type === 'session_meta' ? (meta.payload as Record<string, unknown>) : null
+      if (payload?.cwd === cwd && typeof payload.id === 'string') return payload.id
     }
     return undefined
   },
@@ -188,7 +188,7 @@ const pi: AgentAdapter = {
   // Conversations are `agent/sessions/--<cwd with dashes>--/<timestamp>_<uuid>.jsonl`.
   findSessionId({ cwd, startedAt }, home) {
     const dir = join(home, '.pi', 'agent', 'sessions', `--${cwd.replace(/^\//, '').replace(/\//g, '-')}--`)
-    const file = recentTranscripts(dir, startedAt)[0]
+    const file = recentTranscripts([dir], startedAt)[0]
     return (file && basename(file, '.jsonl').split('_').pop()) || undefined
   },
   resumeCommand: (id) => (id ? `pi --session ${id}` : 'pi'),
@@ -208,12 +208,13 @@ const commandcode: AgentAdapter = {
     } catch {
       return undefined
     }
-    for (const project of projects) {
-      for (const file of recentTranscripts(join(root, project), startedAt)) {
-        if (/\.(checkpoints|prompts)\.jsonl$/.test(file)) continue
-        const header = safeJson(firstLine(file))
-        if (header && Object.values(header).includes(cwd)) return basename(file, '.jsonl')
-      }
+    for (const file of recentTranscripts(
+      projects.map((project) => join(root, project)),
+      startedAt,
+    )) {
+      if (/\.(checkpoints|prompts)\.jsonl$/.test(file)) continue
+      const header = safeJson(firstLine(file))
+      if (header && Object.values(header).includes(cwd)) return basename(file, '.jsonl')
     }
     return undefined
   },

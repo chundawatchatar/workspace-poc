@@ -67,6 +67,8 @@ const request = z.discriminatedUnion('type', [
   z.object({ type: z.literal('viewing'), on: z.boolean() }),
   /** Asks a full-screen program to repaint itself for a view that just attached. */
   z.object({ type: z.literal('redraw') }),
+  /** The shell is back at its prompt, so progress its last program left behind is cleared. */
+  z.object({ type: z.literal('idle') }),
   /** Ends every session and the daemon. Sent by `terminals:stop`, never by a running host. */
   z.object({ type: z.literal('stop') }),
 ])
@@ -333,6 +335,9 @@ function handle(peer: Peer, value: unknown) {
     case 'redraw':
       entry.core.redraw()
       break
+    case 'idle':
+      entry.core.idle()
+      break
     case 'close':
       closeSession(entry, peer)
       break
@@ -401,7 +406,8 @@ function listen() {
 async function liveDaemon(): Promise<boolean> {
   if (!existsSync(socketPath)) return false
   try {
-    const socket = await Bun.connect({ unix: socketPath, socket: {} })
+    // Bun refuses a socket without a data or drain handler, which would make a live daemon look absent.
+    const socket = await Bun.connect({ unix: socketPath, socket: { data() {} } })
     socket.end()
     return true
   } catch {
