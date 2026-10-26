@@ -367,7 +367,7 @@ export class DaemonSession implements TerminalSession {
       this.restoring = null
       if (command) this.send({ type: 'input', data: `${command}\r` })
       if (message.status.colors && this.palette) this.send({ type: 'colors', ...this.palette })
-      this.shared.checkBuild(message.status)
+      this.shared.heard(message.status)
       // The daemon learned whether views are attached from `hello`; ask a full-screen program to repaint for them.
       this.viewing = this.clients.size > 0
       if (message.status.queries && this.viewing) this.send({ type: 'redraw' })
@@ -589,6 +589,7 @@ export class SharedDaemon {
   private readonly build: string
   /** Daemon incarnations already reported as running other code, so each is reported once. */
   private readonly reported = new Set<string>()
+  private lastStartedAt: number | null = null
 
   constructor(
     readonly repository: DaemonRepository,
@@ -598,11 +599,22 @@ export class SharedDaemon {
     this.build = daemonBuild(command[command.length - 1])
   }
 
+  /** When the daemon last heard from started, in epoch milliseconds. Null until a status carried one. */
+  get startedAt(): number | null {
+    return this.lastStartedAt
+  }
+
+  /** Takes in the first status of a connection: remembers when that daemon started and checks its build. */
+  heard(status: z.infer<typeof daemonStatus>) {
+    this.lastStartedAt = status.startedAt ?? null
+    this.checkBuild(status)
+  }
+
   /**
    * Warns when the daemon runs code other than what is on disk. It never reloads, so a fix made since it
    * started (or a branch switch) does not reach the terminals it owns until it is stopped and started again.
    */
-  checkBuild(status: z.infer<typeof daemonStatus>) {
+  private checkBuild(status: z.infer<typeof daemonStatus>) {
     if (status.build === this.build || this.reported.has(status.instance)) return
     this.reported.add(status.instance)
     console.warn(

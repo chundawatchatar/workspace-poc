@@ -34,6 +34,8 @@ export const daemonStatus = z.object({
   queries: z.boolean().optional(),
   /** A hash of the daemon's code, from `daemonBuild`. Absent from daemons started by an older build. */
   build: z.string().optional(),
+  /** When the daemon process started, in epoch milliseconds. Absent from daemons started by an older build. */
+  startedAt: z.number().int().optional(),
 })
 
 /**

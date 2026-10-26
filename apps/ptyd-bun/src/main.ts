@@ -39,6 +39,8 @@ const shell = process.argv.includes('--shell') ? option('--shell') : shellProgra
 // Keep the socket and any files it writes readable only by this user.
 process.umask(0o077)
 const instance = randomBytes(16).toString('hex')
+/** When this daemon started, so the host can report its uptime. */
+const startedAt = Date.now()
 /** The code this daemon runs. A host built from different code warns, since a running daemon never reloads. */
 const build = daemonBuild(import.meta.path)
 
@@ -129,6 +131,7 @@ function statusMessage(entry: SessionEntry) {
       /** It accepts `viewing` and `redraw`. */
       queries: true,
       build,
+      startedAt,
     },
   }
 }

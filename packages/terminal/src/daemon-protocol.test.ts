@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { DaemonDecoder, encodeControlFrame, encodeOutputFrame } from './daemon-protocol'
+import { DaemonDecoder, daemonStatus, encodeControlFrame, encodeOutputFrame } from './daemon-protocol'
 
 test('decodes fragmented and coalesced frames, keeping control and output apart', () => {
   const decoder = new DaemonDecoder()
@@ -20,4 +20,22 @@ test('rejects unbounded or empty daemon frames before buffering their payload', 
     header.writeUInt32BE(length, 1)
     expect(() => new DaemonDecoder().push(header)).toThrow('Invalid terminal daemon frame length')
   }
+})
+
+test('a daemon status may carry its start time, and one from an older daemon without it still parses', () => {
+  const status = {
+    protocol: 1,
+    id: 'tab',
+    instance: 'a'.repeat(32),
+    daemonPid: 10,
+    pid: 11,
+    alive: true,
+    title: 'zsh',
+    attention: null,
+    progress: null,
+    cols: 80,
+    rows: 24,
+  }
+  expect(daemonStatus.parse({ ...status, startedAt: 1_700_000_000_000 }).startedAt).toBe(1_700_000_000_000)
+  expect(daemonStatus.parse(status).startedAt).toBeUndefined()
 })
