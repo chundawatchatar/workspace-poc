@@ -9,3 +9,9 @@ dist
 .tmp
 .temp
 target/
+
+# Factory runtime state: job worktrees, the board and job files
+.worktrees
+factory/board.json
+factory/board.json.tmp
+factory/jobs/
