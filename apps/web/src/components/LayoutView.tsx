@@ -24,6 +24,7 @@ import {
 } from '@orch/ui/icons'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { addSurface, closeSurface, moveSurface, selectSurface, splitPane, toggleZoom } from '../lib/commands'
+import { shortPath } from '../lib/paths'
 import {
   ackSession,
   dispatch,
@@ -35,7 +36,7 @@ import {
   zoomedPaneId,
 } from '../lib/store'
 import { IssuesView, PullsView } from './SampleSurfaces'
-import { pendingAttention, shortPath } from './Sidebar'
+import { pendingAttention } from './Sidebar'
 import { TerminalView } from './TerminalView'
 
 const DRAG_TYPE = 'application/x-poc-surface'

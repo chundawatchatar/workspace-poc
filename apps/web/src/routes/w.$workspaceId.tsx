@@ -4,8 +4,9 @@ import { createFileRoute, Navigate, useNavigate } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 import { HostStatus } from '../components/HostStatus'
 import { LayoutView } from '../components/LayoutView'
-import { pendingAttention, shortPath } from '../components/Sidebar'
+import { pendingAttention } from '../components/Sidebar'
 import { revealSurface } from '../lib/commands'
+import { shortPath } from '../lib/paths'
 import { toggleSidebar, useApp } from '../lib/store'
 
 export const Route = createFileRoute('/w/$workspaceId')({ component: WorkspacePage })

@@ -5,14 +5,11 @@ import { Link, useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { apiQuery } from '../lib/api'
 import { removeWorkspace, renameWorkspace } from '../lib/commands'
+import { shortPath } from '../lib/paths'
 import { LEADER_LABEL } from '../lib/shortcuts'
 import { SIDEBAR_WIDTH, setSidebarWidth, sidebarWidth } from '../lib/sidebarWidth'
 import { setOverlay, toggleThemeMode, useApp } from '../lib/store'
 import { SidebarTerminals, terminalIds, useCollapsed } from './SidebarTerminals'
-
-export function shortPath(path: string, home: string | undefined) {
-  return home && path.startsWith(home) ? `~${path.slice(home.length)}` : path
-}
 
 function useGitInfo(cwd: string): GitInfo | null {
   const { data } = useQuery({ ...apiQuery(routes.git.status, { cwd }), refetchInterval: 15_000 })
