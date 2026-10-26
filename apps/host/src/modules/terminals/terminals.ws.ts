@@ -4,6 +4,7 @@ import type { SessionManager, TermClient } from '@orch/terminal'
 import type { ServerWebSocket } from 'bun'
 import { type Context, Hono } from 'hono'
 import { z } from 'zod'
+import { createRateLimiter } from '../../lib/rateLimit'
 
 const socket = routes.sockets.terminal
 
@@ -24,6 +25,7 @@ export function createTerminalSocket(sessions: SessionManager) {
       if (!input.success) throw input.error
       const { id, cwd, cols, rows } = input.data
       let client: TermClient | null = null
+      const limit = createRateLimiter()
       return {
         onOpen(_event, ws) {
           const raw = ws.raw as ServerWebSocket
@@ -39,7 +41,14 @@ export function createTerminalSocket(sessions: SessionManager) {
           }
           sessions.ensure(id, cwd, cols, rows).attach(client)
         },
-        onMessage(event) {
+        onMessage(event, ws) {
+          // Checked before parsing, so frames that fail to parse count too.
+          const decision = limit()
+          if (decision === 'close') {
+            console.warn(`closing ${socket.path} socket for terminal ${id}: it keeps sending past the rate limit`)
+            ws.close(1008, 'rate limit')
+          }
+          if (decision !== 'accept') return
           const session = sessions.get(id)
           const message = parseMessage(socket.clientMessage, event.data)
           if (!message || !session || !client) return
