@@ -31,6 +31,7 @@ export {
   pongFrame,
   type RelayFrame,
   relayFrame,
+  TUNNEL_PATH,
   TUNNEL_PROTOCOL_VERSION,
   type TunnelFrame,
   welcomeFrame,
