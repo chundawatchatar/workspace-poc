@@ -126,6 +126,10 @@ so. `/factory next 3` runs this for the next three unchecked lines at once, clai
 
 `- [ ]` is open, `- [~]` is in progress, `- [x]` is done. To keep a line from being picked, mark it `- [~]` by hand.
 
+`factory/backlog.md` is local and gitignored, so never commit it. If it is missing, say so and ask the user to create
+it. When every line under a `##` section is `- [x]`, copy that section to `factory/archive/<section-slug>.md` and tell
+the user to commit the copy.
+
 ## /factory approve <job-id>
 
 This is a human override for a `needs-human` job. Merge it (below) and set `stage: "merged"`, with
