@@ -12,6 +12,7 @@ import { TerminalInterrupted } from '@orch/ui'
 import {
   CircleAlert,
   Columns2,
+  Copy,
   GitPullRequest,
   KanbanSquare,
   LoaderCircle,
@@ -22,8 +23,17 @@ import {
   SquareTerminal,
   X,
 } from '@orch/ui/icons'
-import { type ReactNode, useEffect, useRef, useState } from 'react'
-import { addSurface, closeSurface, moveSurface, selectSurface, splitPane, toggleZoom } from '../lib/commands'
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import {
+  addSurface,
+  closeSurface,
+  copyWorkingFolder,
+  moveSurface,
+  selectSurface,
+  splitPane,
+  toggleZoom,
+} from '../lib/commands'
 import { shortPath } from '../lib/paths'
 import {
   ackSession,
@@ -340,6 +350,8 @@ function Tab(props: {
 }) {
   const { workspace, pane, surface, title, paneFocused, attention, progress, marker } = props
   const active = pane.activeSurfaceId === surface.id
+  // Where the tab menu was opened; null means it is closed.
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   return (
     <div
       draggable
@@ -353,6 +365,12 @@ function Tab(props: {
         dragSource = null
       }}
       onClick={() => selectSurface(workspace, pane.id, surface.id)}
+      onContextMenu={(event) => {
+        // Only terminals have a menu; other tabs keep the browser's.
+        if (surface.kind !== 'terminal') return
+        event.preventDefault()
+        setMenu({ x: event.clientX, y: event.clientY })
+      }}
       title={title}
       className={`anim-fade group flex max-w-52 min-w-24 cursor-default items-center gap-1.5 border-r border-line px-2.5 text-xs select-none ${
         active ? `bg-panel ${paneFocused ? 'text-ink' : 'text-dim'}` : 'text-faint hover:text-dim'
@@ -380,7 +398,99 @@ function Tab(props: {
       >
         <X size={12} />
       </button>
+      {menu && (
+        <TabMenu
+          at={menu}
+          onClose={() => setMenu(null)}
+          items={[
+            {
+              label: 'Copy working folder',
+              icon: <Copy size={13} />,
+              onSelect: () => void copyWorkingFolder(surface.id, workspace.cwd),
+            },
+          ]}
+        />
+      )}
     </div>
+  )
+}
+
+interface MenuItem {
+  label: string
+  icon: ReactNode
+  onSelect: () => void
+}
+
+/**
+ * A menu opened at the pointer, kept inside the window. It closes on an item,
+ * a pointer down outside it, or Escape.
+ */
+function TabMenu({ at, items, onClose }: { at: { x: number; y: number }; items: MenuItem[]; onClose: () => void }) {
+  const root = useRef<HTMLDivElement>(null)
+  const [position, setPosition] = useState(at)
+
+  // Measured before paint, so a menu opened near the right or bottom edge never shows clipped.
+  useLayoutEffect(() => {
+    const rect = root.current?.getBoundingClientRect()
+    if (!rect) return
+    const margin = 4
+    setPosition({
+      x: Math.max(margin, Math.min(at.x, window.innerWidth - rect.width - margin)),
+      y: Math.max(margin, Math.min(at.y, window.innerHeight - rect.height - margin)),
+    })
+  }, [at])
+
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (!root.current?.contains(event.target as Node)) onClose()
+    }
+    // Capture, so the terminal under the menu cannot swallow the key first.
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      onClose()
+    }
+    window.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('keydown', onKeyDown, true)
+    }
+  }, [onClose])
+
+  // Rendered in the body so it is not part of the draggable tab, and the tab bar's scrolling cannot clip it.
+  // React still bubbles its events to the tab, so they stop here: a click must not select the tab.
+  return createPortal(
+    <div
+      ref={root}
+      role="menu"
+      className="anim-pop fixed z-50 w-48 rounded-md border border-line bg-raised py-1 shadow-xl"
+      style={{ left: position.x, top: position.y }}
+      onClick={(event) => event.stopPropagation()}
+      onDoubleClick={(event) => event.stopPropagation()}
+      onContextMenu={(event) => {
+        event.preventDefault()
+        event.stopPropagation()
+      }}
+    >
+      {items.map((item) => (
+        <button
+          key={item.label}
+          type="button"
+          role="menuitem"
+          className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs text-ink hover:bg-accent/20"
+          onClick={() => {
+            onClose()
+            item.onSelect()
+          }}
+        >
+          <span className="text-dim">{item.icon}</span>
+          {item.label}
+        </button>
+      ))}
+    </div>,
+    document.body,
   )
 }
 
