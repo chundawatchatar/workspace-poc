@@ -8,11 +8,14 @@ import {
   makeWorkspace,
   newId,
   reduce,
+  type SessionInfo,
   type SurfaceKind,
   type Workspace,
 } from '@orch/shared'
+import { shortPath } from './paths'
 import { dispatch, focusedPaneId, getSnapshot, mutate, setFocus, toggleZoom as toggleZoomState } from './store'
 import { placeSurface } from './tabOrder'
+import { showToast } from './toast'
 import { withPaneTransition } from './transition'
 
 // Every way of triggering an action (button, shortcut, leader key) calls these.
@@ -152,4 +155,29 @@ export function removeWorkspace(workspaceId: string) {
 export function renameWorkspace(workspaceId: string, name: string) {
   const trimmed = name.trim()
   if (trimmed) dispatch({ type: 'workspace.rename', workspaceId, name: trimmed })
+}
+
+/** The folder a terminal works in: its live `cwd`, or the workspace's folder until the host reports one. */
+export function workingFolder(session: Pick<SessionInfo, 'cwd'> | undefined, workspace: Pick<Workspace, 'cwd'>) {
+  return session?.cwd || workspace.cwd
+}
+
+/**
+ * Copies a terminal's working folder to the clipboard as a full path, and
+ * shows a toast saying whether it worked. Never throws. `write` defaults to
+ * the browser clipboard, which only exists on secure origins.
+ */
+export async function copyWorkingFolder(
+  sessionId: string,
+  fallbackCwd: string,
+  write: (text: string) => Promise<void> = (text) => navigator.clipboard.writeText(text),
+) {
+  const snapshot = getSnapshot()
+  const folder = workingFolder(snapshot.sessions[sessionId], { cwd: fallbackCwd })
+  try {
+    await write(folder)
+    showToast(`Copied ${shortPath(folder, snapshot.info?.home)}`)
+  } catch {
+    showToast('Could not copy folder', 'error')
+  }
 }

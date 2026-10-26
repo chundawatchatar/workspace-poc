@@ -12,9 +12,9 @@ import {
   splitPane,
   toggleZoom,
 } from '../lib/commands'
+import { shortPath } from '../lib/paths'
 import { restoreSession, selectTheme, setOverlay, setThemeChoice, toggleSidebar, useApp } from '../lib/store'
 import { tidyTitle } from './LayoutView'
-import { shortPath } from './Sidebar'
 
 interface Item {
   id: string

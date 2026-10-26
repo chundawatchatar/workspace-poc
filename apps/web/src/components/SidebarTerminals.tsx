@@ -3,9 +3,9 @@ import { CircleAlert, LoaderCircle } from '@orch/ui/icons'
 import { useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { revealSurface } from '../lib/commands'
+import { shortPath } from '../lib/paths'
 import { useApp } from '../lib/store'
 import { tidyTitle } from './LayoutView'
-import { shortPath } from './Sidebar'
 
 const COLLAPSED_KEY = 'poc-sidebar-collapsed'
 
