@@ -119,8 +119,12 @@ if it is missing.
 
 ## /factory next
 
-Open `factory/backlog.md` and take the first line that starts with `- [ ]`. Run `/factory <that text>` on it. When the
-job reaches `merged` or `needs-human`, change that line to `- [x] … → <job-id>`. If nothing is left unchecked, say so.
+Open `factory/backlog.md` and take the first line that starts with `- [ ]`. Before spawning anything, claim it by
+changing it to `- [~] … → <job-id>`, so a job running in parallel skips it. Then run `/factory <that text>` on it. When
+the job reaches `merged` or `needs-human`, change that line to `- [x] … → <job-id>`. If nothing is left unchecked, say
+so. `/factory next 3` runs this for the next three unchecked lines at once, claiming all three first.
+
+`- [ ]` is open, `- [~]` is in progress, `- [x]` is done. To keep a line from being picked, mark it `- [~]` by hand.
 
 ## /factory approve <job-id>
 
