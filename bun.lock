@@ -32,6 +32,16 @@
         "zod": "^4.6.7",
       },
     },
+    "apps/relay": {
+      "name": "@orch/relay",
+      "version": "0.0.0",
+      "dependencies": {
+        "@hono/bun": "^1.0.1",
+        "@orch/shared": "workspace:*",
+        "hono": "^4.13.13",
+        "zod": "^4.6.7",
+      },
+    },
     "apps/web": {
       "name": "@orch/web",
       "version": "0.0.0",
@@ -165,6 +175,8 @@
     "@orch/host": ["@orch/host@workspace:apps/host"],
 
     "@orch/ptyd-bun": ["@orch/ptyd-bun@workspace:apps/ptyd-bun"],
+
+    "@orch/relay": ["@orch/relay@workspace:apps/relay"],
 
     "@orch/shared": ["@orch/shared@workspace:packages/shared"],
 
