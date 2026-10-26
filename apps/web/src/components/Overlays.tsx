@@ -8,6 +8,7 @@ import { apiKey, apiMutation, apiQuery } from '../lib/api'
 import { addWorkspace } from '../lib/commands'
 import { LEADER_LABEL, SHORTCUT_ROWS } from '../lib/shortcuts'
 import { setOverlay, useApp } from '../lib/store'
+import { formatUptime } from '../lib/uptime'
 import { CommandPalette } from './CommandPalette'
 import { ThemePicker } from './ThemePicker'
 
@@ -45,8 +46,24 @@ function ShortcutsHelp() {
           ))}
         </tbody>
       </table>
+      <DaemonStatusLine />
     </Modal>
   )
+}
+
+/** The terminal daemon's uptime and live terminal count, fetched each time the dialog opens. */
+function DaemonStatusLine() {
+  // The host is local, so a failure is shown at once rather than after the default retries; reopening asks again.
+  const status = useQuery({ ...apiQuery(routes.system.daemon, {}), retry: false })
+  let text: string
+  if (status.isPending) text = 'Terminal daemon: checking…'
+  else if (status.isError) text = 'Terminal daemon status unavailable'
+  else {
+    const { uptimeMs, liveTerminals } = status.data
+    const state = uptimeMs === null ? 'not connected' : `up ${formatUptime(uptimeMs)}`
+    text = `Terminal daemon: ${state} · ${liveTerminals} live ${liveTerminals === 1 ? 'terminal' : 'terminals'}`
+  }
+  return <p className="mt-3 text-xs text-faint">{text}</p>
 }
 
 function NewWorkspace() {

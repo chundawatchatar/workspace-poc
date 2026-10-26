@@ -15,7 +15,7 @@ export {
   resolveDirResponse,
 } from './fs'
 export { type GitInfo, gitStatusQuery, gitStatusResponse } from './git'
-export { healthResponse } from './system'
+export { type DaemonReport, daemonResponse, healthResponse } from './system'
 
 /**
  * Every route the host serves. Use these on both sides instead of writing paths:
