@@ -2,6 +2,7 @@ import { upgradeWebSocket } from '@hono/bun'
 import { type AppState, type HostInfo, listSurfaces, parseMessage, routes } from '@orch/shared'
 import { SessionManager } from '@orch/terminal'
 import { Hono } from 'hono'
+import { createRateLimiter } from '../../lib/rateLimit'
 import type { LayoutRepository } from '../layout/layout.repository'
 import type { EventClient, EventHub } from './events.service'
 
@@ -27,6 +28,7 @@ export function createEventsSocket({ hub, layout, sessions, info }: EventsSocket
     routes.sockets.events.path,
     upgradeWebSocket(() => {
       let client: EventClient | null = null
+      const limit = createRateLimiter()
       return {
         onOpen(_event, ws) {
           client = {
@@ -42,7 +44,14 @@ export function createEventsSocket({ hub, layout, sessions, info }: EventsSocket
             info,
           })
         },
-        onMessage(event) {
+        onMessage(event, ws) {
+          // Checked before parsing, so frames that fail to parse count too.
+          const decision = limit()
+          if (decision === 'close') {
+            console.warn(`closing ${routes.sockets.events.path} socket: it keeps sending past the rate limit`)
+            ws.close(1008, 'rate limit')
+          }
+          if (decision !== 'accept') return
           const message = parseMessage(routes.sockets.events.clientMessage, event.data)
           if (!message || !client) return
           if (message.type === 'state') {
