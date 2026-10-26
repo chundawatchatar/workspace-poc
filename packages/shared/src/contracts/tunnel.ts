@@ -8,6 +8,9 @@ import { API_PREFIX } from './contract'
 
 export const TUNNEL_PROTOCOL_VERSION = 1
 
+/** The relay path machines open their tunnel socket on. Its messages are tunnel frames, not JSON client messages. */
+export const TUNNEL_PATH = '/tunnel'
+
 /** The largest encoded frame, in bytes, that `decodeFrame` accepts. A request body must fit in one frame. */
 export const MAX_TUNNEL_FRAME_BYTES = 1024 * 1024
 
@@ -117,7 +120,7 @@ const decoder = new TextDecoder('utf-8', { fatal: true })
  * a big-endian u32 header length, the JSON header without the byte field,
  * then the raw bytes.
  */
-export function encodeFrame(frame: TunnelFrame): string | Uint8Array {
+export function encodeFrame(frame: TunnelFrame): string | Uint8Array<ArrayBuffer> {
   const field = byteField[frame.type]
   const payload = field ? (frame as Record<string, unknown>)[field] : undefined
   if (!field || !(payload instanceof Uint8Array)) return JSON.stringify(frame)

@@ -69,7 +69,7 @@ function fillPath(path: string, input: Record<string, unknown>) {
 }
 
 function withQuery(path: string, fields: [string, unknown][]) {
-  const query = new URLSearchParams(fields.map(([key, value]) => [key, String(value)])).toString()
+  const query = new URLSearchParams(fields.map(([key, value]): [string, string] => [key, String(value)])).toString()
   return query ? `${path}?${query}` : path
 }
 
