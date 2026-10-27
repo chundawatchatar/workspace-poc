@@ -4,8 +4,8 @@ import {
   decodeFrame,
   encodeFrame,
   type MachineFrame,
-  type RelayFrame,
-  relayFrame,
+  type ServerFrame,
+  serverFrame,
   TUNNEL_PATH,
   TUNNEL_PROTOCOL_VERSION,
 } from '@orch/shared'
@@ -36,7 +36,7 @@ afterEach(async () => {
 /** A test machine. With `pong`, it answers every `ping` like a healthy host. */
 interface Machine {
   ws: WebSocket
-  frames: RelayFrame[]
+  frames: ServerFrame[]
   raw: string[]
   closed: Promise<{ code: number; reason: string }>
   send(frame: MachineFrame): void
@@ -53,7 +53,7 @@ async function connect({ pong = false } = {}): Promise<Machine> {
   }
   ws.addEventListener('message', (event) => {
     machine.raw.push(String(event.data))
-    const frame = decodeFrame(relayFrame, event.data)
+    const frame = decodeFrame(serverFrame, event.data)
     if (!frame) return
     machine.frames.push(frame)
     if (pong && frame.type === 'ping') machine.send({ type: 'pong', nonce: frame.nonce })
@@ -130,7 +130,7 @@ describe('tunnel socket', () => {
     const live = registry.get(id)
     const next = await hello(proofA, { pong: true })
     expect(await old.closed).toEqual({ code: CLOSE_REPLACED, reason: 'replaced' })
-    // Give the old socket's close event time to reach the relay too.
+    // Give the old socket's close event time to reach the server too.
     await Bun.sleep(20)
     expect(registry.get(id)).not.toBe(live)
     expect(registry.get(id)?.machineId).toBe(id)

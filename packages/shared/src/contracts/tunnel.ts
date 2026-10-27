@@ -1,14 +1,14 @@
 import { z } from 'zod'
 import { API_PREFIX } from './contract'
 
-// The wire format between a machine and the cloud relay. Each machine keeps one
-// outbound WSS connection to the relay, which carries browser HTTP requests and
-// WebSockets over it as these frames. This file runs in the host, the relay and
-// the browser, so it uses only web-standard APIs.
+// The wire format between a machine and the cloud server (`apps/server`). Each
+// machine keeps one outbound WSS connection to the server, which relays browser
+// HTTP requests and WebSockets over it as these frames. This file runs in the
+// host, the server and the browser, so it uses only web-standard APIs.
 
 export const TUNNEL_PROTOCOL_VERSION = 1
 
-/** The relay path machines open their tunnel socket on. Its messages are tunnel frames, not JSON client messages. */
+/** The server path machines open their tunnel socket on. Its messages are tunnel frames, not JSON client messages. */
 export const TUNNEL_PATH = '/tunnel'
 
 /** The largest encoded frame, in bytes, that `decodeFrame` accepts. A request body must fit in one frame. */
@@ -19,14 +19,14 @@ const bytes = z.instanceof(Uint8Array)
 /** Header `[name, value]` pairs in order, so repeated headers survive. */
 const headers = z.array(z.tuple([z.string(), z.string()]))
 
-/** Opens the tunnel. `proof` is the machine secret (32 bytes, base64url), which the relay hashes into the machine id. */
+/** Opens the tunnel. `proof` is the machine secret (32 bytes, base64url), which the server hashes into the machine id. */
 export const helloFrame = z.object({
   type: z.literal('hello'),
   version: z.number().int().positive(),
   proof: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
 })
 
-/** The relay's answer to `hello`, telling the machine its id. */
+/** The server's answer to `hello`, telling the machine its id. */
 export const welcomeFrame = z.object({ type: z.literal('welcome'), machineId: z.string().min(1) })
 
 /** A browser HTTP request. `path` starts with `/api/` and may carry a query string. */
@@ -77,7 +77,7 @@ export const pingFrame = z.object({ type: z.literal('ping'), nonce: z.number().i
 /** Answers a `ping`, echoing its `nonce`. */
 export const pongFrame = z.object({ type: z.literal('pong'), nonce: z.number().int() })
 
-/** Frames the machine sends to the relay. */
+/** Frames the machine sends to the server. */
 export const machineFrame = z.discriminatedUnion('type', [
   helloFrame,
   httpResponseFrame,
@@ -89,8 +89,8 @@ export const machineFrame = z.discriminatedUnion('type', [
   pongFrame,
 ])
 
-/** Frames the relay sends to the machine. */
-export const relayFrame = z.discriminatedUnion('type', [
+/** Frames the server sends to the machine. */
+export const serverFrame = z.discriminatedUnion('type', [
   welcomeFrame,
   httpRequestFrame,
   wsOpenFrame,
@@ -101,8 +101,8 @@ export const relayFrame = z.discriminatedUnion('type', [
 ])
 
 export type MachineFrame = z.infer<typeof machineFrame>
-export type RelayFrame = z.infer<typeof relayFrame>
-export type TunnelFrame = MachineFrame | RelayFrame
+export type ServerFrame = z.infer<typeof serverFrame>
+export type TunnelFrame = MachineFrame | ServerFrame
 
 /** The field that holds the raw bytes, for each frame type that can carry them. */
 const byteField: Partial<Record<TunnelFrame['type'], string>> = {

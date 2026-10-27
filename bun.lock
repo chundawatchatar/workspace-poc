@@ -32,8 +32,8 @@
         "zod": "^4.6.7",
       },
     },
-    "apps/relay": {
-      "name": "@orch/relay",
+    "apps/server": {
+      "name": "@orch/server",
       "version": "0.0.0",
       "dependencies": {
         "@hono/bun": "^1.0.1",
@@ -176,7 +176,7 @@
 
     "@orch/ptyd-bun": ["@orch/ptyd-bun@workspace:apps/ptyd-bun"],
 
-    "@orch/relay": ["@orch/relay@workspace:apps/relay"],
+    "@orch/server": ["@orch/server@workspace:apps/server"],
 
     "@orch/shared": ["@orch/shared@workspace:packages/shared"],
 

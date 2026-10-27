@@ -14,12 +14,12 @@ export const CLOSE_HEARTBEAT_TIMEOUT = 4002
 /** Close code for a missing, invalid or repeated `hello`. */
 const CLOSE_POLICY = 1008
 
-/** What the tunnel socket needs from the relay. The timings are in milliseconds. */
+/** What the tunnel socket needs from the server. The timings are in milliseconds. */
 export interface TunnelSocketDeps {
   registry: MachineRegistry
   /** How long a new socket has to send its `hello`. Defaults to 10 s. */
   helloTimeoutMs?: number
-  /** How often the relay pings a machine. Defaults to 15 s. */
+  /** How often the server pings a machine. Defaults to 15 s. */
   pingIntervalMs?: number
   /** How long a machine may stay silent before it is dropped. Defaults to 45 s. */
   heartbeatTimeoutMs?: number

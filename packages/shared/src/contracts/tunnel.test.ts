@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { decodeFrame, encodeFrame, MAX_TUNNEL_FRAME_BYTES, machineFrame, relayFrame, type TunnelFrame } from './tunnel'
+import { decodeFrame, encodeFrame, MAX_TUNNEL_FRAME_BYTES, machineFrame, serverFrame, type TunnelFrame } from './tunnel'
 
 const proof = `${'A'.repeat(42)}w`
 const allBytes = Uint8Array.from({ length: 256 }, (_, i) => i)
@@ -31,7 +31,7 @@ describe('tunnel frames', () => {
       { type: 'http.end', id: 1 },
       { type: 'http.end', id: 2, error: 'stream failed' },
     ]
-    const relay: TunnelFrame[] = [
+    const server: TunnelFrame[] = [
       { type: 'welcome', machineId: 'm-1' },
       { type: 'http.request', id: 3, method: 'GET', path: '/api/git/status?cwd=%2Ftmp', headers: [] },
       { type: 'http.request', id: 4, method: 'POST', path: '/api/fs/dirs', headers: [['x', 'y']], body: allBytes },
@@ -45,7 +45,7 @@ describe('tunnel frames', () => {
       { type: 'ping', nonce: 7 },
       { type: 'pong', nonce: 7 },
     ]
-    const check = (frames: TunnelFrame[], schema: typeof machineFrame | typeof relayFrame) => {
+    const check = (frames: TunnelFrame[], schema: typeof machineFrame | typeof serverFrame) => {
       for (const frame of frames) {
         const encoded = encodeFrame(frame)
         const hasBytes = Object.values(frame).some((value) => value instanceof Uint8Array)
@@ -55,7 +55,7 @@ describe('tunnel frames', () => {
       }
     }
     check([...machine, ...both], machineFrame)
-    check([...relay, ...both], relayFrame)
+    check([...server, ...both], serverFrame)
   })
 
   test('byte payloads stay raw bytes, and text ws.data stays a string', () => {
@@ -72,7 +72,7 @@ describe('tunnel frames', () => {
         expect(decoded.data).toEqual(payload)
       }
     }
-    const text = decodeFrame(relayFrame, encodeFrame({ type: 'ws.data', channel: 2, data: 'abc' }))
+    const text = decodeFrame(serverFrame, encodeFrame({ type: 'ws.data', channel: 2, data: 'abc' }))
     expect(text).toEqual({ type: 'ws.data', channel: 2, data: 'abc' })
   })
 
@@ -86,17 +86,17 @@ describe('tunnel frames', () => {
   })
 
   test('malformed, misdirected, out-of-schema and oversized input decodes to null', () => {
-    const bad: [typeof machineFrame | typeof relayFrame, unknown][] = [
+    const bad: [typeof machineFrame | typeof serverFrame, unknown][] = [
       [machineFrame, 'not json'],
       [machineFrame, '{"type":"nope"}'],
-      [relayFrame, JSON.stringify({ type: 'hello', version: 1, proof })],
+      [serverFrame, JSON.stringify({ type: 'hello', version: 1, proof })],
       [machineFrame, JSON.stringify({ type: 'welcome', machineId: 'm' })],
       [machineFrame, JSON.stringify({ type: 'hello', version: 1, proof: 'short' })],
       [machineFrame, JSON.stringify({ type: 'hello', version: 1, proof: `${proof.slice(1)}+` })],
       [machineFrame, JSON.stringify({ type: 'hello', version: 1.5, proof })],
-      [relayFrame, JSON.stringify({ type: 'http.request', id: 1, method: 'GET', path: '/health', headers: [] })],
-      [relayFrame, JSON.stringify({ type: 'http.request', id: 1, method: 'GET', path: '/apix/a', headers: [] })],
-      [relayFrame, JSON.stringify({ type: 'ws.open', channel: 1, path: '/api/x', headers: [] })],
+      [serverFrame, JSON.stringify({ type: 'http.request', id: 1, method: 'GET', path: '/health', headers: [] })],
+      [serverFrame, JSON.stringify({ type: 'http.request', id: 1, method: 'GET', path: '/apix/a', headers: [] })],
+      [serverFrame, JSON.stringify({ type: 'ws.open', channel: 1, path: '/api/x', headers: [] })],
       [machineFrame, JSON.stringify({ type: 'http.end', id: 0 })],
       [machineFrame, JSON.stringify({ type: 'http.end', id: 1.5 })],
       [machineFrame, JSON.stringify({ type: 'ws.close', channel: -1 })],

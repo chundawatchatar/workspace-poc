@@ -1,4 +1,4 @@
-import type { RelayFrame } from '@orch/shared'
+import type { ServerFrame } from '@orch/shared'
 
 /**
  * Derives a machine's id from the secret in its `hello`: the SHA-256 of the
@@ -12,7 +12,7 @@ export function machineIdFromProof(proof: string): string {
 /** A machine's live tunnel, as later jobs see it. */
 export interface MachineConnection {
   machineId: string
-  send(frame: RelayFrame): void
+  send(frame: ServerFrame): void
   close(code: number, reason: string): void
 }
 
