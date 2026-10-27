@@ -1,6 +1,7 @@
 {
   "name": "workspace-poc",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "workspaces": [
     "apps/*",
