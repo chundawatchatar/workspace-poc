@@ -98,7 +98,7 @@ The Pull requests and Issues tabs in the prototype show sample data only.
 | ID | Requirement | Status |
 | --- | --- | --- |
 | REM-1 | Users link their instances to an account and open any workspace, including its terminals, from any browser. | Later |
-| REM-2 | Traffic is encrypted end to end; the service relays it but cannot read it, and stores no workspace content. | Later |
+| REM-2 | Traffic is encrypted end to end; the service relays it but cannot read it, and stores no workspace content. The first version relays plain frames over TLS, built so encryption can be added without changing how the server routes it (see `architecture.md`). | Later |
 | REM-3 | Instances connect outwards, so no ports need opening on the user's network. | Later |
 | REM-4 | A dashboard shows every linked instance and whether it is online. | Later |
 | REM-5 | Devices must be approved, and access can be revoked at any time. | Later |
@@ -118,6 +118,6 @@ The Pull requests and Issues tabs in the prototype show sample data only.
 ## Open questions
 
 - The product's name, and whether "Orchestrator" stays as the name of the paid service.
-- Which licence the local product uses. Decided: the local product is open source and Orchestrator is closed source.
+- Which licence the product uses. Decided: everything, including Orchestrator (`apps/client`) and the server (`apps/server`), is open source under the MIT licence. The code is kept separable (see `architecture.md`) so parts could be closed later if needed.
 - How Windows is supported.
 - Orchestrator plans and prices.
