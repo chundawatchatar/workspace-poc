@@ -26,7 +26,7 @@ apps/host/src/
       terminals.service.ts
       terminals.ws.ts         # WebSocket binding only
     events/  fs/  system/
-apps/web/src/lib/api.ts       # callApi(endpoint, input)
+packages/terminal-ui/src/lib/api.ts  # callApi(endpoint, input), through the page's HostTransport
 ```
 
 ## What goes in which file
@@ -49,7 +49,7 @@ Add only the files a feature needs. `system` has just routes, and `events` has n
   - HTTP: `defineContract({...})` entries with method, the **full path** (`/api/<feature>/<action>`, kebab-case, `:id` for params) and description, plus Zod schemas named `<op>Query`/`<op>Body`/`<op>Response` and exported `z.infer` types. `createRouter(routes.<feature>, …)` won't compile until every operation has a handler, and it rejects invalid input with a 400.
   - WebSocket: `defineSocket({ path: '/ws/…', description, input, clientMessage })`, where `input` is the URL's params and query and `clientMessage` is the Zod schema for the JSON frames clients send. The `.ws.ts` validates the URL the same way and reads each frame with `parseMessage(socket.clientMessage, event.data)`, ignoring frames that return `null` (see `terminals.ws.ts`). The client message type in `protocol.ts` is `z.infer` of that schema; host-to-client types stay hand-written there, and the socket's doc comment names them.
 - GET input comes from the query string, so fields are strings: use `z.coerce`. Use POST for anything that changes state.
-- In React components, call endpoints through TanStack Query with the helpers in `apps/web/src/lib/api.ts`: `useQuery(apiQuery(routes.git.status, { cwd }))` for reads, `useMutation(apiMutation(routes.<feature>.<op>))` for actions. Outside React, use `callApi(routes.git.status, { cwd })`. All three parse the response with the contract's output schema. Open sockets with `` `${HOST_WS}${buildSocketUrl(routes.sockets.terminal, {...})}` `` (this also works in `@orch/ui`). No hand-written URLs, and no casting JSON.
+- In React components, call endpoints through TanStack Query with the helpers in `packages/terminal-ui/src/lib/api.ts`: `useQuery(apiQuery(routes.git.status, { cwd }))` for reads, `useMutation(apiMutation(routes.<feature>.<op>))` for actions. Outside React, use `callApi(routes.git.status, { cwd })`. All three parse the response with the contract's output schema. Open sockets with `transport.openSocket(buildSocketUrl(routes.sockets.terminal, {...}))`, using the `HostTransport` passed to `<TerminalUI>` (`@orch/ui` components take an `openSocket` prop instead). No hand-written URLs, and no casting JSON.
 - `lib/` is for infrastructure shared by every module. Feature logic never goes there.
 
 ## Adding an endpoint

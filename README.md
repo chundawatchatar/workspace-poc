@@ -26,12 +26,13 @@ works.
 
 | Path | What it is |
 | --- | --- |
-| `apps/web` | The UI: TanStack Start, React, Tailwind, xterm.js |
+| `apps/web` | The local app shell: TanStack Start and the router, rendering `packages/terminal-ui` against the local host |
 | `apps/host` | The host service: Bun and Hono. Owns the layout and talks to terminals |
 | `apps/ptyd-bun` | The Bun terminal daemon: owns the PTY and screen so shells outlive the host |
 | `packages/terminal` | The PTY, the mirrored screen, process and agent detection, and the daemon wire protocol |
 | `packages/shared` | The layout model, its reducer, and the browser wire protocol |
 | `packages/ui` | Shared UI: themes, styles and store-free components (modal, theme picker, terminal) |
+| `packages/terminal-ui` | The page inside a machine: sidebar, layout, terminals, palette and its store, reaching the host through a transport. React, Tailwind, xterm.js |
 
 ## What is real
 
