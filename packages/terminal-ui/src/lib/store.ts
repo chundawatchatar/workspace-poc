@@ -3,7 +3,6 @@ import {
   type AppState,
   buildSocketUrl,
   type ClientEvent,
-  HOST_PORT,
   type HostInfo,
   listPanes,
   reduce,
@@ -22,10 +21,7 @@ import {
   themeKey,
 } from '@orch/ui'
 import { useSyncExternalStore } from 'react'
-
-// The host listens on the loopback address only.
-export const HOST_HTTP = `http://127.0.0.1:${HOST_PORT}`
-export const HOST_WS = `ws://127.0.0.1:${HOST_PORT}`
+import type { HostTransport } from '../transport'
 
 export type Overlay = 'help' | 'new-workspace' | 'palette' | 'themes' | null
 export type Theme = 'light' | 'dark'
@@ -95,7 +91,13 @@ export function useApp<T>(selector: (snapshot: Snapshot) => T): T {
 }
 
 let socket: WebSocket | null = null
-let started = false
+let transport: HostTransport | null = null
+
+/** The transport of the connected page. Requests made before `connect` fail. */
+export function getTransport(): HostTransport {
+  if (!transport) throw new Error('Not connected to a host')
+  return transport
+}
 
 function send(event: ClientEvent) {
   if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(event))
@@ -124,23 +126,39 @@ function handle(event: ServerEvent) {
   }
 }
 
-function open() {
-  set({ status: 'connecting' })
-  const ws = new WebSocket(`${HOST_WS}${buildSocketUrl(routes.sockets.events, {})}`)
-  socket = ws
-  ws.onopen = () => set({ status: 'open' })
-  ws.onmessage = (message) => handle(JSON.parse(message.data) as ServerEvent)
-  ws.onclose = () => {
-    if (socket === ws) socket = null
-    set({ status: 'closed' })
-    setTimeout(open, 1000)
-  }
-}
+/**
+ * Keeps the events socket open through `via`, reconnecting a second after it drops.
+ * Returns a cleanup that closes the socket and stops reconnecting.
+ */
+export function connect(via: HostTransport): () => void {
+  transport = via
+  // A new connection may be to another host, so drop what the last one said.
+  set({ state: null, sessions: {}, info: null })
+  let stopped = false
+  let retry: ReturnType<typeof setTimeout> | undefined
 
-export function connect() {
-  if (started || typeof window === 'undefined') return
-  started = true
+  const open = () => {
+    set({ status: 'connecting' })
+    const ws = via.openSocket(buildSocketUrl(routes.sockets.events, {}))
+    socket = ws
+    ws.onopen = () => set({ status: 'open' })
+    ws.onmessage = (message) => handle(JSON.parse(message.data) as ServerEvent)
+    ws.onclose = () => {
+      if (socket === ws) socket = null
+      if (stopped) return
+      set({ status: 'closed' })
+      retry = setTimeout(open, 1000)
+    }
+  }
   open()
+
+  return () => {
+    stopped = true
+    clearTimeout(retry)
+    socket?.close()
+    socket = null
+    if (transport === via) transport = null
+  }
 }
 
 /** Sends the current layout to the host, which stores it and passes it to other windows. */

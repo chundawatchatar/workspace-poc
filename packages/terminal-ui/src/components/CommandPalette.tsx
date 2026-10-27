@@ -1,7 +1,6 @@
 import { listPanes, type SurfaceKind } from '@orch/shared'
 import { THEMES } from '@orch/ui'
 import { ChevronRight, GitPullRequest, KanbanSquare, LayoutGrid, Search, SquareTerminal } from '@orch/ui/icons'
-import { useNavigate, useParams } from '@tanstack/react-router'
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import {
   addSurface,
@@ -14,6 +13,7 @@ import {
 } from '../lib/commands'
 import { shortPath } from '../lib/paths'
 import { restoreSession, selectTheme, setOverlay, setThemeChoice, toggleSidebar, useApp } from '../lib/store'
+import { useNavigation } from '../navigation'
 import { tidyTitle } from './LayoutView'
 
 interface Item {
@@ -55,11 +55,10 @@ function rank(item: Item, query: string): number | null {
 }
 
 export function CommandPalette() {
-  const { workspaceId } = useParams({ strict: false }) as { workspaceId?: string }
+  const { workspaceId, navigate } = useNavigation()
   const workspaces = useApp((s) => s.state?.workspaces)
   const sessions = useApp((s) => s.sessions)
   const home = useApp((s) => s.info?.home)
-  const navigate = useNavigate()
   const [query, setQuery] = useState('')
   const [index, setIndex] = useState(0)
   const list = useRef<HTMLDivElement>(null)
@@ -67,7 +66,7 @@ export function CommandPalette() {
   const items = useMemo(() => {
     const all = workspaces ?? []
     const current = all.find((w) => w.id === workspaceId)
-    const go = (id: string) => void navigate({ to: '/w/$workspaceId', params: { workspaceId: id } })
+    const go = (id: string) => navigate({ workspaceId: id })
     const result: Item[] = []
 
     all.forEach((workspace, i) => {

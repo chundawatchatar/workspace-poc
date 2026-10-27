@@ -1,7 +1,6 @@
 import { type GitInfo, listPanes, routes, type SessionInfo, type Workspace } from '@orch/shared'
 import { ChevronRight, GitBranch, Keyboard, Moon, Palette, Plus, Sun, X } from '@orch/ui/icons'
 import { useQuery } from '@tanstack/react-query'
-import { Link, useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { apiQuery } from '../lib/api'
 import { removeWorkspace, renameWorkspace } from '../lib/commands'
@@ -9,6 +8,7 @@ import { shortPath } from '../lib/paths'
 import { LEADER_LABEL } from '../lib/shortcuts'
 import { SIDEBAR_WIDTH, setSidebarWidth, sidebarWidth } from '../lib/sidebarWidth'
 import { setOverlay, toggleThemeMode, useApp } from '../lib/store'
+import { useNavigation, WorkspaceLink } from '../navigation'
 import { SidebarTerminals, terminalIds, useCollapsed } from './SidebarTerminals'
 
 function useGitInfo(cwd: string): GitInfo | null {
@@ -174,7 +174,7 @@ function WorkspaceRow(props: { workspace: Workspace; index: number; active: bool
   const sessions = useApp((s) => s.sessions)
   const home = useApp((s) => s.info?.home)
   const git = useGitInfo(workspace.cwd)
-  const navigate = useNavigate()
+  const { navigate } = useNavigation()
   const [renaming, setRenaming] = useState(false)
   const [collapsed, toggleCollapsed] = useCollapsed(workspace.id)
   const pending = pendingAttention(workspace, sessions)
@@ -186,15 +186,13 @@ function WorkspaceRow(props: { workspace: Workspace; index: number; active: bool
     if (!window.confirm(`Close workspace "${workspace.name}" and end its terminals?`)) return
     removeWorkspace(workspace.id)
     if (active) {
-      if (fallbackId) void navigate({ to: '/w/$workspaceId', params: { workspaceId: fallbackId } })
-      else void navigate({ to: '/' })
+      navigate({ workspaceId: fallbackId })
     }
   }
 
   return (
-    <Link
-      to="/w/$workspaceId"
-      params={{ workspaceId: workspace.id }}
+    <WorkspaceLink
+      workspaceId={workspace.id}
       className={`group relative block rounded-md px-2.5 py-2 ${
         active ? 'bg-accent text-on-accent' : 'text-ink hover:bg-raised'
       }`}
@@ -292,6 +290,6 @@ function WorkspaceRow(props: { workspace: Workspace; index: number; active: bool
       </div>
 
       {!collapsed && <SidebarTerminals workspace={workspace} active={active} />}
-    </Link>
+    </WorkspaceLink>
   )
 }
