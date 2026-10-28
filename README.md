@@ -27,6 +27,7 @@ works.
 | Path | What it is |
 | --- | --- |
 | `apps/web` | The local app shell: TanStack Start and the router, rendering `packages/terminal-ui` against the local host |
+| `apps/client` | The global app: a static Vite SPA that lists the machines linked in this browser and opens one through the cloud server. Run it with `bun run dev:client` |
 | `apps/host` | The host service: Bun and Hono. Owns the layout and talks to terminals |
 | `apps/ptyd-bun` | The Bun terminal daemon: owns the PTY and screen so shells outlive the host |
 | `packages/terminal` | The PTY, the mirrored screen, process and agent detection, and the daemon wire protocol |

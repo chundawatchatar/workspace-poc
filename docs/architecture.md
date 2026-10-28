@@ -7,7 +7,7 @@ access, integrations, user-built flows and an in-browser code editor. Everything
 ## The pieces
 
 ```
-web (apps/web)                            client (apps/client, future)
+web (apps/web)                            client (apps/client)
   the local app, opened on the              the global app (Orchestrator), opened from any
   user's own machine                        browser: sign in, pick a machine
         │                                         │
@@ -49,10 +49,17 @@ The differences between the two apps come in as props on the page's root compone
 interface TerminalUIProps {
   transport: HostTransport      // local: 127.0.0.1 · remote: through the server, for one machine
   navigate: Navigate            // each app owns its router; the page asks it to change route
-  machine?: { id: string; name: string }  // client only: which machine is open, for the header
+  machine?: { id: string; name: string }  // client only: which machine is open, named in the sidebar
   header?: ReactNode            // client only: back to the machine list, account menu
+  offlineHint?: ReactNode       // what to do when the host is offline
+  titleSuffix?: string          // follows the workspace name in the document title
+  children: ReactNode           // the main area, from the app's router outlet (home, workspace or not found)
 }
 ```
+
+The remote transport sends requests to `/m/<machineId>/api/*` and sockets to `/m/<machineId>/ws/*` on the server.
+The machine's access key goes in the `x-orch-access-key` header, or in an `{ type: 'auth', key }` first message on a
+socket, never in a URL. These pieces live in `packages/shared/src/contracts/remote.ts`.
 
 `apps/web` becomes a thin shell that renders `terminal-ui` with the local transport. `apps/client` renders it with
 the remote transport for the machine the user picked. Neither app reimplements anything inside the page. When a new
