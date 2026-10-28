@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { buildRequest, buildSocketUrl, routes } from '@orch/shared'
+import { ACCESS_KEY_HEADER, buildRequest, buildSocketUrl, routes } from '@orch/shared'
 import { callApi } from './lib/api'
 import { connect, getSnapshot } from './lib/store'
-import { createLocalTransport, type HostTransport } from './transport'
+import { createLocalTransport, createRemoteTransport, type HostTransport } from './transport'
 
 /** Records what the page asks for, instead of reaching a host. */
 function fakeTransport() {
@@ -64,6 +64,71 @@ describe('the page transport', () => {
       socket.close()
     } finally {
       server.stop(true)
+    }
+  })
+
+  test('the remote transport goes through the machine prefix and carries the key in a header or the first message', async () => {
+    const machineId = 'mac/1 a'
+    const accessKey = 'secret-key'
+    const seen: { url: string; headers: Record<string, string> }[] = []
+    const messages: string[] = []
+    const { promise: twoMessages, resolve } = Promise.withResolvers<void>()
+    const server = Bun.serve({
+      port: 0,
+      hostname: 'localhost',
+      fetch(req, srv) {
+        seen.push({ url: req.url, headers: Object.fromEntries(req.headers) })
+        if (srv.upgrade(req)) return
+        return new Response('ok')
+      },
+      websocket: {
+        message(_ws, message) {
+          messages.push(String(message))
+          if (messages.length === 2) resolve()
+        },
+      },
+    })
+    try {
+      const base = `http://localhost:${server.port}`
+      const transport = createRemoteTransport({ serverUrl: `${base}/`, machineId, accessKey })
+
+      await transport.request('/api/git/status?cwd=%2Ftmp', { headers: { 'content-type': 'application/json' } })
+      expect(seen[0].url).toBe(`${base}/m/mac%2F1%20a/api/git/status?cwd=%2Ftmp`)
+      expect(seen[0].headers['content-type']).toBe('application/json')
+      expect(seen[0].headers[ACCESS_KEY_HEADER]).toBe(accessKey)
+
+      const socket = transport.openSocket('/ws/events')
+      expect(socket.url).toBe(`ws://localhost:${server.port}/m/mac%2F1%20a/ws/events`)
+      socket.onopen = () => socket.send('from the page')
+      await twoMessages
+      socket.close()
+      expect(messages).toEqual([JSON.stringify({ type: 'auth', key: accessKey }), 'from the page'])
+      expect(seen.every((s) => !s.url.includes(accessKey))).toBe(true)
+    } finally {
+      server.stop(true)
+    }
+  })
+
+  test('the remote transport uses wss:// for an https server and rejects other schemes', () => {
+    const opened: string[] = []
+    const RealWebSocket = globalThis.WebSocket
+    // Records the URL without reaching a TLS server.
+    globalThis.WebSocket = class {
+      constructor(url: string) {
+        opened.push(url)
+      }
+      addEventListener() {}
+    } as unknown as typeof WebSocket
+    try {
+      createRemoteTransport({ serverUrl: 'https://example.com', machineId: 'm1', accessKey: 'k' }).openSocket(
+        '/ws/events',
+      )
+      expect(opened).toEqual(['wss://example.com/m/m1/ws/events'])
+    } finally {
+      globalThis.WebSocket = RealWebSocket
+    }
+    for (const serverUrl of ['ws://example.com', 'file:///tmp', 'javascript:alert(1)']) {
+      expect(() => createRemoteTransport({ serverUrl, machineId: 'm1', accessKey: 'k' })).toThrow()
     }
   })
 })
