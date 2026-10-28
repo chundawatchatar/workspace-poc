@@ -2,6 +2,7 @@ import { accessContract } from './access'
 import { eventsSocket } from './events'
 import { fsContract } from './fs'
 import { gitContract } from './git'
+import { remoteAccessContract } from './remoteAccess'
 import { systemContract } from './system'
 import { terminalSocket } from './terminals'
 
@@ -31,6 +32,14 @@ export {
   type SocketAuthMessage,
   socketAuthMessage,
 } from './remote'
+export {
+  type RemoteAccessStatus,
+  remoteAccessStatus,
+  type TunnelState,
+  tunnelState,
+  type UpdateRemoteAccessBody,
+  updateRemoteAccessBody,
+} from './remoteAccess'
 export { type DaemonReport, daemonResponse, healthResponse } from './system'
 export {
   authFailedFrame,
@@ -72,6 +81,7 @@ export const routes = {
   fs: fsContract,
   git: gitContract,
   access: accessContract,
+  remoteAccess: remoteAccessContract,
   sockets: {
     events: eventsSocket,
     terminal: terminalSocket,

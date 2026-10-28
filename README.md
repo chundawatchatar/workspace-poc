@@ -22,20 +22,28 @@ shells reopen in their last folder and agent terminals offer to resume the
 agent's conversation. See [terminal daemon](docs/terminal-daemon.md) for how it
 works.
 
-To reach this machine through the cloud server (`apps/server`), start the host
-with `SERVER_URL` set: `wss://<server>`, or `ws://127.0.0.1:4600` (any loopback
-host) for a local server. The host then keeps one tunnel open to it, identified
-by a random secret it creates in `apps/host/.data/machine-secret`. Keep that
-file: the machine id is derived from it, and deleting it gives the machine a new
-id. Terminals and layout sync work through the tunnel as well as the HTTP API.
+To reach this machine through the cloud server (`apps/server`), open
+"Remote access…" from the command palette in the local app. Enter the server
+address, `wss://<server>` or `ws://127.0.0.1:4600` (any loopback host) for a
+local server, and optionally the client address, then turn it on. The host
+keeps one tunnel open to the server, and the dialog shows whether it is
+connected; turning it off closes the tunnel and every remote session at once.
+The setting is saved in `apps/host/.data/remote-access.json`, so every later
+start reconnects on its own. `SERVER_URL` and `CLIENT_URL` in the host's
+environment override the saved addresses, and `SERVER_URL` turns the tunnel on
+at start whatever the setting says. The host is identified by a random secret
+it creates in `apps/host/.data/machine-secret`. Keep that file: the machine id
+is derived from it, and deleting it gives the machine a new id. Terminals and
+layout sync work through the tunnel as well as the HTTP API.
 
-Every tunneled request and socket needs an access key. On its first start with
-`SERVER_URL`, the host creates one and prints a connect link,
+Every tunneled request and socket needs an access key. The first time remote
+access is on, the host creates one and prints a connect link,
 `<client>/#machine=<id>&key=<key>`, once: only the key's hash is kept, in
 `apps/host/.data/access-keys.json`. Open the link to reach the machine from the
-global app. The client URL is `CLIENT_URL` if set, otherwise `SERVER_URL` with
-`ws`/`wss` swapped for `http`/`https`. Lost the link, or want to cut everyone
-off? Run `bun run host:rotate-key`: it prints a new link and closes every remote
+global app. The client address is `CLIENT_URL`, else the saved one, else the
+server address with `ws`/`wss` swapped for `http`/`https`. Lost the link, or
+want to cut everyone off? Press "New connect link" in the dialog, or run
+`bun run host:rotate-key`: either gives a new link and closes every remote
 session that used the old key.
 
 The server serves the global app itself, so the connect link opens on the

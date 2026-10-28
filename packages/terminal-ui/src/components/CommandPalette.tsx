@@ -14,6 +14,7 @@ import {
 import { shortPath } from '../lib/paths'
 import { restoreSession, selectTheme, setOverlay, setThemeChoice, toggleSidebar, useApp } from '../lib/store'
 import { useNavigation } from '../navigation'
+import { usePageOptions } from '../pageOptions'
 import { tidyTitle } from './LayoutView'
 
 interface Item {
@@ -72,6 +73,7 @@ function tabItems(workspace: Workspace, sessions: Record<string, SessionInfo>, g
 
 export function CommandPalette() {
   const { workspaceId, navigate } = useNavigation()
+  const { remoteAccessSetting } = usePageOptions()
   const workspaces = useApp((s) => s.state?.workspaces)
   const sessions = useApp((s) => s.sessions)
   const home = useApp((s) => s.info?.home)
@@ -131,8 +133,9 @@ export function CommandPalette() {
     command('Appearance: Follow system', () => setThemeChoice('system'))
     for (const theme of THEMES) command(`Theme: ${theme.name}`, () => selectTheme(theme.id))
     command('Show keyboard shortcuts', () => setOverlay('help'), 'Ctrl+B ?')
+    if (remoteAccessSetting) command('Remote access…', () => setOverlay('remote-access'))
     return result
-  }, [workspaces, sessions, home, workspaceId, navigate])
+  }, [workspaces, sessions, home, workspaceId, navigate, remoteAccessSetting])
 
   const visible = useMemo(() => {
     const trimmed = query.trim().toLowerCase()

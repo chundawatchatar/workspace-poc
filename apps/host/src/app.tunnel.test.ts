@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, type Mock, spyOn, test } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { websocket } from '@hono/bun'
@@ -14,6 +14,7 @@ import {
   type MachineFrame,
   machineFrame,
   type RotateAccessResponse,
+  remoteAccessStatus,
   routes,
   type ServerFrame,
   TUNNEL_PATH,
@@ -24,14 +25,17 @@ import type { Server, ServerWebSocket } from 'bun'
 import { type AppDeps, createApp } from './app'
 import { tunnelEnv } from './lib/principal'
 import { AccessKeyRepository } from './modules/access/access.repository'
-import { AccessKeys } from './modules/access/access.service'
+import { AccessKeys, machineIdFromSecret } from './modules/access/access.service'
 import { EventHub } from './modules/events/events.service'
 import type { LayoutRepository } from './modules/layout/layout.repository'
-import { parseServerUrl, TunnelClient } from './modules/tunnel/tunnel.service'
+import { RemoteAccessRepository } from './modules/remote-access/remote-access.repository'
+import { RemoteAccessService } from './modules/remote-access/remote-access.service'
+import { TunnelClient } from './modules/tunnel/tunnel.service'
 
-// The host's sockets end to end: a real app, access keys and tunnel client, wired
-// as `index.ts` wires them, a fake server on one side, a stub session manager on
-// the other, and the same app served locally to compare against.
+// The host's sockets end to end: a real app, remote access service and tunnel
+// client, wired as `index.ts` wires them and turned on by a saved setting, a fake
+// server on one side, a stub session manager on the other, and the same app
+// served locally to compare against.
 
 const secret = `${'S'.repeat(42)}s`
 const info: HostInfo = { home: '/home/me', shell: '/bin/zsh', platform: 'darwin', projectRoot: '/repo' }
@@ -81,15 +85,13 @@ let spies: Mock<(...args: unknown[]) => void>[]
 let dir: string
 let keys: AccessKeys
 let key: string
+let remoteAccess: RemoteAccessService
+let settingsFile: string
 
 beforeEach(() => {
   conns = []
   clients = []
   dir = mkdtempSync(join(tmpdir(), 'orch-access-'))
-  keys = new AccessKeys(new AccessKeyRepository(join(dir, 'access-keys.json')), {
-    onRevoked: (keyIds) => clients[0]?.closeChannels(keyIds),
-  })
-  key = keys.create('default')
   stub = stubSessions()
   hub = new EventHub()
   spies = (['log', 'warn'] as const).map((level) => spyOn(console, level).mockImplementation(() => {}))
@@ -100,10 +102,7 @@ beforeEach(() => {
       layout.state = next
     },
   } as LayoutRepository
-  const access = { keys, machineId: 'm', clientUrl: 'https://orch.example' }
-  const { app, sockets } = createApp({ hub, layout, sessions: stub.sessions, info, access } as AppDeps)
 
-  local = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: app.fetch, websocket })
   server = Bun.serve({
     hostname: '127.0.0.1',
     port: 0,
@@ -120,7 +119,7 @@ beforeEach(() => {
         const frame = decodeFrame(machineFrame, data)
         if (!conn || !frame) return
         conn.frames.push(frame)
-        if (frame.type === 'hello') send(conn, { type: 'welcome', machineId: 'm' })
+        if (frame.type === 'hello') send(conn, { type: 'welcome', machineId: machineIdFromSecret(secret) })
         // Like the server, it acks what it has delivered to the browser.
         if (frame.type === 'ws.data') {
           send(conn, { type: 'ws.ack', channel: frame.channel, bytes: wsPayloadBytes(frame.data) })
@@ -129,26 +128,49 @@ beforeEach(() => {
     },
   })
 
-  const url = parseServerUrl(`ws://127.0.0.1:${server.port}`)
-  if (!url) throw new Error('rejected the test server URL')
-  const client = new TunnelClient({
-    url,
-    secret,
-    authorize: (presented) => keys.authorize(presented),
-    handle: async (request, principal) => app.fetch(request, principal ? tunnelEnv(principal) : undefined),
+  const secretFile = join(dir, 'machine-secret')
+  const keysFile = join(dir, 'access-keys.json')
+  settingsFile = join(dir, 'remote-access.json')
+  writeFileSync(secretFile, secret)
+  key = new AccessKeys(new AccessKeyRepository(keysFile)).create('default')
+  writeFileSync(
+    settingsFile,
+    JSON.stringify({ enabled: true, serverUrl: `ws://127.0.0.1:${server.port}`, clientUrl: 'https://orch.example' }),
+  )
+  remoteAccess = new RemoteAccessService({
+    repository: new RemoteAccessRepository(settingsFile),
+    secretFile,
+    keysFile,
+    handle: async (request, principal) => app.fetch(request, tunnelEnv(principal)),
     openSocket: (path, headers, conn, principal) => sockets.open(path, headers, conn, principal),
-    timings: { baseMs: 10, maxMs: 10, authTimeoutMs: 100 },
+    createTunnel: (options) => {
+      const client = new TunnelClient({ ...options, timings: { baseMs: 10, maxMs: 10, authTimeoutMs: 100 } })
+      clients.push(client)
+      return client
+    },
   })
-  clients.push(client)
-  client.start()
+  const { app, sockets } = createApp({
+    hub,
+    layout,
+    sessions: stub.sessions,
+    info,
+    access: () => remoteAccess.current(),
+    remoteAccess,
+  } as unknown as AppDeps)
+  local = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: app.fetch, websocket })
+
+  remoteAccess.start()
+  const current = remoteAccess.current()
+  if (!current) throw new Error('remote access did not start')
+  keys = current.keys
 })
 
 afterEach(async () => {
+  remoteAccess.shutdown()
   for (const client of clients) client.stop()
   await server.stop(true)
   await local.stop(true)
   for (const spy of spies) spy.mockRestore()
-  keys.flush()
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -309,8 +331,9 @@ describe('tunneled sockets', () => {
 
     const response = await fetch(`http://127.0.0.1:${local.port}${rotatePath}`, { method: 'POST' })
     const rotated = (await response.json()) as RotateAccessResponse
-    expect(rotated.machineId).toBe('m')
-    expect(rotated.link).toBe(`https://orch.example/#machine=m&key=${rotated.key}`)
+    const machineId = machineIdFromSecret(secret)
+    expect(rotated.machineId).toBe(machineId)
+    expect(rotated.link).toBe(`https://orch.example/#machine=${machineId}&key=${rotated.key}`)
     await until(() => conn.frames.some((f) => f.type === 'ws.close'))
     expect(conn.frames.filter((f) => f.type === 'ws.close')).toEqual([
       { type: 'ws.close', channel: 1, code: CLOSE_ACCESS_DENIED, reason: 'key rotated' },
@@ -326,5 +349,60 @@ describe('tunneled sockets', () => {
     expect(status(2)).toMatchObject({ status: 401 })
     expect(status(3)).toMatchObject({ status: 200 })
     expect(stub.ensured).toHaveLength(1)
+  })
+
+  test('the remote access routes answer 403 through the tunnel and leave the setting and tunnel alone, but work locally', async () => {
+    const conn = await welcomed()
+    const saved = readFileSync(settingsFile, 'utf8')
+    const { status, update } = routes.remoteAccess
+    send(conn, {
+      type: 'http.request',
+      id: 1,
+      method: status.method,
+      path: status.path,
+      headers: [[ACCESS_KEY_HEADER, key]],
+    })
+    send(conn, {
+      type: 'http.request',
+      id: 2,
+      method: update.method,
+      path: update.path,
+      headers: [[ACCESS_KEY_HEADER, key]],
+    })
+    const response = (id: number) => conn.frames.find((f) => f.type === 'http.response' && f.id === id)
+    await until(() => response(1) !== undefined && response(2) !== undefined)
+    expect(response(1)).toMatchObject({ status: 403 })
+    expect(response(2)).toMatchObject({ status: 403 })
+    expect(readFileSync(settingsFile, 'utf8')).toBe(saved)
+    expect(clients).toHaveLength(1)
+    expect(clients[0]?.status).toBe('connected')
+
+    const near = await fetch(`http://127.0.0.1:${local.port}${status.path}`)
+    const text = await near.text()
+    expect(remoteAccessStatus.parse(JSON.parse(text))).toEqual({
+      enabled: true,
+      serverUrl: `ws://127.0.0.1:${server.port}`,
+      clientUrl: 'https://orch.example',
+      serverUrlFromEnv: false,
+      clientUrlFromEnv: false,
+      machineId: machineIdFromSecret(secret),
+      tunnel: 'connected',
+    })
+    for (const hidden of [
+      secret,
+      key,
+      readFileSync(join(dir, 'access-keys.json'), 'utf8').match(/"hash": "([^"]+)"/)?.[1],
+    ]) {
+      expect(text).not.toContain(hidden ?? 'missing')
+    }
+
+    const off = await fetch(`http://127.0.0.1:${local.port}${update.path}`, {
+      method: update.method,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: false, serverUrl: `ws://127.0.0.1:${server.port}`, clientUrl: null }),
+    })
+    expect(remoteAccessStatus.parse(await off.json())).toMatchObject({ enabled: false, tunnel: 'off', clientUrl: null })
+    expect(clients[0]?.status).toBe('off')
+    expect(JSON.parse(readFileSync(settingsFile, 'utf8'))).toMatchObject({ enabled: false })
   })
 })

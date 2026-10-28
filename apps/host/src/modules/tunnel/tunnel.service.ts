@@ -7,6 +7,7 @@ import {
   serverFrame,
   TUNNEL_PATH,
   TUNNEL_PROTOCOL_VERSION,
+  type TunnelState,
 } from '@orch/shared'
 import { AUTH_TIMEOUT_MS, type OpenSocket, TunnelChannels } from './tunnel-channels.service'
 import { type Authorize, type TunnelHandler, TunnelHttp } from './tunnel-http.service'
@@ -84,6 +85,8 @@ export interface TunnelClientOptions {
   timings?: Partial<TunnelTimings>
   /** Draws the backoff jitter, in `[0, 1)`. Defaults to `Math.random`. */
   random?: () => number
+  /** Told each time `status` changes. */
+  onStatus?: (state: TunnelState) => void
 }
 
 /** One socket and everything that lives only as long as it does. */
@@ -114,10 +117,16 @@ export class TunnelClient {
   private attempt = 0
   private reconnectTimer: Timer | undefined
   private stopped = false
+  private state: TunnelState = 'off'
 
   constructor(private readonly options: TunnelClientOptions) {
     this.timings = { ...defaultTimings, ...options.timings }
     this.random = options.random ?? Math.random
+  }
+
+  /** Where the tunnel stands. `off` before `start()` and after `stop()`. */
+  get status(): TunnelState {
+    return this.state
   }
 
   start() {
@@ -133,6 +142,7 @@ export class TunnelClient {
     const conn = this.conn
     if (conn) this.release(conn)
     conn?.ws.close(1000, 'stopped')
+    this.setState('off')
   }
 
   /** Closes the open tunneled sockets authorized by any of `keyIds`, for a key that was rotated away. */
@@ -142,6 +152,7 @@ export class TunnelClient {
 
   private connect() {
     this.reconnectTimer = undefined
+    this.setState('connecting')
     let ws: WebSocket
     try {
       ws = new WebSocket(this.options.url)
@@ -206,6 +217,7 @@ export class TunnelClient {
 
   private welcomed(conn: Connection, machineId: string) {
     conn.welcomed = true
+    this.setState('connected')
     for (const timer of conn.timers) clearTimeout(timer)
     console.log(`tunnel connected as ${machineId}`)
     const expected = this.options.expectedMachineId
@@ -256,11 +268,13 @@ export class TunnelClient {
     this.release(conn)
     if (code === CLOSE_UNSUPPORTED_VERSION) {
       this.stopped = true
+      this.setState('stopped')
       console.error('tunnel refused: the server speaks another protocol version. Update this host to reconnect')
       return
     }
     if (code === CLOSE_REPLACED) {
       this.stopped = true
+      this.setState('stopped')
       console.error('tunnel closed: another host using this machine secret took over. Not reconnecting')
       return
     }
@@ -271,7 +285,14 @@ export class TunnelClient {
     if (this.stopped) return
     const delay = Math.round(backoffDelay(this.attempt, this.random, this.timings))
     this.attempt++
+    this.setState('reconnecting')
     console.log(`tunnel lost (${reason}), reconnecting in ${delay} ms`)
     this.reconnectTimer = setTimeout(() => this.connect(), delay)
+  }
+
+  private setState(state: TunnelState) {
+    if (state === this.state) return
+    this.state = state
+    this.options.onStatus?.(state)
   }
 }

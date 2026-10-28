@@ -25,7 +25,7 @@ import {
 import { useSyncExternalStore } from 'react'
 import type { HostTransport } from '../transport'
 
-export type Overlay = 'help' | 'new-workspace' | 'palette' | 'themes' | null
+export type Overlay = 'help' | 'new-workspace' | 'palette' | 'themes' | 'remote-access' | null
 export type Theme = 'light' | 'dark'
 
 /**
