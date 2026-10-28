@@ -1,7 +1,13 @@
 import { HOST_PORT } from '@orch/shared'
-import { createLocalTransport, SIDEBAR_BOOT_SCRIPT, TerminalUI, type TerminalUIProps } from '@orch/terminal-ui'
+import {
+  createLocalTransport,
+  NotFound,
+  SIDEBAR_BOOT_SCRIPT,
+  TerminalUI,
+  type TerminalUIProps,
+} from '@orch/terminal-ui'
 import { THEME_BOOT_SCRIPT } from '@orch/ui'
-import { createRootRoute, HeadContent, Scripts, useMatches, useNavigate, useParams } from '@tanstack/react-router'
+import { createRootRoute, HeadContent, Outlet, Scripts, useNavigate, useParams } from '@tanstack/react-router'
 import { type ReactNode, useCallback } from 'react'
 import appCss from '../styles.css?url'
 
@@ -19,6 +25,8 @@ export const Route = createRootRoute({
   }),
   shellComponent: RootDocument,
   component: RootLayout,
+  // Rendered in the root's outlet, so an unknown path keeps the sidebar.
+  notFoundComponent: NotFound,
 })
 
 function RootDocument({ children }: { children: ReactNode }) {
@@ -40,7 +48,6 @@ function RootDocument({ children }: { children: ReactNode }) {
 /** Rendered once for every route, so moving between workspaces keeps the page and its connection. */
 function RootLayout() {
   const { workspaceId } = useParams({ strict: false }) as { workspaceId?: string }
-  const found = useMatches({ select: (matches) => matches.length > 1 })
   const routerNavigate = useNavigate()
 
   const navigate = useCallback<TerminalUIProps['navigate']>(
@@ -52,8 +59,9 @@ function RootLayout() {
   )
   const workspaceHref = useCallback((id: string) => `/w/${encodeURIComponent(id)}`, [])
 
-  if (!found) return <div className="p-6 text-dim">Page not found.</div>
   return (
-    <TerminalUI transport={transport} workspaceId={workspaceId} navigate={navigate} workspaceHref={workspaceHref} />
+    <TerminalUI transport={transport} workspaceId={workspaceId} navigate={navigate} workspaceHref={workspaceHref}>
+      <Outlet />
+    </TerminalUI>
   )
 }

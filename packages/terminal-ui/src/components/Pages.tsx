@@ -2,9 +2,12 @@ import type { Workspace } from '@orch/shared'
 import { Bell, PanelLeft } from '@orch/ui/icons'
 import { useEffect, useRef, useState } from 'react'
 import { revealSurface } from '../lib/commands'
+import { pageView } from '../lib/page'
 import { shortPath } from '../lib/paths'
 import { setOverlay, toggleSidebar, useApp } from '../lib/store'
 import { useGoToWorkspace, useNavigation } from '../navigation'
+import { usePageOptions } from '../pageOptions'
+import { useTransport } from '../transportContext'
 import { HostStatus } from './HostStatus'
 import { LayoutView } from './LayoutView'
 import { pendingAttention } from './Sidebar'
@@ -19,12 +22,13 @@ function Redirect({ workspaceId }: { workspaceId: string | undefined }) {
   return null
 }
 
-/** The home page: opens the first workspace, or offers to create one. */
-export function HomePage() {
-  const state = useApp((s) => s.state)
-  if (!state) return <HostStatus />
-  const first = state.workspaces[0]
-  if (first) return <Redirect workspaceId={first.id} />
+/** The home page, for the app's `/` route: opens the first workspace, or offers to create one. */
+export function HomeView() {
+  const transport = useTransport()
+  const view = useApp((s) => pageView(s, transport, undefined))
+  const first = useApp((s) => s.state?.workspaces[0]?.id)
+  if (view === 'connecting') return <HostStatus />
+  if (view === 'redirect') return <Redirect workspaceId={first} />
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 text-dim">
       <p>No workspaces yet.</p>
@@ -39,18 +43,20 @@ export function HomePage() {
   )
 }
 
-/** One workspace: its header and layout. An unknown id goes back home. */
-export function WorkspacePage({ workspaceId }: { workspaceId: string }) {
-  const loaded = useApp((s) => s.state !== null)
+/** One workspace, for the app's workspace route: its header and layout. An unknown id goes back home. */
+export function WorkspaceView({ workspaceId }: { workspaceId: string }) {
+  const transport = useTransport()
+  const view = useApp((s) => pageView(s, transport, workspaceId))
   const workspace = useApp((s) => s.state?.workspaces.find((w) => w.id === workspaceId))
-  const name = workspace?.name
+  const { titleSuffix } = usePageOptions()
+  const name = view === 'workspace' ? workspace?.name : undefined
 
   useEffect(() => {
-    if (name) document.title = `${name} · Workspaces`
-  }, [name])
+    if (name) document.title = `${name} · ${titleSuffix}`
+  }, [name, titleSuffix])
 
-  if (!loaded) return <HostStatus />
-  if (!workspace) return <Redirect workspaceId={undefined} />
+  if (view === 'connecting') return <HostStatus />
+  if (view === 'redirect' || !workspace) return <Redirect workspaceId={undefined} />
 
   return (
     <>
@@ -60,6 +66,19 @@ export function WorkspacePage({ workspaceId }: { workspaceId: string }) {
         <LayoutView workspace={workspace} />
       </div>
     </>
+  )
+}
+
+/** The main area for a path the app's router doesn't know. The sidebar stays in place. */
+export function NotFound() {
+  const { navigate } = useNavigation()
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-2 text-dim">
+      <p>Page not found.</p>
+      <button type="button" className="text-xs text-accent hover:underline" onClick={() => navigate({})}>
+        Go home
+      </button>
+    </div>
   )
 }
 
