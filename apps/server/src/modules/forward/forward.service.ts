@@ -1,5 +1,6 @@
 import { API_PREFIX, MAX_TUNNEL_FRAME_BYTES, type MachineFrame, type ServerFrame } from '@orch/shared'
 import { frameBytes, relayedPath, relayedRequestHeaders } from '../../lib/relay'
+import { SANDBOX_CSP } from '../../lib/security'
 import type { MachineConnection, MachineRegistry } from '../tunnel/tunnel.service'
 
 // Framing of the response that the server redoes for the browser.
@@ -7,13 +8,18 @@ const DROPPED_RESPONSE_HEADERS = new Set(['content-length', 'transfer-encoding',
 
 /**
  * True for a response header the browser never gets from the machine: its
- * framing, and its CORS headers, since the server answers for CORS itself.
- * This is a filter on header names, like the hop-by-hop list, not a decision
- * on what the machine said.
+ * framing, its CORS headers, since the server answers for CORS itself, and its
+ * CSP, which the server replaces with `SANDBOX_CSP`. This is a filter on
+ * header names, like the hop-by-hop list, not a decision on what the machine
+ * said.
  */
 function isDroppedResponseHeader(name: string): boolean {
   const lower = name.toLowerCase()
-  return DROPPED_RESPONSE_HEADERS.has(lower) || lower.startsWith('access-control-')
+  return (
+    DROPPED_RESPONSE_HEADERS.has(lower) ||
+    lower.startsWith('access-control-') ||
+    lower.startsWith('content-security-policy')
+  )
 }
 
 /** What the forwarder needs from the server. */
@@ -34,6 +40,8 @@ interface Pending {
   detach(): void
   /** The IP of the browser that sent the request. */
   clientIp: string
+  /** True once the machine reported the request's key as refused. */
+  authFailed: boolean
 }
 
 /** The in-flight requests on one tunnel, by request id. It lives until the tunnel closes, so ids are never reused. */
@@ -73,7 +81,7 @@ export class HttpForwarder {
    * arrives. Resolves with 502 when the machine is offline or its tunnel drops,
    * 504 when the head takes longer than `requestTimeoutMs`, and 413 when the
    * request does not fit in one tunnel frame. `clientIp` is kept with the
-   * request, for `clientIpOf`.
+   * request, for `authFailed`.
    */
   async forward(machineId: string, request: Request, clientIp = ''): Promise<Response> {
     const path = forwardedPath(request.url)
@@ -115,6 +123,7 @@ export class HttpForwarder {
         body: undefined,
         detach: () => request.signal.removeEventListener('abort', onAbort),
         clientIp,
+        authFailed: false,
       }
       state.pending.set(id, entry)
       request.signal.addEventListener('abort', onAbort, { once: true })
@@ -160,9 +169,17 @@ export class HttpForwarder {
     this.connections.delete(conn)
   }
 
-  /** The IP of the browser that sent request `id` on `conn`. Undefined means no such request is in flight. */
-  clientIpOf(conn: MachineConnection, id: number): string | undefined {
-    return this.connections.get(conn)?.pending.get(id)?.clientIp
+  /**
+   * Takes the machine's report that request `id` on `conn` had a refused key,
+   * and returns the IP of the browser that sent it. Undefined means no such
+   * request is in flight, or it was already reported, so a machine can count
+   * each request against its browser only once.
+   */
+  authFailed(conn: MachineConnection, id: number): string | undefined {
+    const entry = this.connections.get(conn)?.pending.get(id)
+    if (!entry || entry.authFailed) return undefined
+    entry.authFailed = true
+    return entry.clientIp
   }
 
   /** The number of requests in flight, across every tunnel. */
@@ -261,6 +278,7 @@ function buildResponse(
     for (const [name, value] of pairs) {
       if (!isDroppedResponseHeader(name)) headers.append(name, value)
     }
+    headers.set('Content-Security-Policy', SANDBOX_CSP)
     if (status === 204 || status === 205 || status === 304) {
       return { response: new Response(null, { status, headers }), controller: null }
     }

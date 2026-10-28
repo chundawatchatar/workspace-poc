@@ -29,13 +29,13 @@ export function createApp(deps: AppDeps): Hono {
   const { forwarder, bridge, limiter } = deps
   const limits: LimitsDeps = { limiter, clientIp: clientIpReader({ trustProxy: deps.trustProxy }) }
 
-  // The machine refused a key. Count it against the browser that sent it; an unknown id or channel is ignored.
+  // The machine refused a key. Count it once against the browser that sent it; an unknown id or channel is ignored.
   const authFailed = (conn: MachineConnection, frame: Extract<MachineFrame, { type: 'auth.failed' }>) => {
     const ip =
       frame.id !== undefined
-        ? forwarder.clientIpOf(conn, frame.id)
+        ? forwarder.authFailed(conn, frame.id)
         : frame.channel !== undefined
-          ? bridge.clientIpOf(conn, frame.channel)
+          ? bridge.authFailed(conn, frame.channel)
           : undefined
     if (ip !== undefined) limiter.badKey(ip)
   }

@@ -10,6 +10,15 @@ export const SECURITY_HEADERS: Readonly<Record<string, string>> = {
   'Cross-Origin-Resource-Policy': 'same-origin',
 }
 
+/**
+ * The CSP for every response that is not the client's own page: relayed
+ * machine responses and the build's other files. `sandbox` without
+ * `allow-same-origin` gives a document opened from one an opaque origin, so
+ * HTML a machine sends can never run as the server's origin and read the
+ * access keys the client keeps in `localStorage`.
+ */
+export const SANDBOX_CSP = "sandbox; default-src 'none'; frame-ancestors 'none'"
+
 // What a cross-origin page may send to a machine. The key header is the one
 // that makes every machine request non-simple, so browsers preflight it.
 const ALLOWED_METHODS = 'GET, HEAD, POST, PUT, PATCH, DELETE'

@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { SANDBOX_CSP } from '../../lib/security'
 import { resolveStatic, type StaticSite } from './static.service'
 
 /** What the static routes need from the server. Null or missing means there is no built client to serve. */
@@ -28,9 +29,10 @@ export function createStaticRoutes({ site }: StaticRoutesDeps) {
         },
       })
     }
-    const file = Bun.file(target.path)
-    const relative = target.path.slice(site.root.length)
-    return new Response(file, relative.startsWith('/assets/') ? { headers: { 'Cache-Control': IMMUTABLE } } : {})
+    // Only the page runs as the server's origin; any other file opened on its own (an SVG, say) is sandboxed.
+    const headers: Record<string, string> = { 'Content-Security-Policy': SANDBOX_CSP }
+    if (target.path.slice(site.root.length).startsWith('/assets/')) headers['Cache-Control'] = IMMUTABLE
+    return new Response(Bun.file(target.path), { headers })
   })
 }
 

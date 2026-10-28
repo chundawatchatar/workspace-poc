@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { machinePathPrefix, TUNNEL_PATH } from '@orch/shared'
 import { createApp } from '../../app'
+import { SANDBOX_CSP } from '../../lib/security'
 import { ChannelBridge } from '../bridge/bridge.service'
 import { HttpForwarder } from '../forward/forward.service'
 import { ConnectionLimiter } from '../limits/limits.service'
@@ -57,6 +58,7 @@ describe('static routes', () => {
     expect(asset.headers.get('cache-control')).toBe('public, max-age=31536000, immutable')
     expect([...new Uint8Array(await asset.arrayBuffer())]).toEqual([...script])
     expect(asset.headers.get('x-frame-options')).toBe('DENY')
+    expect(asset.headers.get('content-security-policy')).toBe(SANDBOX_CSP)
 
     const head = await request('/assets/index-abc.js', { method: 'HEAD' })
     expect(head.status).toBe(200)
