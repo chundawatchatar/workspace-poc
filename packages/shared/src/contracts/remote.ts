@@ -31,6 +31,9 @@ export const CLOSE_MACHINE_OFFLINE = 4502
 /** The close code a browser socket gets when its access key is missing, wrong, late or rotated. */
 export const CLOSE_ACCESS_DENIED = 4401
 
+/** The close code a browser socket gets when the server refuses it for a rate limit. */
+export const CLOSE_RATE_LIMITED = 4429
+
 /** What a connect link carries: the machine to open and the key to open it with. */
 export interface ConnectTarget {
   machineId: string

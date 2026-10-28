@@ -9,7 +9,7 @@
   ],
   "scripts": {
     "dev": "bun run --filter '*' dev",
-    "dev:client": "bun run --filter @orch/client dev:client",
+    "dev:client": "bun run --filter '*' dev:client",
     "host:rotate-key": "bun run --filter @orch/host rotate-key",
     "terminals:stop": "bun scripts/stop-terminals.ts",
     "test:bun-daemon": "bun scripts/verify-bun-daemon.ts",

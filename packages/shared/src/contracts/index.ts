@@ -21,6 +21,7 @@ export {
   ACCESS_KEY_HEADER,
   CLOSE_ACCESS_DENIED,
   CLOSE_MACHINE_OFFLINE,
+  CLOSE_RATE_LIMITED,
   type ConnectTarget,
   formatConnectFragment,
   MACHINE_API_ROUTE,

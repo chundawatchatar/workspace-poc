@@ -24,10 +24,10 @@ function setup(handle: TunnelHandler, authorize = allowAll) {
 }
 
 /** The host's app with stub deps, as `index.ts` hands it to the tunnel. */
-function hostApp(access?: AppDeps['access']) {
+function hostApp() {
   const sessions = { list: () => [] } as unknown as SessionManager
-  const { app } = createApp({ sessions, daemonStartedAt: () => null, access } as AppDeps)
-  const handle: TunnelHandler = async (request, p) => app.fetch(request, p ? tunnelEnv(p) : undefined)
+  const { app } = createApp({ sessions, daemonStartedAt: () => null } as AppDeps)
+  const handle: TunnelHandler = async (request, p) => app.fetch(request, tunnelEnv(p))
   return { app, handle }
 }
 
@@ -50,7 +50,7 @@ function bodyOf(frames: MachineFrame[], id: number) {
 describe('TunnelHttp', () => {
   test('answers an authorized request like a direct app.fetch, even from a foreign origin, without the key header', async () => {
     const { app, handle } = hostApp()
-    let seen: { request: Request; principal: Principal | null } | undefined
+    let seen: { request: Request; principal: Principal } | undefined
     const { http, frames } = setup(async (req, p) => {
       seen = { request: req, principal: p }
       return handle(req, p)
@@ -108,20 +108,12 @@ describe('TunnelHttp', () => {
     }
   })
 
-  test('passes a CORS preflight on without a key, and it reaches no route handler', async () => {
-    let rotations = 0
-    const keys = {
-      rotate: () => {
-        rotations++
-        return { key: 'k', revoked: [] }
-      },
-    } as unknown as NonNullable<AppDeps['access']>['keys']
-    const { handle } = hostApp({ keys, machineId: 'm', clientUrl: null })
-    let principalSeen: Principal | null | undefined
+  test('refuses a CORS preflight without a key like any other request, since the server answers preflights', async () => {
+    let calls = 0
     const { http, frames } = setup(
-      async (req, p) => {
-        principalSeen = p
-        return handle(req, p)
+      async () => {
+        calls++
+        return new Response(null, { status: 204 })
       },
       () => null,
     )
@@ -137,16 +129,14 @@ describe('TunnelHttp', () => {
       path: routes.access.rotate.path,
       headers: preflight,
     })
-    http.request({ type: 'http.request', id: 2, method: 'OPTIONS', path: routes.access.rotate.path, headers: [] })
-    await until(() => ended(frames, 1) && ended(frames, 2))
+    await until(() => ended(frames, 1))
 
-    expect(principalSeen).toBeNull()
-    expect(rotations).toBe(0)
-    const head = frames.find((f) => f.type === 'http.response' && f.id === 1)
-    expect(head).toMatchObject({ status: 204 })
-    expect(bodyOf(frames, 1)).toBe('')
-    // Without the preflight header it is a plain request, which needs a key.
-    expect(frames.find((f) => f.type === 'http.response' && f.id === 2)).toMatchObject({ status: 401 })
+    expect(calls).toBe(0)
+    expect(frames).toEqual([
+      { type: 'auth.failed', id: 1 },
+      { type: 'http.response', id: 1, status: 401, headers: [] },
+      { type: 'http.end', id: 1 },
+    ])
   })
 
   test('passes the method, headers and body through, and keeps repeated response headers', async () => {

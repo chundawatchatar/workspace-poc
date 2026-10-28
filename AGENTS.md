@@ -6,7 +6,7 @@ Instructions for AI coding agents working in this repository. Shared by Claude C
 
 - Bun workspaces monorepo (`apps/web`, `apps/client`, `apps/host`, `apps/ptyd-bun`, `apps/server`, `packages/shared`, `packages/terminal`, `packages/ui`, `packages/terminal-ui`). Use `bun`, never npm/yarn/pnpm. `bunfig.toml` hoists all dependencies into the root `node_modules`.
 - `bun run dev` starts both apps: web on 127.0.0.1:3210 (strict port), host on 127.0.0.1:4599. It does not start the client.
-- `bun run dev:client` serves the global app (`apps/client`) on 127.0.0.1:3220. Until the server forwards `/m/<id>/…` traffic, it can only show a machine as connecting.
+- `bun run dev:client` starts the global app (`apps/client`) on 127.0.0.1:3220 and the cloud server (`apps/server`) on 127.0.0.1:4600, set up to talk to each other. To reach this machine through them, run `bun run dev` in another terminal with `SERVER_URL=ws://127.0.0.1:4600 CLIENT_URL=http://127.0.0.1:3220`.
 - Verify changes with `bun run typecheck` (runs `tsc` in every workspace) and `bun test`.
 - Tests use Bun's built-in runner and live next to the source as `*.test.ts`. Keep them few and behavior-focused (see the `write-tests` skill). `bun run test:coverage` shows coverage.
 - `bun run lint` / `bun run format` run Biome (`biome.json` at the root) on the whole repo. After editing, format only the files you changed: `bunx biome check --write <files>`.

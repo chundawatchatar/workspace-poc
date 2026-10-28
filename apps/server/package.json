@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev:client": "SERVER_ALLOWED_ORIGINS=http://127.0.0.1:3220 bun --watch src/index.ts",
     "start": "bun src/index.ts",
     "typecheck": "tsc -p tsconfig.json"
   },
