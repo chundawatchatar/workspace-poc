@@ -33,6 +33,11 @@ export interface TerminalUIProps {
   deniedHint?: ReactNode
   /** Follows the workspace name in the document title. Defaults to `Workspaces`. */
   titleSuffix?: string
+  /**
+   * Offers the "Remote access…" command, where the host's tunnel to the server
+   * is set up. Only a local page can use it: the host refuses it through the tunnel.
+   */
+  remoteAccessSetting?: boolean
 }
 
 /** The page inside a machine: sidebar, workspace layout, overlays and toasts, connected through `transport`. */
@@ -47,6 +52,7 @@ export function TerminalUI({
   offlineHint = LOCAL_OFFLINE_HINT,
   deniedHint = DEFAULT_DENIED_HINT,
   titleSuffix = 'Workspaces',
+  remoteAccessSetting = false,
 }: TerminalUIProps) {
   // One cache per transport, so another host's answers are never shown. The host may be on loopback, which stays
   // reachable when the browser reports offline, so don't pause requests then.
@@ -61,8 +67,8 @@ export function TerminalUI({
     [workspaceId, navigate, workspaceHref],
   )
   const options = useMemo<PageOptions>(
-    () => ({ machine, header, offlineHint, deniedHint, titleSuffix }),
-    [machine, header, offlineHint, deniedHint, titleSuffix],
+    () => ({ machine, header, offlineHint, deniedHint, titleSuffix, remoteAccessSetting }),
+    [machine, header, offlineHint, deniedHint, titleSuffix, remoteAccessSetting],
   )
 
   useEffect(() => connect(transport), [transport])

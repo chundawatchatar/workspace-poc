@@ -60,7 +60,13 @@ function RootLayout() {
   const workspaceHref = useCallback((id: string) => `/w/${encodeURIComponent(id)}`, [])
 
   return (
-    <TerminalUI transport={transport} workspaceId={workspaceId} navigate={navigate} workspaceHref={workspaceHref}>
+    <TerminalUI
+      transport={transport}
+      workspaceId={workspaceId}
+      navigate={navigate}
+      workspaceHref={workspaceHref}
+      remoteAccessSetting
+    >
       <Outlet />
     </TerminalUI>
   )

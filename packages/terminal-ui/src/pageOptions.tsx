@@ -12,6 +12,8 @@ export interface PageOptions {
   deniedHint: ReactNode
   /** Follows the workspace name in the document title. */
   titleSuffix: string
+  /** True when the page offers the Remote access setting, which only a local page can change. */
+  remoteAccessSetting: boolean
 }
 
 const PageOptionsContext = createContext<PageOptions | null>(null)
