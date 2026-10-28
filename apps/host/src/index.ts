@@ -45,7 +45,7 @@ const inspector = setInterval(() => {
     })
 }, 2000)
 
-const app = createApp({ hub, layout, sessions, info, daemonStartedAt: () => daemon.shared.startedAt })
+const { app } = createApp({ hub, layout, sessions, info, daemonStartedAt: () => daemon.shared.startedAt })
 const server = Bun.serve({
   hostname: '127.0.0.1',
   port: HOST_PORT,

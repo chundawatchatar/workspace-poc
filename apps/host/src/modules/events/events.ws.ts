@@ -1,10 +1,11 @@
-import { upgradeWebSocket } from '@hono/bun'
 import { type AppState, type HostInfo, listSurfaces, parseMessage, routes } from '@orch/shared'
 import { SessionManager } from '@orch/terminal'
-import { Hono } from 'hono'
 import { createRateLimiter } from '../../lib/rateLimit'
+import { type SocketHandler, serveSocket } from '../../lib/socket'
 import type { LayoutRepository } from '../layout/layout.repository'
 import type { EventClient, EventHub } from './events.service'
+
+const socket = routes.sockets.events
 
 /** What the events socket needs from the host. */
 export interface EventsSocketDeps {
@@ -22,56 +23,55 @@ function liveSessionIds(state: AppState) {
   )
 }
 
-/** Serves `routes.sockets.events`. */
-export function createEventsSocket({ hub, layout, sessions, info }: EventsSocketDeps) {
-  return new Hono().get(
-    routes.sockets.events.path,
-    upgradeWebSocket(() => {
-      let client: EventClient | null = null
-      const limit = createRateLimiter()
-      return {
-        onOpen(_event, ws) {
-          client = {
-            id: crypto.randomUUID(),
-            send: (event) => ws.send(JSON.stringify(event)),
+/** Adds each connection of `routes.sockets.events` to the hub, local or tunneled, and applies its layout changes. */
+export function eventsSocketHandler({ hub, layout, sessions, info }: EventsSocketDeps): SocketHandler<typeof socket> {
+  return (_input, conn) => {
+    const limit = createRateLimiter()
+    const client: EventClient = {
+      id: crypto.randomUUID(),
+      send: (event) => void conn.send(JSON.stringify(event)),
+    }
+    hub.add(client)
+    client.send({
+      type: 'hello',
+      clientId: client.id,
+      state: layout.state,
+      sessions: sessions.list().map((s) => s.info()),
+      info,
+    })
+    return {
+      message(data) {
+        // Checked before parsing, so frames that fail to parse count too.
+        const decision = limit()
+        if (decision === 'close') {
+          console.warn(`closing ${socket.path} socket: it keeps sending past the rate limit`)
+          conn.close(1008, 'rate limit')
+        }
+        if (decision !== 'accept') return
+        const message = parseMessage(socket.clientMessage, data)
+        if (!message) return
+        if (message.type === 'state') {
+          layout.set(message.state)
+          hub.broadcast({ type: 'state', state: layout.state }, client)
+          // A closed tab's terminal ends now. One opened moments ago may be missing only because this window's
+          // layout is behind, so it is checked again once its grace period is over, against the layout by then.
+          if (sessions.collect(liveSessionIds(layout.state))) {
+            setTimeout(() => sessions.collect(liveSessionIds(layout.state)), SessionManager.GRACE + 100)
           }
-          hub.add(client)
-          client.send({
-            type: 'hello',
-            clientId: client.id,
-            state: layout.state,
-            sessions: sessions.list().map((s) => s.info()),
-            info,
-          })
-        },
-        onMessage(event, ws) {
-          // Checked before parsing, so frames that fail to parse count too.
-          const decision = limit()
-          if (decision === 'close') {
-            console.warn(`closing ${routes.sockets.events.path} socket: it keeps sending past the rate limit`)
-            ws.close(1008, 'rate limit')
-          }
-          if (decision !== 'accept') return
-          const message = parseMessage(routes.sockets.events.clientMessage, event.data)
-          if (!message || !client) return
-          if (message.type === 'state') {
-            layout.set(message.state)
-            hub.broadcast({ type: 'state', state: layout.state }, client)
-            // A closed tab's terminal ends now. One opened moments ago may be missing only because this window's
-            // layout is behind, so it is checked again once its grace period is over, against the layout by then.
-            if (sessions.collect(liveSessionIds(layout.state))) {
-              setTimeout(() => sessions.collect(liveSessionIds(layout.state)), SessionManager.GRACE + 100)
-            }
-          } else if (message.type === 'ack') {
-            sessions.get(message.sessionId)?.ack()
-          } else if (message.type === 'restore') {
-            sessions.get(message.sessionId)?.restore(message.mode)
-          }
-        },
-        onClose() {
-          if (client) hub.remove(client)
-        },
-      }
-    }),
-  )
+        } else if (message.type === 'ack') {
+          sessions.get(message.sessionId)?.ack()
+        } else if (message.type === 'restore') {
+          sessions.get(message.sessionId)?.restore(message.mode)
+        }
+      },
+      close() {
+        hub.remove(client)
+      },
+    }
+  }
+}
+
+/** Serves `routes.sockets.events` locally. */
+export function createEventsSocket(handler: SocketHandler<typeof socket>) {
+  return serveSocket(socket, handler)
 }
