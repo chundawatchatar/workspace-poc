@@ -1,21 +1,9 @@
-import { API_PREFIX, encodeFrame, MAX_TUNNEL_FRAME_BYTES, type MachineFrame, type ServerFrame } from '@orch/shared'
+import { API_PREFIX, MAX_TUNNEL_FRAME_BYTES, type MachineFrame, type ServerFrame } from '@orch/shared'
+import { frameBytes, relayedPath, relayedRequestHeaders } from '../../lib/relay'
 import type { MachineConnection, MachineRegistry } from '../tunnel/tunnel.service'
 
-// Transport framing that does not survive the hop through the tunnel. Dropping
-// these is part of re-framing the request, not reading it: the body is sent in
-// one frame on the way in and re-chunked on the way out.
-const DROPPED_REQUEST_HEADERS = new Set([
-  'connection',
-  'keep-alive',
-  'transfer-encoding',
-  'upgrade',
-  'te',
-  'trailer',
-  'host',
-])
+// Framing of the response that the server redoes for the browser.
 const DROPPED_RESPONSE_HEADERS = new Set(['content-length', 'transfer-encoding', 'connection'])
-
-const encoder = new TextEncoder()
 
 /** What the forwarder needs from the server. */
 export interface HttpForwarderDeps {
@@ -47,12 +35,7 @@ interface ConnectionState {
  * means the URL is not under a machine's `/api/`.
  */
 export function forwardedPath(url: string): string | null {
-  const pathStart = url.indexOf('/', url.indexOf('//') + 2)
-  if (pathStart < 0) return null
-  const raw = url.slice(pathStart).split('#')[0] ?? ''
-  const match = /^\/m\/[^/?]+(\/.*)$/.exec(raw)
-  const path = match?.[1]
-  return path?.startsWith(`${API_PREFIX}/`) ? path : null
+  return relayedPath(url, API_PREFIX)
 }
 
 /**
@@ -97,7 +80,7 @@ export class HttpForwarder {
       id,
       method: request.method,
       path,
-      headers: [...request.headers].filter(([name]) => !dropsRequestHeader(name)),
+      headers: relayedRequestHeaders(request.headers),
       ...(body && body.byteLength > 0 ? { body } : {}),
     }
     if (frameBytes(frame) > MAX_TUNNEL_FRAME_BYTES) return tooLarge()
@@ -217,16 +200,6 @@ function badGateway(): Response {
 
 function tooLarge(): Response {
   return new Response('Request body too large', { status: 413 })
-}
-
-function dropsRequestHeader(name: string): boolean {
-  const lower = name.toLowerCase()
-  return DROPPED_REQUEST_HEADERS.has(lower) || lower.startsWith('proxy-')
-}
-
-function frameBytes(frame: ServerFrame): number {
-  const encoded = encodeFrame(frame)
-  return typeof encoded === 'string' ? encoder.encode(encoded).byteLength : encoded.byteLength
 }
 
 /** Reads a body into one buffer. Null means it is larger than `cap`, and reading stops there. */
