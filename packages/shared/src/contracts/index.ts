@@ -19,6 +19,7 @@ export {
   ACCESS_KEY_HEADER,
   type ConnectTarget,
   formatConnectFragment,
+  MACHINE_API_ROUTE,
   machinePathPrefix,
   parseConnectFragment,
   type SocketAuthMessage,
