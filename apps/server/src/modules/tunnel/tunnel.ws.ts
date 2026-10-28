@@ -1,5 +1,14 @@
 import { upgradeWebSocket } from '@hono/bun'
-import { decodeFrame, type MachineFrame, machineFrame, TUNNEL_PATH, TUNNEL_PROTOCOL_VERSION } from '@orch/shared'
+import {
+  CLOSE_HEARTBEAT_TIMEOUT,
+  CLOSE_REPLACED,
+  CLOSE_UNSUPPORTED_VERSION,
+  decodeFrame,
+  type MachineFrame,
+  machineFrame,
+  TUNNEL_PATH,
+  TUNNEL_PROTOCOL_VERSION,
+} from '@orch/shared'
 import { Hono } from 'hono'
 import type { WSContext } from 'hono/ws'
 import { z } from 'zod'
@@ -7,12 +16,6 @@ import { bunSocket, type ServerSocketEvents } from '../../lib/websocket'
 import { FrameScheduler } from './tunnel.scheduler'
 import { type MachineConnection, type MachineRegistry, machineIdFromProof } from './tunnel.service'
 
-/** Close code for a `hello` with another protocol version. The machine should not retry until it is updated. */
-export const CLOSE_UNSUPPORTED_VERSION = 4000
-/** Close code for a tunnel that a newer connection from the same machine took over. */
-export const CLOSE_REPLACED = 4001
-/** Close code for a machine that sent nothing for `heartbeatTimeoutMs`. */
-export const CLOSE_HEARTBEAT_TIMEOUT = 4002
 /** Close code for a missing, invalid or repeated `hello`. */
 const CLOSE_POLICY = 1008
 

@@ -22,6 +22,14 @@ shells reopen in their last folder and agent terminals offer to resume the
 agent's conversation. See [terminal daemon](docs/terminal-daemon.md) for how it
 works.
 
+To reach this machine through the cloud server (`apps/server`), start the host
+with `SERVER_URL` set: `wss://<server>`, or `ws://127.0.0.1:4600` (any loopback
+host) for a local server. The host then keeps one tunnel open to it, identified
+by a random secret it creates in `apps/host/.data/machine-secret`. Keep that
+file: the machine id is derived from it, and deleting it gives the machine a new
+id. Tunneled requests are not access-checked yet, so only set `SERVER_URL` for
+testing.
+
 ## Layout
 
 | Path | What it is |

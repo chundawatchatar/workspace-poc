@@ -7,6 +7,8 @@ import { createApp } from './app'
 import { EventHub } from './modules/events/events.service'
 import { dataFile, LayoutRepository } from './modules/layout/layout.repository'
 import { daemonFactory, restoreTerminals } from './modules/terminals/daemon.service'
+import { loadOrCreateMachineSecret, machineSecretFile } from './modules/tunnel/tunnel.repository'
+import { parseServerUrl, TunnelClient } from './modules/tunnel/tunnel.service'
 
 // Composition root: creates the long-lived services, wires them together and starts the server.
 
@@ -52,8 +54,38 @@ const server = Bun.serve({
 })
 console.log(`host listening on http://${server.hostname}:${server.port}`)
 
+const tunnel = startTunnel(process.env.SERVER_URL)
+
+/** Opens the tunnel to the server when `SERVER_URL` is set. Any problem leaves the host running locally only. */
+function startTunnel(serverUrl: string | undefined): TunnelClient | null {
+  if (!serverUrl) return null
+  const url = parseServerUrl(serverUrl)
+  if (!url) {
+    console.error(
+      'SERVER_URL must be wss://<host>, or ws:// on 127.0.0.1, [::1] or localhost. Running without a tunnel',
+    )
+    return null
+  }
+  let secret: string
+  try {
+    secret = loadOrCreateMachineSecret(machineSecretFile(hostRoot))
+  } catch (error) {
+    // The repository's messages never contain the secret.
+    console.error(`no tunnel: ${error instanceof Error ? error.message : 'the machine secret could not be read'}`)
+    return null
+  }
+  // The access-key job wraps `handle` with the key check; until then the origin check is all there is.
+  console.warn(
+    'warning: tunneled requests are not access-checked yet. Anyone who knows this machine id can reach its API through the server',
+  )
+  const client = new TunnelClient({ url, secret, handle: async (request) => app.fetch(request) })
+  client.start()
+  return client
+}
+
 function shutdown() {
   clearInterval(inspector)
+  tunnel?.stop()
   layout.flush()
   sessions.shutdown()
   process.exit(0)
