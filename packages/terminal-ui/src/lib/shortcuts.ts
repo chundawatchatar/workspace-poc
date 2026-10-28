@@ -61,6 +61,15 @@ function digit(event: KeyboardEvent): number | null {
   return match ? Number(match[1]) : null
 }
 
+function isPaletteKey(event: KeyboardEvent) {
+  // Cmd+P would otherwise print the page. Plain Ctrl+P is left alone: shells use it for history.
+  return (
+    event.code === 'KeyP' &&
+    !event.altKey &&
+    ((event.metaKey && !event.ctrlKey) || (event.ctrlKey && event.shiftKey && !event.metaKey))
+  )
+}
+
 export function useShortcuts(workspace: Workspace | undefined, goToWorkspace: (id: string) => void) {
   // The listener is installed once; these refs keep it reading current values.
   const workspaceRef = useRef(workspace)
@@ -150,13 +159,18 @@ export function useShortcuts(workspace: Workspace | undefined, goToWorkspace: (i
       }
     }
 
-    function direct(event: KeyboardEvent): boolean {
+    function macCommand(event: KeyboardEvent): boolean {
       const cmdOnly = event.metaKey && !event.ctrlKey && !event.altKey
       if (cmdOnly && event.code === 'KeyD') return workspaceCommand(event.shiftKey ? 'split-down' : 'split-right')
       if (cmdOnly && !event.shiftKey && event.code === 'KeyB') {
         toggleSidebar()
         return true
       }
+      return false
+    }
+
+    function direct(event: KeyboardEvent): boolean {
+      if (macCommand(event)) return true
       if (!(event.ctrlKey && event.shiftKey) || event.metaKey || event.altKey) return false
       const n = digit(event)
       if (n) {
@@ -191,14 +205,19 @@ export function useShortcuts(workspace: Workspace | undefined, goToWorkspace: (i
       event.stopPropagation()
     }
 
+    function finishLeader(event: KeyboardEvent) {
+      if (['Shift', 'Control', 'Alt', 'Meta'].includes(event.key)) return
+      clearTimeout(leaderTimer)
+      setLeader(false)
+      // The leader twice lets the key through, so the terminal sends Ctrl+B itself, as in tmux.
+      if (isLeader(event)) return
+      swallow(event)
+      if (event.key !== 'Escape') afterLeader(event)
+    }
+
     function onKeyDown(event: KeyboardEvent) {
       const snapshot = getSnapshot()
-      // Cmd+P would otherwise print the page. Plain Ctrl+P is left alone: shells use it for history.
-      const palette =
-        event.code === 'KeyP' &&
-        !event.altKey &&
-        ((event.metaKey && !event.ctrlKey) || (event.ctrlKey && event.shiftKey && !event.metaKey))
-      if (palette) {
+      if (isPaletteKey(event)) {
         swallow(event)
         clearTimeout(leaderTimer)
         setLeader(false)
@@ -213,13 +232,7 @@ export function useShortcuts(workspace: Workspace | undefined, goToWorkspace: (i
         return
       }
       if (snapshot.leader) {
-        if (['Shift', 'Control', 'Alt', 'Meta'].includes(event.key)) return
-        clearTimeout(leaderTimer)
-        setLeader(false)
-        // The leader twice lets the key through, so the terminal sends Ctrl+B itself, as in tmux.
-        if (isLeader(event)) return
-        swallow(event)
-        if (event.key !== 'Escape') afterLeader(event)
+        finishLeader(event)
         return
       }
       if (isLeader(event)) {

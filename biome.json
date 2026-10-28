@@ -18,8 +18,100 @@
         "useSemanticElements": "off",
         "useFocusableInteractive": "off"
       },
-      "complexity": { "noImportantStyles": "off" }
+      "complexity": {
+        "noImportantStyles": "off",
+        "noExcessiveCognitiveComplexity": { "level": "error", "options": { "maxAllowedComplexity": 25 } }
+      },
+      "correctness": { "noNestedComponentDefinitions": "error" },
+      "style": {
+        "noExcessiveLinesPerFile": { "level": "error", "options": { "maxLines": 500 } }
+      },
+      "suspicious": {
+        "noExplicitAny": "error",
+        "noFocusedTests": "error",
+        "noSkippedTests": "warn"
+      }
     }
   },
-  "assist": { "actions": { "source": { "organizeImports": "on" } } }
+  "assist": { "actions": { "source": { "organizeImports": "on" } } },
+  "overrides": [
+    {
+      "includes": ["apps/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": { "paths": { "lucide-react": "Import icons from @orch/ui/icons instead." } }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/**", "!packages/ui/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": { "lucide-react": "Import icons from @orch/ui/icons instead." },
+                "patterns": [
+                  {
+                    "group": [
+                      "@orch/web",
+                      "@orch/web/**",
+                      "@orch/host",
+                      "@orch/host/**",
+                      "@orch/client",
+                      "@orch/client/**",
+                      "@orch/server",
+                      "@orch/server/**",
+                      "@orch/ptyd-bun",
+                      "@orch/ptyd-bun/**",
+                      "**/apps/**"
+                    ],
+                    "message": "Shared packages must not import from apps. Pass data and callbacks as props instead."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/ui/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "@orch/web",
+                      "@orch/web/**",
+                      "@orch/host",
+                      "@orch/host/**",
+                      "@orch/client",
+                      "@orch/client/**",
+                      "@orch/server",
+                      "@orch/server/**",
+                      "@orch/ptyd-bun",
+                      "@orch/ptyd-bun/**",
+                      "**/apps/**"
+                    ],
+                    "message": "Shared packages must not import from apps. Pass data and callbacks as props instead."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

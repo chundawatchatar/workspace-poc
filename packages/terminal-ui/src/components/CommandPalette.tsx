@@ -1,4 +1,4 @@
-import { listPanes, type SurfaceKind } from '@orch/shared'
+import { listPanes, type SessionInfo, type SurfaceKind, type Workspace } from '@orch/shared'
 import { THEMES } from '@orch/ui'
 import { ChevronRight, GitPullRequest, KanbanSquare, LayoutGrid, Search, SquareTerminal } from '@orch/ui/icons'
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
@@ -54,6 +54,22 @@ function rank(item: Item, query: string): number | null {
   return Math.min(byLabel ?? Infinity, byHint === null ? Infinity : byHint + 5)
 }
 
+function tabItems(workspace: Workspace, sessions: Record<string, SessionInfo>, go: (id: string) => void): Item[] {
+  return listPanes(workspace.root).flatMap((pane) =>
+    pane.surfaces.map((surface) => ({
+      id: `tab:${surface.id}`,
+      group: 'Tab',
+      icon: TAB_ICON[surface.kind],
+      label: surface.kind === 'terminal' ? tidyTitle(sessions[surface.id]?.title ?? surface.title) : surface.title,
+      hint: sessions[surface.id]?.attention ? `${workspace.name} · needs attention` : workspace.name,
+      run: () => {
+        const target = revealSurface(surface.id)
+        if (target) go(target)
+      },
+    })),
+  )
+}
+
 export function CommandPalette() {
   const { workspaceId, navigate } = useNavigation()
   const workspaces = useApp((s) => s.state?.workspaces)
@@ -83,23 +99,7 @@ export function CommandPalette() {
     })
 
     for (const workspace of all) {
-      for (const pane of listPanes(workspace.root)) {
-        for (const surface of pane.surfaces) {
-          const title =
-            surface.kind === 'terminal' ? tidyTitle(sessions[surface.id]?.title ?? surface.title) : surface.title
-          result.push({
-            id: `tab:${surface.id}`,
-            group: 'Tab',
-            icon: TAB_ICON[surface.kind],
-            label: title,
-            hint: sessions[surface.id]?.attention ? `${workspace.name} · needs attention` : workspace.name,
-            run: () => {
-              const target = revealSurface(surface.id)
-              if (target) go(target)
-            },
-          })
-        }
-      }
+      result.push(...tabItems(workspace, sessions, go))
     }
 
     const command = (label: string, run: () => void, keys?: string) =>

@@ -98,6 +98,18 @@ export function createTunnelSocket({
         pingTimer = setInterval(() => live.send({ type: 'ping', nonce: ++nonce }), pingIntervalMs)
       }
 
+      const greet = (ws: WSContext, frame: MachineFrame | null, data: unknown) => {
+        clearTimeout(helloTimer)
+        const version = frame?.type === 'hello' ? frame.version : decodeFrame(versionedHello, data)?.version
+        if (version !== undefined && version !== TUNNEL_PROTOCOL_VERSION) {
+          shutdown(ws, CLOSE_UNSUPPORTED_VERSION, 'unsupported version')
+        } else if (frame?.type !== 'hello') {
+          shutdown(ws, CLOSE_POLICY, 'expected hello')
+        } else {
+          welcome(ws, frame.proof)
+        }
+      }
+
       return {
         onOpen(_event, ws) {
           helloTimer = setTimeout(() => shutdown(ws, CLOSE_POLICY, 'hello timeout'), helloTimeoutMs)
@@ -106,15 +118,7 @@ export function createTunnelSocket({
           if (closed) return
           const frame = decodeFrame(machineFrame, event.data)
           if (!conn) {
-            clearTimeout(helloTimer)
-            const version = frame?.type === 'hello' ? frame.version : decodeFrame(versionedHello, event.data)?.version
-            if (version !== undefined && version !== TUNNEL_PROTOCOL_VERSION) {
-              shutdown(ws, CLOSE_UNSUPPORTED_VERSION, 'unsupported version')
-            } else if (frame?.type !== 'hello') {
-              shutdown(ws, CLOSE_POLICY, 'expected hello')
-            } else {
-              welcome(ws, frame.proof)
-            }
+            greet(ws, frame, event.data)
             return
           }
           if (!frame) return

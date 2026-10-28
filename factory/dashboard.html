@@ -88,6 +88,30 @@
 
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 
+  function markdownList(lines, start, inline) {
+    const tag = /^\s*\d+\./.test(lines[start]) ? 'ol' : 'ul'
+    const items = []
+    let end = start
+    while (end < lines.length && /^\s*([-*]|\d+\.) /.test(lines[end])) {
+      items.push(`<li>${inline(lines[end].replace(/^\s*([-*]|\d+\.) /, ''))}</li>`)
+      end++
+    }
+    return { html: `<${tag}>${items.join('')}</${tag}>`, end: end - 1 }
+  }
+
+  function markdownTable(lines, start, inline) {
+    const rows = []
+    let end = start
+    while (end < lines.length && lines[end].startsWith('|')) rows.push(lines[end++])
+    const cells = (r) => r.replace(/^\||\|$/g, '').split('|').map((c) => inline(c.trim()))
+    const body = rows.filter((r) => !/^\|[\s|:-]+\|$/.test(r)).map(cells)
+    const [head, ...rest] = body
+    const html = `<table><tr>${head.map((c) => `<th>${c}</th>`).join('')}</tr>${rest
+      .map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join('')}</tr>`)
+      .join('')}</table>`
+    return { html, end: end - 1 }
+  }
+
   // Small Markdown renderer: headings, lists, tables, code, bold, inline code, and a highlighted verdict line.
   function md(src) {
     const out = []
@@ -107,24 +131,13 @@
         const n = l.match(/^#+/)[0].length
         out.push(`<h${n}>${inline(l.slice(n + 1))}</h${n}>`)
       } else if (/^\s*([-*]|\d+\.) /.test(l)) {
-        const tag = /^\s*\d+\./.test(l) ? 'ol' : 'ul'
-        const items = []
-        while (i < lines.length && /^\s*([-*]|\d+\.) /.test(lines[i])) {
-          items.push(`<li>${inline(lines[i].replace(/^\s*([-*]|\d+\.) /, ''))}</li>`)
-          i++
-        }
-        i--
-        out.push(`<${tag}>${items.join('')}</${tag}>`)
+        const block = markdownList(lines, i, inline)
+        out.push(block.html)
+        i = block.end
       } else if (l.startsWith('|')) {
-        const rows = []
-        while (i < lines.length && lines[i].startsWith('|')) rows.push(lines[i++])
-        i--
-        const cells = (r) => r.replace(/^\||\|$/g, '').split('|').map((c) => inline(c.trim()))
-        const body = rows.filter((r) => !/^\|[\s|:-]+\|$/.test(r)).map(cells)
-        const [head, ...rest] = body
-        out.push(`<table><tr>${head.map((c) => `<th>${c}</th>`).join('')}</tr>${rest
-          .map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join('')}</tr>`)
-          .join('')}</table>`)
+        const block = markdownTable(lines, i, inline)
+        out.push(block.html)
+        i = block.end
       } else if (l.trim()) {
         out.push(`<p>${inline(l)}</p>`)
       }
