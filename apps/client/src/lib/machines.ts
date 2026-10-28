@@ -74,18 +74,24 @@ export function machinePath(id: string): string {
 
 /** The parts of `window` that `acceptConnectLink` uses. */
 export interface ConnectWindow {
-  location: { hash: string }
-  history: { replaceState(data: unknown, unused: string, url?: string): void }
+  location: { hash: string; pathname: string; search: string }
+  history: { state: unknown; replaceState(data: unknown, unused: string, url?: string): void }
 }
 
 /**
  * Saves the machine from a connect link's fragment (`#machine=<id>&key=<key>`) and replaces the URL with the
  * machine's page, so the key leaves the address bar and history. Returns the machine id, or null when the fragment
- * isn't a complete connect link, in which case nothing changes.
+ * isn't a complete connect link. An incomplete one that still carries a `key` is removed from the URL, unsaved.
  */
 export function acceptConnectLink(win: ConnectWindow = window): string | null {
   const target = parseConnectFragment(win.location.hash)
-  if (!target) return null
+  if (!target) {
+    if (new URLSearchParams(win.location.hash.slice(1)).has('key')) {
+      // Keep the router's state for this entry; only the URL changes.
+      win.history.replaceState(win.history.state, '', `${win.location.pathname}${win.location.search}`)
+    }
+    return null
+  }
   saveMachine({ id: target.machineId, name: defaultMachineName(target.machineId), key: target.key })
   win.history.replaceState(null, '', machinePath(target.machineId))
   return target.machineId

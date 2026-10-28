@@ -9,6 +9,7 @@ function fakeWindow(url: string) {
   const win: ConnectWindow = {
     location: current,
     history: {
+      state: null,
       replaceState: (_data, _unused, next) => {
         if (next) current.href = new URL(next, current).href
       },
@@ -35,11 +36,17 @@ describe('connect links', () => {
     expect(loadMachines()).toEqual([{ id: 'abcdef123456', name: 'Machine abcdef12', key: 'k2' }])
   })
 
-  test('a fragment with a missing or empty field is ignored', () => {
-    for (const hash of ['#machine=m1', '#key=k1', '#machine=&key=k1', '#machine=m1&key=', '']) {
-      const { win, current } = fakeWindow(`https://app.test/${hash}`)
+  test('a fragment with a missing or empty field is not saved, but any key in it leaves the URL', () => {
+    const cases = { '#machine=m1': '#machine=m1', '#other=1': '#other=1', '': '' }
+    for (const [hash, after] of Object.entries(cases)) {
+      const { win, current } = fakeWindow(`https://app.test/page?q=1${hash}`)
       expect(acceptConnectLink(win)).toBeNull()
-      expect(current.hash).toBe(hash.length > 1 ? hash : '')
+      expect(current.hash).toBe(after)
+    }
+    for (const hash of ['#key=k1', '#machine=&key=k1', '#machine=m1&key=']) {
+      const { win, current } = fakeWindow(`https://app.test/page?q=1${hash}`)
+      expect(acceptConnectLink(win)).toBeNull()
+      expect(current.href).toBe('https://app.test/page?q=1')
     }
     expect(loadMachines()).toEqual([])
   })
