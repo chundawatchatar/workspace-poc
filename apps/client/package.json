@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev:client": "vite dev --configLoader runner --port 3220 --strictPort",
+    "dev:client": "VITE_SERVER_URL=http://127.0.0.1:4600 vite dev --configLoader runner --port 3220 --strictPort",
     "build": "vite build --configLoader runner",
     "typecheck": "tsc -p tsconfig.json"
   },
