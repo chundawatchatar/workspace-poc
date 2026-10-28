@@ -153,7 +153,7 @@ function startTunnel({ url, secret, access }: Remote): TunnelClient {
     secret,
     expectedMachineId: access.machineId,
     authorize: (key) => access.keys.authorize(key),
-    handle: async (request, principal) => app.fetch(request, principal ? tunnelEnv(principal) : undefined),
+    handle: async (request, principal) => app.fetch(request, tunnelEnv(principal)),
     openSocket: (path, headers, conn, principal) => sockets.open(path, headers, conn, principal),
   })
   client.start()

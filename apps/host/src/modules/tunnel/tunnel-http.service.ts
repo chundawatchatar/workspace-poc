@@ -5,12 +5,8 @@ import type { Principal } from '../../lib/principal'
 
 type HttpRequestFrame = z.infer<typeof httpRequestFrame>
 
-/**
- * Answers one tunneled request, as the key that authorized it. The principal
- * is null only for a CORS preflight, which carries no key. In the host this is
- * `app.fetch`.
- */
-export type TunnelHandler = (request: Request, principal: Principal | null) => Promise<Response>
+/** Answers one tunneled request, as the key that authorized it. In the host this is `app.fetch`. */
+export type TunnelHandler = (request: Request, principal: Principal) => Promise<Response>
 
 /** Decides whether an access key may in. In the host this is `AccessKeys.authorize`. */
 export type Authorize = (key: string | null) => Principal | null
@@ -22,18 +18,6 @@ export type Authorize = (key: string | null) => Principal | null
 export function accessKeyOf(headers: [string, string][]): string | null {
   const values = headers.filter(([name]) => name.toLowerCase() === ACCESS_KEY_HEADER)
   return values.length === 1 ? (values[0]?.[1] ?? null) : null
-}
-
-/**
- * True for a CORS preflight. Browsers send it without custom headers, so it
- * cannot carry the key; it goes on without one and only reaches the CORS
- * middleware, which answers every `OPTIONS` before any route runs.
- */
-function isPreflight(frame: HttpRequestFrame): boolean {
-  return (
-    frame.method.toUpperCase() === 'OPTIONS' &&
-    frame.headers.some(([name]) => name.toLowerCase() === 'access-control-request-method')
-  )
 }
 
 /** The largest `http.body` payload, so every encoded frame stays far below `MAX_TUNNEL_FRAME_BYTES`. */
@@ -108,14 +92,12 @@ export class TunnelHttp {
       send({ type: 'http.end', id })
     }
 
-    let principal: Principal | null = null
-    if (!isPreflight(frame)) {
-      principal = this.authorize(accessKeyOf(frame.headers))
-      if (!principal) {
-        // First, so the server still knows the request's browser when it reads it.
-        send({ type: 'auth.failed', id })
-        return fail(401)
-      }
+    // Preflights included: the server answers those itself, so one that gets here is an ordinary request.
+    const principal = this.authorize(accessKeyOf(frame.headers))
+    if (!principal) {
+      // First, so the server still knows the request's browser when it reads it.
+      send({ type: 'auth.failed', id })
+      return fail(401)
     }
     // The key has done its job, so no handler ever sees it.
     const headers = frame.headers.filter(([name]) => name.toLowerCase() !== ACCESS_KEY_HEADER)
