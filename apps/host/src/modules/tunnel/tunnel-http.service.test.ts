@@ -1,15 +1,34 @@
 import { describe, expect, test } from 'bun:test'
-import { encodeFrame, HOST_PORT, MAX_TUNNEL_FRAME_BYTES, type MachineFrame, routes } from '@orch/shared'
+import {
+  ACCESS_KEY_HEADER,
+  encodeFrame,
+  HOST_PORT,
+  MAX_TUNNEL_FRAME_BYTES,
+  type MachineFrame,
+  routes,
+} from '@orch/shared'
 import type { SessionManager } from '@orch/terminal'
 import { type AppDeps, createApp } from '../../app'
-import { MAX_BODY_CHUNK_BYTES, type TunnelHandler, TunnelHttp } from './tunnel-http.service'
+import { type Principal, tunnelEnv } from '../../lib/principal'
+import { type Authorize, MAX_BODY_CHUNK_BYTES, type TunnelHandler, TunnelHttp } from './tunnel-http.service'
 
-function setup(handle: TunnelHandler) {
+const principal: Principal = { keyId: 'k1', name: 'default' }
+const allowAll: Authorize = () => principal
+
+function setup(handle: TunnelHandler, authorize = allowAll) {
   const frames: MachineFrame[] = []
-  const http = new TunnelHttp(handle, (frame) => frames.push(frame))
+  const http = new TunnelHttp(handle, authorize, (frame) => frames.push(frame))
   const request = (id: number, path: string, rest: { method?: string; body?: Uint8Array<ArrayBuffer> } = {}) =>
     http.request({ type: 'http.request', id, method: rest.method ?? 'GET', path, headers: [], body: rest.body })
   return { http, frames, request }
+}
+
+/** The host's app with stub deps, as `index.ts` hands it to the tunnel. */
+function hostApp(access?: AppDeps['access']) {
+  const sessions = { list: () => [] } as unknown as SessionManager
+  const { app } = createApp({ sessions, daemonStartedAt: () => null, access } as AppDeps)
+  const handle: TunnelHandler = async (request, p) => app.fetch(request, p ? tunnelEnv(p) : undefined)
+  return { app, handle }
 }
 
 async function until(check: () => boolean, timeoutMs = 1000) {
@@ -29,21 +48,105 @@ function bodyOf(frames: MachineFrame[], id: number) {
 }
 
 describe('TunnelHttp', () => {
-  test('answers like a direct app.fetch', async () => {
-    const sessions = { list: () => [] } as unknown as SessionManager
-    const { app } = createApp({ sessions, daemonStartedAt: () => null } as AppDeps)
-    let seen: Request | undefined
-    const { frames, request } = setup(async (req) => {
-      seen = req
-      return app.fetch(req)
+  test('answers an authorized request like a direct app.fetch, even from a foreign origin, without the key header', async () => {
+    const { app, handle } = hostApp()
+    let seen: { request: Request; principal: Principal | null } | undefined
+    const { http, frames } = setup(async (req, p) => {
+      seen = { request: req, principal: p }
+      return handle(req, p)
     })
-    request(1, `${routes.system.health.path}?probe=1`)
+    const headers: [string, string][] = [
+      [ACCESS_KEY_HEADER, 'the-key'],
+      ['origin', 'https://orch.example'],
+    ]
+    http.request({ type: 'http.request', id: 1, method: 'GET', path: `${routes.system.health.path}?probe=1`, headers })
     await until(() => ended(frames, 1))
 
-    expect(seen?.url).toBe(`http://127.0.0.1:${HOST_PORT}/api/health?probe=1`)
+    expect(seen?.request.url).toBe(`http://127.0.0.1:${HOST_PORT}/api/health?probe=1`)
+    expect(seen?.request.headers.has(ACCESS_KEY_HEADER)).toBe(false)
+    expect(seen?.principal).toEqual(principal)
     const direct = await app.fetch(new Request(`http://127.0.0.1:${HOST_PORT}${routes.system.health.path}`))
     expect(frames[0]).toMatchObject({ type: 'http.response', id: 1, status: direct.status })
     expect(JSON.parse(bodyOf(frames, 1))).toEqual(await direct.json())
+    // The same foreign origin without the tunnel's authorization is still refused.
+    const foreign = await app.fetch(
+      new Request(`http://127.0.0.1:${HOST_PORT}${routes.system.health.path}`, { headers: [headers[1]] }),
+    )
+    expect(foreign.status).toBe(403)
+  })
+
+  test('refuses a missing, wrong, repeated or query-string key with auth.failed, 401 and end, never calling handle', async () => {
+    const seenKeys: (string | null)[] = []
+    const authorize: Authorize = (key) => {
+      seenKeys.push(key)
+      return key === 'good' ? principal : null
+    }
+    let calls = 0
+    const { http, frames } = setup(async () => {
+      calls++
+      return new Response('ok')
+    }, authorize)
+    const send = (id: number, headers: [string, string][], path = '/api/health') =>
+      http.request({ type: 'http.request', id, method: 'GET', path, headers })
+    send(1, [])
+    send(2, [[ACCESS_KEY_HEADER, 'bad']])
+    send(3, [
+      [ACCESS_KEY_HEADER, 'good'],
+      [ACCESS_KEY_HEADER, 'good'],
+    ])
+    send(4, [], `/api/health?${ACCESS_KEY_HEADER}=good&key=good`)
+    await until(() => [1, 2, 3, 4].every((id) => ended(frames, id)))
+
+    expect(calls).toBe(0)
+    expect(seenKeys).toEqual([null, 'bad', null, null])
+    for (const id of [1, 2, 3, 4]) {
+      expect(frames.filter((f) => 'id' in f && f.id === id)).toEqual([
+        { type: 'auth.failed', id },
+        { type: 'http.response', id, status: 401, headers: [] },
+        { type: 'http.end', id },
+      ])
+    }
+  })
+
+  test('passes a CORS preflight on without a key, and it reaches no route handler', async () => {
+    let rotations = 0
+    const keys = {
+      rotate: () => {
+        rotations++
+        return { key: 'k', revoked: [] }
+      },
+    } as unknown as NonNullable<AppDeps['access']>['keys']
+    const { handle } = hostApp({ keys, machineId: 'm', clientUrl: null })
+    let principalSeen: Principal | null | undefined
+    const { http, frames } = setup(
+      async (req, p) => {
+        principalSeen = p
+        return handle(req, p)
+      },
+      () => null,
+    )
+    const preflight: [string, string][] = [
+      ['origin', 'http://127.0.0.1:3220'],
+      ['access-control-request-method', 'POST'],
+      ['access-control-request-headers', ACCESS_KEY_HEADER],
+    ]
+    http.request({
+      type: 'http.request',
+      id: 1,
+      method: 'OPTIONS',
+      path: routes.access.rotate.path,
+      headers: preflight,
+    })
+    http.request({ type: 'http.request', id: 2, method: 'OPTIONS', path: routes.access.rotate.path, headers: [] })
+    await until(() => ended(frames, 1) && ended(frames, 2))
+
+    expect(principalSeen).toBeNull()
+    expect(rotations).toBe(0)
+    const head = frames.find((f) => f.type === 'http.response' && f.id === 1)
+    expect(head).toMatchObject({ status: 204 })
+    expect(bodyOf(frames, 1)).toBe('')
+    // Without the preflight header it is a plain request, which needs a key.
+    expect(frames.find((f) => f.type === 'http.response' && f.id === 2)).toMatchObject({ status: 401 })
   })
 
   test('passes the method, headers and body through, and keeps repeated response headers', async () => {

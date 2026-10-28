@@ -8,8 +8,8 @@ import {
   TUNNEL_PATH,
   TUNNEL_PROTOCOL_VERSION,
 } from '@orch/shared'
-import { type OpenSocket, TunnelChannels } from './tunnel-channels.service'
-import { type TunnelHandler, TunnelHttp } from './tunnel-http.service'
+import { AUTH_TIMEOUT_MS, type OpenSocket, TunnelChannels } from './tunnel-channels.service'
+import { type Authorize, type TunnelHandler, TunnelHttp } from './tunnel-http.service'
 import { TunnelOutbox } from './tunnel-outbox.service'
 
 const LOOPBACK_HOSTS = ['127.0.0.1', '[::1]', 'localhost']
@@ -55,6 +55,8 @@ export interface TunnelTimings extends Backoff {
   silenceTimeoutMs: number
   /** How long a connection must stay welcomed before the backoff starts again from the first attempt. */
   stableAfterMs: number
+  /** How long a tunneled socket has to send its auth message. */
+  authTimeoutMs: number
 }
 
 const defaultTimings: TunnelTimings = {
@@ -63,6 +65,7 @@ const defaultTimings: TunnelTimings = {
   pingIntervalMs: 20_000,
   silenceTimeoutMs: 45_000,
   stableAfterMs: 60_000,
+  authTimeoutMs: AUTH_TIMEOUT_MS,
 }
 
 export interface TunnelClientOptions {
@@ -70,10 +73,14 @@ export interface TunnelClientOptions {
   url: string
   /** The machine secret, sent as the `hello` proof. */
   secret: string
+  /** Decides every tunneled request's and socket's access key. Nothing reaches `handle` or `openSocket` without it. */
+  authorize: Authorize
   /** Answers each tunneled request. */
   handle: TunnelHandler
   /** Opens each tunneled WebSocket, or refuses it. */
   openSocket: OpenSocket
+  /** The id this host expects the server to give it. A different one in `welcome` logs a warning. */
+  expectedMachineId?: string
   timings?: Partial<TunnelTimings>
   /** Draws the backoff jitter, in `[0, 1)`. Defaults to `Math.random`. */
   random?: () => number
@@ -94,7 +101,8 @@ interface Connection {
 /**
  * Keeps one outbound tunnel to the server open. It says `hello`, waits for
  * `welcome`, keeps both heartbeats, answers tunneled HTTP requests through
- * `handle`, serves tunneled WebSockets through `openSocket`, and reconnects
+ * `handle`, serves tunneled WebSockets through `openSocket` (both only once
+ * `authorize` has accepted their access key), and reconnects
  * with backoff until `stop()`, a protocol version the server refuses, or
  * another host taking over this machine's tunnel. Every frame goes through
  * the connection's `TunnelOutbox`, so `ws.*` frames overtake response bodies.
@@ -127,6 +135,11 @@ export class TunnelClient {
     conn?.ws.close(1000, 'stopped')
   }
 
+  /** Closes the open tunneled sockets authorized by any of `keyIds`, for a key that was rotated away. */
+  closeChannels(keyIds: string[]) {
+    this.conn?.channels.closeChannels(keyIds)
+  }
+
   private connect() {
     this.reconnectTimer = undefined
     let ws: WebSocket
@@ -143,10 +156,13 @@ export class TunnelClient {
       outbox,
       http: new TunnelHttp(
         this.options.handle,
+        this.options.authorize,
         (frame) => this.send(conn, frame),
         () => outbox.room(),
       ),
-      channels: new TunnelChannels(this.options.openSocket, (frame) => this.send(conn, frame)),
+      channels: new TunnelChannels(this.options.openSocket, this.options.authorize, (frame) => this.send(conn, frame), {
+        authTimeoutMs: this.timings.authTimeoutMs,
+      }),
       welcomed: false,
       nonce: 0,
       timers: [],
@@ -183,7 +199,6 @@ export class TunnelClient {
       case 'ws.data':
       case 'ws.close':
       case 'ws.ack':
-        // Channels are not access-checked yet. The access-key job adds its check to the `openSocket` from `index.ts`.
         if (conn.welcomed) conn.channels.receive(frame)
         return
     }
@@ -193,6 +208,12 @@ export class TunnelClient {
     conn.welcomed = true
     for (const timer of conn.timers) clearTimeout(timer)
     console.log(`tunnel connected as ${machineId}`)
+    const expected = this.options.expectedMachineId
+    if (expected !== undefined && expected !== machineId) {
+      console.warn(
+        'warning: the server gave this machine another id than its secret implies, so its connect link will not reach it',
+      )
+    }
     conn.timers = [
       setInterval(() => this.send(conn, { type: 'ping', nonce: ++conn.nonce }), this.timings.pingIntervalMs),
       setTimeout(() => {

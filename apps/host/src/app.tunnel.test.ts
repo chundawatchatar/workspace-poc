@@ -1,13 +1,19 @@
 import { afterEach, beforeEach, describe, expect, type Mock, spyOn, test } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { websocket } from '@hono/bun'
 import {
+  ACCESS_KEY_HEADER,
   type AppState,
   buildSocketUrl,
+  CLOSE_ACCESS_DENIED,
   decodeFrame,
   encodeFrame,
   type HostInfo,
   type MachineFrame,
   machineFrame,
+  type RotateAccessResponse,
   routes,
   type ServerFrame,
   TUNNEL_PATH,
@@ -16,13 +22,16 @@ import {
 import type { SessionManager, TermClient, TerminalSession } from '@orch/terminal'
 import type { Server, ServerWebSocket } from 'bun'
 import { type AppDeps, createApp } from './app'
+import { tunnelEnv } from './lib/principal'
+import { AccessKeyRepository } from './modules/access/access.repository'
+import { AccessKeys } from './modules/access/access.service'
 import { EventHub } from './modules/events/events.service'
 import type { LayoutRepository } from './modules/layout/layout.repository'
 import { parseServerUrl, TunnelClient } from './modules/tunnel/tunnel.service'
 
-// The host's sockets end to end: a real app and tunnel client, a fake server on
-// one side, a stub session manager on the other, and the same app served locally
-// to compare against.
+// The host's sockets end to end: a real app, access keys and tunnel client, wired
+// as `index.ts` wires them, a fake server on one side, a stub session manager on
+// the other, and the same app served locally to compare against.
 
 const secret = `${'S'.repeat(42)}s`
 const info: HostInfo = { home: '/home/me', shell: '/bin/zsh', platform: 'darwin', projectRoot: '/repo' }
@@ -69,10 +78,18 @@ let clients: TunnelClient[]
 let stub: ReturnType<typeof stubSessions>
 let hub: EventHub
 let spies: Mock<(...args: unknown[]) => void>[]
+let dir: string
+let keys: AccessKeys
+let key: string
 
 beforeEach(() => {
   conns = []
   clients = []
+  dir = mkdtempSync(join(tmpdir(), 'orch-access-'))
+  keys = new AccessKeys(new AccessKeyRepository(join(dir, 'access-keys.json')), {
+    onRevoked: (keyIds) => clients[0]?.closeChannels(keyIds),
+  })
+  key = keys.create('default')
   stub = stubSessions()
   hub = new EventHub()
   spies = (['log', 'warn'] as const).map((level) => spyOn(console, level).mockImplementation(() => {}))
@@ -83,7 +100,8 @@ beforeEach(() => {
       layout.state = next
     },
   } as LayoutRepository
-  const { app, sockets } = createApp({ hub, layout, sessions: stub.sessions, info } as AppDeps)
+  const access = { keys, machineId: 'm', clientUrl: 'https://orch.example' }
+  const { app, sockets } = createApp({ hub, layout, sessions: stub.sessions, info, access } as AppDeps)
 
   local = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: app.fetch, websocket })
   server = Bun.serve({
@@ -116,9 +134,10 @@ beforeEach(() => {
   const client = new TunnelClient({
     url,
     secret,
-    handle: async (request) => app.fetch(request),
-    openSocket: (path, headers, conn) => sockets.open(path, headers, conn),
-    timings: { baseMs: 10, maxMs: 10 },
+    authorize: (presented) => keys.authorize(presented),
+    handle: async (request, principal) => app.fetch(request, principal ? tunnelEnv(principal) : undefined),
+    openSocket: (path, headers, conn, principal) => sockets.open(path, headers, conn, principal),
+    timings: { baseMs: 10, maxMs: 10, authTimeoutMs: 100 },
   })
   clients.push(client)
   client.start()
@@ -129,6 +148,8 @@ afterEach(async () => {
   await server.stop(true)
   await local.stop(true)
   for (const spy of spies) spy.mockRestore()
+  keys.flush()
+  rmSync(dir, { recursive: true, force: true })
 })
 
 function send(conn: Conn, frame: ServerFrame) {
@@ -156,6 +177,9 @@ async function welcomed(): Promise<Conn> {
 const dataOn = (conn: Conn, channel: number) =>
   conn.frames.flatMap((f) => (f.type === 'ws.data' && f.channel === channel ? [f.data] : []))
 
+/** The auth message for `presented`. */
+const auth = (presented: string) => JSON.stringify({ type: 'auth', key: presented })
+
 /** Opens a local socket and collects its text messages. */
 async function openLocal(path: string) {
   const messages: string[] = []
@@ -166,11 +190,13 @@ async function openLocal(path: string) {
 }
 
 describe('tunneled sockets', () => {
-  test('the events socket says hello like a local one, ignores the auth message and broadcasts layout changes', async () => {
+  test('the events socket says hello like a local one after a valid key, even from a foreign origin, and broadcasts layout changes', async () => {
     const conn = await welcomed()
     const path = buildSocketUrl(routes.sockets.events, {})
-    send(conn, { type: 'ws.open', channel: 1, path, headers: [] })
-    send(conn, { type: 'ws.open', channel: 2, path, headers: [] })
+    for (const channel of [1, 2]) {
+      send(conn, { type: 'ws.open', channel, path, headers: [['origin', 'https://orch.example']] })
+      send(conn, { type: 'ws.data', channel, data: auth(key) })
+    }
     const near = await openLocal(path)
     await until(() => dataOn(conn, 1).length > 0 && near.messages.length > 0)
 
@@ -178,8 +204,8 @@ describe('tunneled sockets', () => {
     expect(withoutId(dataOn(conn, 1)[0])).toEqual(withoutId(near.messages[0]))
 
     const state: AppState = { rev: 2, workspaces: [] }
-    const sent = [JSON.stringify({ type: 'auth', key: 'k' }), JSON.stringify({ type: 'state', state })]
-    for (const data of sent) send(conn, { type: 'ws.data', channel: 1, data })
+    const sent = [auth(key), JSON.stringify({ type: 'state', state })]
+    send(conn, { type: 'ws.data', channel: 1, data: sent[1] ?? '' })
     await until(() => dataOn(conn, 2).length > 1 && near.messages.length > 1)
     expect(JSON.parse(String(dataOn(conn, 2)[1]))).toEqual({ type: 'state', state })
     expect(JSON.parse(near.messages[1] ?? '')).toEqual({ type: 'state', state })
@@ -193,6 +219,7 @@ describe('tunneled sockets', () => {
     const conn = await welcomed()
     const path = buildSocketUrl(routes.sockets.terminal, { id: 't1', cwd: '/tmp/a b', cols: 100, rows: 30 })
     send(conn, { type: 'ws.open', channel: 1, path, headers: [['origin', 'http://localhost:3210']] })
+    send(conn, { type: 'ws.data', channel: 1, data: auth(key) })
     await until(() => dataOn(conn, 1).length >= 2)
     const near = await openLocal(path)
     const bad = await fetch(`http://127.0.0.1:${local.port}/ws/term/t1?cols=0`, { headers: { upgrade: 'websocket' } })
@@ -207,7 +234,6 @@ describe('tunneled sockets', () => {
     expect(output).toBeInstanceOf(Uint8Array)
     expect([...(output as Uint8Array)]).toEqual([...OUTPUT])
 
-    send(conn, { type: 'ws.data', channel: 1, data: JSON.stringify({ type: 'auth', key: 'k' }) })
     send(conn, { type: 'ws.data', channel: 1, data: JSON.stringify({ type: 'input', data: 'ls\n' }) })
     await until(() => stub.inputs.length > 0)
     expect(stub.inputs).toEqual(['ls\n'])
@@ -217,6 +243,7 @@ describe('tunneled sockets', () => {
   test('a channel past the rate limit gets one ws.close 1008 and its terminal client is detached', async () => {
     const conn = await welcomed()
     send(conn, { type: 'ws.open', channel: 1, path: '/ws/term/t1', headers: [] })
+    send(conn, { type: 'ws.data', channel: 1, data: auth(key) })
     await until(() => stub.attached.size === 1)
     for (let i = 0; i < 1600; i++) send(conn, { type: 'ws.data', channel: 1, data: '{"type":"focus"}' })
     await until(() => conn.frames.some((f) => f.type === 'ws.close'))
@@ -231,6 +258,7 @@ describe('tunneled sockets', () => {
     const conn = await welcomed()
     send(conn, { type: 'ws.open', channel: 1, path: '/ws/term/t1', headers: [] })
     send(conn, { type: 'ws.open', channel: 2, path: routes.sockets.events.path, headers: [] })
+    for (const channel of [1, 2]) send(conn, { type: 'ws.data', channel, data: auth(key) })
     await until(() => stub.attached.size === 1 && dataOn(conn, 2).length > 0)
 
     conn.ws.close(1000)
@@ -243,5 +271,60 @@ describe('tunneled sockets', () => {
     clients[0]?.stop()
     await Bun.sleep(30)
     expect(conns).toHaveLength(2)
+  })
+
+  test('a wrong key, a late key or binary first data gets auth.failed then 4401, and no handler runs', async () => {
+    const conn = await welcomed()
+    const path = '/ws/term/t1'
+    for (const channel of [1, 2, 3]) send(conn, { type: 'ws.open', channel, path, headers: [] })
+    send(conn, { type: 'ws.data', channel: 1, data: auth('x'.repeat(43)) })
+    send(conn, { type: 'ws.data', channel: 2, data: new TextEncoder().encode(auth(key)) })
+    await Bun.sleep(150)
+    send(conn, { type: 'ws.data', channel: 3, data: auth(key) })
+    await until(() => conn.frames.filter((f) => f.type === 'ws.close').length === 3)
+    await Bun.sleep(20)
+
+    expect(stub.ensured).toEqual([])
+    for (const channel of [1, 2, 3]) {
+      const frames = conn.frames.filter((f) => 'channel' in f && f.channel === channel)
+      expect(frames.map((f) => f.type)).toEqual(['auth.failed', 'ws.close'])
+      expect(frames[1]).toMatchObject({ code: CLOSE_ACCESS_DENIED })
+    }
+  })
+
+  test('a local rotate closes the old key channels and refuses its requests, the new key works, and a tunneled rotate gets 403', async () => {
+    const conn = await welcomed()
+    send(conn, { type: 'ws.open', channel: 1, path: '/ws/term/t1', headers: [] })
+    send(conn, { type: 'ws.data', channel: 1, data: auth(key) })
+    await until(() => stub.attached.size === 1)
+
+    const rotatePath = routes.access.rotate.path
+    const tunneled = (id: number, presented: string, path: string, method = 'GET') =>
+      send(conn, { type: 'http.request', id, method, path, headers: [[ACCESS_KEY_HEADER, presented]] })
+    const status = (id: number) => conn.frames.find((f) => f.type === 'http.response' && f.id === id)
+    tunneled(1, key, rotatePath, 'POST')
+    await until(() => status(1) !== undefined)
+    expect(status(1)).toMatchObject({ status: 403 })
+    expect(keys.authorize(key)).not.toBeNull()
+
+    const response = await fetch(`http://127.0.0.1:${local.port}${rotatePath}`, { method: 'POST' })
+    const rotated = (await response.json()) as RotateAccessResponse
+    expect(rotated.machineId).toBe('m')
+    expect(rotated.link).toBe(`https://orch.example/#machine=m&key=${rotated.key}`)
+    await until(() => conn.frames.some((f) => f.type === 'ws.close'))
+    expect(conn.frames.filter((f) => f.type === 'ws.close')).toEqual([
+      { type: 'ws.close', channel: 1, code: CLOSE_ACCESS_DENIED, reason: 'key rotated' },
+    ])
+    expect(stub.attached.size).toBe(0)
+
+    tunneled(2, key, routes.system.health.path)
+    tunneled(3, rotated.key, routes.system.health.path)
+    send(conn, { type: 'ws.open', channel: 2, path: '/ws/term/t1', headers: [] })
+    send(conn, { type: 'ws.data', channel: 2, data: auth(key) })
+    await until(() => status(2) !== undefined && status(3) !== undefined)
+    await until(() => conn.frames.some((f) => f.type === 'auth.failed' && f.channel === 2))
+    expect(status(2)).toMatchObject({ status: 401 })
+    expect(status(3)).toMatchObject({ status: 200 })
+    expect(stub.ensured).toHaveLength(1)
   })
 })

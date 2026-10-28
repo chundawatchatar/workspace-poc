@@ -1,11 +1,16 @@
 import { afterEach, beforeEach, describe, expect, type Mock, spyOn, test } from 'bun:test'
-import { type MachineFrame, WS_CHANNEL_WINDOW_BYTES, wsPayloadBytes } from '@orch/shared'
+import { CLOSE_ACCESS_DENIED, type MachineFrame, WS_CHANNEL_WINDOW_BYTES, wsPayloadBytes } from '@orch/shared'
 import { CAUGHT_UP, deliver, type TermClient } from '@orch/terminal'
+import type { Principal } from '../../lib/principal'
 import type { SocketConn, SocketData } from '../../lib/socket'
+import type { SocketRefusal } from '../../lib/socketRouter'
 import { CHANNEL_QUEUE_CAP_BYTES, type OpenSocket, TunnelChannels } from './tunnel-channels.service'
+import type { Authorize } from './tunnel-http.service'
 
 /** One handler run, as the test sees it. */
 interface Opened {
+  path: string
+  principal: Principal
   conn: SocketConn
   messages: SocketData[]
   closes: number
@@ -21,19 +26,32 @@ beforeEach(() => {
 
 afterEach(() => warn.mockRestore())
 
-/** Channels whose `openSocket` accepts every path, with the frames they send collected as a fake server would. */
-function setup(open?: (opened: Opened) => void) {
+/** The auth message for `key`. */
+const auth = (key: string) => JSON.stringify({ type: 'auth', key })
+
+/** Accepts the keys `good` (key id `k1`) and `other` (key id `k2`). */
+const authorize: Authorize = (key) =>
+  key === 'good' ? { keyId: 'k1', name: 'default' } : key === 'other' ? { keyId: 'k2', name: 'second' } : null
+
+/**
+ * Channels whose `openSocket` accepts every path but `/ws/nope`, with the
+ * frames they send collected as a fake server would.
+ */
+function setup(open?: (opened: Opened) => void, authTimeoutMs = 1000) {
   const frames: MachineFrame[] = []
   const opened: Opened[] = []
-  const openSocket: OpenSocket = (_path, _headers, conn) => {
-    const run: Opened = { conn, messages: [], closes: 0 }
+  const openSocket: OpenSocket = (path, _headers, conn, principal) => {
+    if (path === '/ws/nope') return { code: 1008, reason: 'not found' } satisfies SocketRefusal
+    const run: Opened = { path, principal, conn, messages: [], closes: 0 }
     opened.push(run)
     open?.(run)
     return { message: (data) => run.messages.push(data), close: () => run.closes++ }
   }
-  const channels = new TunnelChannels(openSocket, (frame) => frames.push(frame))
-  const openChannel = (channel: number) => {
+  const channels = new TunnelChannels(openSocket, authorize, (frame) => frames.push(frame), { authTimeoutMs })
+  /** Opens `channel` and authorizes it with `key`. */
+  const openChannel = (channel: number, key = 'good') => {
     channels.receive({ type: 'ws.open', channel, path: '/ws/events', headers: [] })
+    channels.receive({ type: 'ws.data', channel, data: auth(key) })
     const run = opened.at(-1)
     if (!run) throw new Error('not opened')
     return run
@@ -46,14 +64,70 @@ function setup(open?: (opened: Opened) => void) {
 const tick = () => new Promise<void>((resolve) => queueMicrotask(resolve))
 
 describe('TunnelChannels', () => {
+  test('opens no socket until a valid auth message, and refuses anything else with auth.failed then 4401', async () => {
+    const { channels, frames, opened, of } = setup(undefined, 30)
+    const firsts: (string | Uint8Array<ArrayBuffer>)[] = [
+      new TextEncoder().encode(auth('good')),
+      'not json',
+      '{"type":"input","data":"ls"}',
+      auth('wrong'),
+    ]
+    for (const [i, data] of firsts.entries()) {
+      channels.receive({ type: 'ws.open', channel: i + 1, path: '/ws/events', headers: [] })
+      channels.receive({ type: 'ws.data', channel: i + 1, data })
+    }
+    channels.receive({ type: 'ws.open', channel: 9, path: '/ws/events', headers: [] })
+    expect(opened).toHaveLength(0)
+    await Bun.sleep(60)
+    channels.receive({ type: 'ws.data', channel: 9, data: auth('good') })
+    await tick()
+
+    expect(opened).toHaveLength(0)
+    for (const channel of [1, 2, 3, 4, 9]) {
+      const reason = channel === 9 ? 'auth timeout' : 'access denied'
+      expect(frames.filter((f) => 'channel' in f && f.channel === channel)).toEqual([
+        { type: 'auth.failed', channel },
+        { type: 'ws.close', channel, code: CLOSE_ACCESS_DENIED, reason },
+      ])
+    }
+    expect(of('ws.ack')).toHaveLength(0)
+    expect(channels.size).toBe(0)
+  })
+
+  test('opens with the principal of a valid key, and a bad path after it gets 1008 without auth.failed', () => {
+    const { channels, openChannel, of } = setup()
+    const run = openChannel(1, 'other')
+    expect(run.principal).toEqual({ keyId: 'k2', name: 'second' })
+    expect(run.messages).toEqual([])
+
+    channels.receive({ type: 'ws.open', channel: 2, path: '/ws/nope', headers: [] })
+    channels.receive({ type: 'ws.data', channel: 2, data: auth('good') })
+    expect(of('ws.close')).toEqual([{ type: 'ws.close', channel: 2, code: 1008, reason: 'not found' }])
+    expect(of('auth.failed')).toEqual([])
+  })
+
+  test('closeChannels closes only the channels of the revoked keys, each handler once', () => {
+    const { channels, openChannel, of } = setup()
+    const a = openChannel(1, 'good')
+    const b = openChannel(2, 'other')
+    const c = openChannel(3, 'good')
+    channels.receive({ type: 'ws.open', channel: 4, path: '/ws/events', headers: [] })
+
+    channels.closeChannels(['k1'])
+    channels.closeChannels(['k1'])
+    expect([a.closes, b.closes, c.closes]).toEqual([1, 0, 1])
+    expect(of('ws.close')).toEqual([
+      { type: 'ws.close', channel: 1, code: CLOSE_ACCESS_DENIED, reason: 'key rotated' },
+      { type: 'ws.close', channel: 3, code: CLOSE_ACCESS_DENIED, reason: 'key rotated' },
+    ])
+    expect(channels.size).toBe(2)
+    channels.close()
+  })
+
   test('delivers messages in order and acks exactly the payload bytes, ignoring frames for unknown channels', async () => {
     const { channels, openChannel, of, opened } = setup()
     const run = openChannel(1)
-    const payloads: (string | Uint8Array<ArrayBuffer>)[] = [
-      '{"type":"auth","key":"k"}',
-      'héllo ✓',
-      new Uint8Array([1, 2, 3]),
-    ]
+    const payloads: (string | Uint8Array<ArrayBuffer>)[] = ['{"type":"focus"}', 'héllo ✓', new Uint8Array([1, 2, 3])]
     for (const data of payloads) channels.receive({ type: 'ws.data', channel: 1, data })
     await tick()
     channels.receive({ type: 'ws.data', channel: 1, data: 'later' })
@@ -62,7 +136,8 @@ describe('TunnelChannels', () => {
     expect(run.messages).toEqual([...payloads, 'later'])
     const acks = of('ws.ack')
     expect(acks.length).toBe(2)
-    const total = [...payloads, 'later'].reduce((sum, data) => sum + wsPayloadBytes(data), 0)
+    // The auth message is acked too, though the handler never sees it.
+    const total = [auth('good'), ...payloads, 'later'].reduce((sum, data) => sum + wsPayloadBytes(data), 0)
     expect(acks.reduce((sum, ack) => sum + ack.bytes, 0)).toBe(total)
 
     channels.receive({ type: 'ws.data', channel: 9, data: 'x' })

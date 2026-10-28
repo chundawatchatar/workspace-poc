@@ -28,8 +28,15 @@ host) for a local server. The host then keeps one tunnel open to it, identified
 by a random secret it creates in `apps/host/.data/machine-secret`. Keep that
 file: the machine id is derived from it, and deleting it gives the machine a new
 id. Terminals and layout sync work through the tunnel as well as the HTTP API.
-Tunneled requests and sockets are not access-checked yet, so only set
-`SERVER_URL` for testing.
+
+Every tunneled request and socket needs an access key. On its first start with
+`SERVER_URL`, the host creates one and prints a connect link,
+`<client>/#machine=<id>&key=<key>`, once: only the key's hash is kept, in
+`apps/host/.data/access-keys.json`. Open the link to reach the machine from the
+global app. The client URL is `CLIENT_URL` if set, otherwise `SERVER_URL` with
+`ws`/`wss` swapped for `http`/`https`. Lost the link, or want to cut everyone
+off? Run `bun run host:rotate-key`: it prints a new link and closes every remote
+session that used the old key.
 
 ## Layout
 
