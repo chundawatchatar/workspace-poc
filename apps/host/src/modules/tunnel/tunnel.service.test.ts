@@ -230,6 +230,32 @@ describe('TunnelClient', () => {
     for (const gap of [b - a, c - b, d - c]) expect(gap).toBeLessThan(300)
   })
 
+  test('reports connecting, connected, reconnecting, stopped and off as the tunnel goes through them', async () => {
+    const seen: string[] = []
+    mode = 'mute'
+    const client = start({
+      random: () => 1,
+      timings: { ...timings, welcomeTimeoutMs: 2000, baseMs: 100, maxMs: 100 },
+      onStatus: (state) => seen.push(state),
+    })
+    await until(() => conns[0]?.frames.some((f) => f.type === 'hello') ?? false)
+    expect(client.status).toBe('connecting')
+
+    const [first] = conns
+    if (!first) throw new Error('no connection')
+    send(first, { type: 'welcome', machineId: 'm' })
+    await until(() => client.status === 'connected')
+
+    mode = (conn) => conn.ws.close(CLOSE_REPLACED, 'bye')
+    first.ws.close(1000)
+    await until(() => client.status === 'reconnecting')
+    await until(() => client.status === 'stopped')
+
+    client.stop()
+    expect(client.status).toBe('off')
+    expect(seen).toEqual(['connecting', 'connected', 'reconnecting', 'connecting', 'connected', 'stopped', 'off'])
+  })
+
   test('stop closes with 1000 and dials nothing more', async () => {
     const client = start()
     await until(() => logs.includes('tunnel connected as machine-0'))
