@@ -28,6 +28,8 @@ export type Theme = 'light' | 'dark'
 
 export interface Snapshot {
   status: 'connecting' | 'open' | 'closed'
+  /** The transport the store is connected through, set by `connect` and cleared only by its own cleanup. */
+  transport: HostTransport | null
   /** The shared layout, owned by the host. */
   state: AppState | null
   sessions: Record<string, SessionInfo>
@@ -50,6 +52,7 @@ export interface Snapshot {
 
 const initial: Snapshot = {
   status: 'connecting',
+  transport: null,
   state: null,
   sessions: {},
   info: null,
@@ -91,12 +94,11 @@ export function useApp<T>(selector: (snapshot: Snapshot) => T): T {
 }
 
 let socket: WebSocket | null = null
-let transport: HostTransport | null = null
 
 /** The transport of the connected page. Requests made before `connect` fail. */
 export function getTransport(): HostTransport {
-  if (!transport) throw new Error('Not connected to a host')
-  return transport
+  if (!snapshot.transport) throw new Error('Not connected to a host')
+  return snapshot.transport
 }
 
 function send(event: ClientEvent) {
@@ -131,18 +133,19 @@ function handle(event: ServerEvent) {
  * Returns a cleanup that closes the socket and stops reconnecting.
  */
 export function connect(via: HostTransport): () => void {
-  transport = via
   // A new connection may be to another host, so drop what the last one said.
-  set({ state: null, sessions: {}, info: null })
+  set({ transport: via, state: null, sessions: {}, info: null })
   let stopped = false
   let retry: ReturnType<typeof setTimeout> | undefined
+  let own: WebSocket | null = null
 
   const open = () => {
     set({ status: 'connecting' })
     const ws = via.openSocket(buildSocketUrl(routes.sockets.events, {}))
+    own = ws
     socket = ws
-    ws.onopen = () => set({ status: 'open' })
-    ws.onmessage = (message) => handle(JSON.parse(message.data) as ServerEvent)
+    ws.onopen = () => !stopped && set({ status: 'open' })
+    ws.onmessage = (message) => !stopped && handle(JSON.parse(message.data) as ServerEvent)
     ws.onclose = () => {
       if (socket === ws) socket = null
       if (stopped) return
@@ -152,12 +155,13 @@ export function connect(via: HostTransport): () => void {
   }
   open()
 
+  // A cleanup that runs after a newer `connect` only closes its own socket and leaves the newer transport in place.
   return () => {
     stopped = true
     clearTimeout(retry)
-    socket?.close()
-    socket = null
-    if (transport === via) transport = null
+    own?.close()
+    if (socket === own) socket = null
+    if (snapshot.transport === via) set({ transport: null })
   }
 }
 

@@ -9,6 +9,7 @@ import { LEADER_LABEL } from '../lib/shortcuts'
 import { SIDEBAR_WIDTH, setSidebarWidth, sidebarWidth } from '../lib/sidebarWidth'
 import { setOverlay, toggleThemeMode, useApp } from '../lib/store'
 import { useNavigation, WorkspaceLink } from '../navigation'
+import { usePageOptions } from '../pageOptions'
 import { SidebarTerminals, terminalIds, useCollapsed } from './SidebarTerminals'
 
 function useGitInfo(cwd: string): GitInfo | null {
@@ -29,6 +30,7 @@ export function Sidebar({ activeId, open }: { activeId: string | undefined; open
   const workspaces = useApp((s) => s.state?.workspaces)
   const status = useApp((s) => s.status)
   const leader = useApp((s) => s.leader)
+  const { machine, header } = usePageOptions()
 
   return (
     // The shell animates between the sidebar's width and zero; the sidebar inside keeps its width and is clipped.
@@ -37,8 +39,11 @@ export function Sidebar({ activeId, open }: { activeId: string | undefined; open
         className="relative flex h-full flex-col border-r border-line bg-sidebar"
         style={{ width: `var(--sidebar-width, ${SIDEBAR_WIDTH.initial}px)` }}
       >
-        <div className="flex h-10 shrink-0 items-center justify-between px-3">
-          <span className="text-[11px] font-semibold tracking-wider text-faint uppercase">Workspaces</span>
+        {header}
+        <div className="flex h-10 shrink-0 items-center justify-between gap-2 px-3">
+          <span className="truncate text-[11px] font-semibold tracking-wider text-faint uppercase" title={machine?.id}>
+            {machine?.name ?? 'Workspaces'}
+          </span>
           <button
             type="button"
             title="New workspace"

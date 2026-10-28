@@ -1,4 +1,9 @@
+import { WorkspaceView } from '@orch/terminal-ui'
 import { createFileRoute } from '@tanstack/react-router'
 
-// The root layout renders the page for this route through <TerminalUI>, reading `workspaceId` from the URL.
-export const Route = createFileRoute('/w/$workspaceId')({})
+export const Route = createFileRoute('/w/$workspaceId')({ component: Workspace })
+
+function Workspace() {
+  const { workspaceId } = Route.useParams()
+  return <WorkspaceView workspaceId={workspaceId} />
+}

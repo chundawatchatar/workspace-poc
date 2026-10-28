@@ -15,6 +15,15 @@ export {
   resolveDirResponse,
 } from './fs'
 export { type GitInfo, gitStatusQuery, gitStatusResponse } from './git'
+export {
+  ACCESS_KEY_HEADER,
+  type ConnectTarget,
+  formatConnectFragment,
+  machinePathPrefix,
+  parseConnectFragment,
+  type SocketAuthMessage,
+  socketAuthMessage,
+} from './remote'
 export { type DaemonReport, daemonResponse, healthResponse } from './system'
 export {
   decodeFrame,

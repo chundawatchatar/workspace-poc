@@ -1,0 +1,17 @@
+@import 'tailwindcss';
+@import '@orch/terminal-ui/styles.css';
+
+/* Document shell. The page's styles come from @orch/terminal-ui, colours, fonts and motion from @orch/ui. */
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}

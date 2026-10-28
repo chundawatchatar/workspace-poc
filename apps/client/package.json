@@ -1,0 +1,27 @@
+{
+  "name": "@orch/client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:client": "vite dev --configLoader runner --port 3220 --strictPort",
+    "build": "vite build --configLoader runner",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@orch/shared": "workspace:*",
+    "@orch/terminal-ui": "workspace:*",
+    "@orch/ui": "workspace:*",
+    "@tailwindcss/vite": "^4.3.3",
+    "@tanstack/react-router": "^1.170.44",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "tailwindcss": "^4.3.3"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^6.0.1",
+    "vite": "^8.0.0"
+  }
+}
