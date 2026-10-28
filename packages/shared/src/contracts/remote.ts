@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { API_PREFIX } from './contract'
+import { API_PREFIX, WS_PREFIX } from './contract'
 
 // How a browser reaches a machine through the cloud server. The server forwards
 // `/m/<machineId>/api/*` and `/m/<machineId>/ws/*` to the machine, and the
@@ -21,6 +21,12 @@ export function machinePathPrefix(machineId: string): string {
 
 /** The server route pattern for a machine's HTTP endpoints, `/m/:machineId/api/*`, in Hono syntax. */
 export const MACHINE_API_ROUTE = `/m/:machineId${API_PREFIX}/*`
+
+/** The server route pattern for a machine's WebSockets, `/m/:machineId/ws/*`, in Hono syntax. */
+export const MACHINE_WS_ROUTE = `/m/:machineId${WS_PREFIX}/*`
+
+/** The close code a browser socket gets when its machine has no live tunnel, or the tunnel drops. */
+export const CLOSE_MACHINE_OFFLINE = 4502
 
 /** What a connect link carries: the machine to open and the key to open it with. */
 export interface ConnectTarget {

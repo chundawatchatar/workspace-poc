@@ -7,6 +7,9 @@ import type { z } from 'zod'
 
 export const API_PREFIX = '/api'
 
+/** The path every WebSocket the host serves sits under. */
+export const WS_PREFIX = '/ws'
+
 /** An HTTP endpoint. */
 export interface Endpoint<Input extends z.ZodType = z.ZodType, Output extends z.ZodType = z.ZodType> {
   method: 'GET' | 'POST'

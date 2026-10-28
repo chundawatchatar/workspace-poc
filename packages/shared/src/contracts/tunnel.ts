@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { API_PREFIX } from './contract'
+import { API_PREFIX, WS_PREFIX } from './contract'
 
 // The wire format between a machine and the cloud server (`apps/server`). Each
 // machine keeps one outbound WSS connection to the server, which relays browser
@@ -13,6 +13,14 @@ export const TUNNEL_PATH = '/tunnel'
 
 /** The largest encoded frame, in bytes, that `decodeFrame` accepts. A request body must fit in one frame. */
 export const MAX_TUNNEL_FRAME_BYTES = 1024 * 1024
+
+/**
+ * The most unacknowledged `ws.data` payload bytes a sender may have on one
+ * channel. A sender may start a message while it is under the window, so one
+ * large message cannot deadlock a channel. The receiver acks with `ws.ack` once
+ * it has delivered the bytes.
+ */
+export const WS_CHANNEL_WINDOW_BYTES = 256 * 1024
 
 const id = z.number().int().positive()
 const bytes = z.instanceof(Uint8Array)
@@ -57,7 +65,7 @@ export const httpEndFrame = z.object({ type: z.literal('http.end'), id, error: z
 export const wsOpenFrame = z.object({
   type: z.literal('ws.open'),
   channel: id,
-  path: z.string().startsWith('/ws/'),
+  path: z.string().startsWith(`${WS_PREFIX}/`),
   headers,
 })
 
@@ -72,6 +80,9 @@ export const wsCloseFrame = z.object({
   reason: z.string().optional(),
 })
 
+/** Gives back `bytes` of window on `channel`: the receiver has delivered that many `ws.data` payload bytes. */
+export const wsAckFrame = z.object({ type: z.literal('ws.ack'), channel: id, bytes: z.number().int().positive() })
+
 export const pingFrame = z.object({ type: z.literal('ping'), nonce: z.number().int() })
 
 /** Answers a `ping`, echoing its `nonce`. */
@@ -85,6 +96,7 @@ export const machineFrame = z.discriminatedUnion('type', [
   httpEndFrame,
   wsDataFrame,
   wsCloseFrame,
+  wsAckFrame,
   pingFrame,
   pongFrame,
 ])
@@ -96,6 +108,7 @@ export const serverFrame = z.discriminatedUnion('type', [
   wsOpenFrame,
   wsDataFrame,
   wsCloseFrame,
+  wsAckFrame,
   pingFrame,
   pongFrame,
 ])
@@ -113,6 +126,29 @@ const byteField: Partial<Record<TunnelFrame['type'], string>> = {
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder('utf-8', { fatal: true })
+
+/**
+ * The bytes a `ws.data` payload counts for in a channel's window: the UTF-8
+ * length of a string, the byte length of binary data. Strings are measured
+ * without encoding them.
+ */
+export function wsPayloadBytes(data: string | Uint8Array): number {
+  if (typeof data !== 'string') return data.byteLength
+  let bytes = 0
+  for (let i = 0; i < data.length; i++) {
+    const unit = data.charCodeAt(i)
+    if (unit < 0x80) bytes += 1
+    else if (unit < 0x800) bytes += 2
+    else if (unit >= 0xd800 && unit < 0xdc00 && (data.charCodeAt(i + 1) & 0xfc00) === 0xdc00) {
+      bytes += 4
+      i++
+    } else {
+      // Other units, lone surrogates included (they encode as U+FFFD), take 3 bytes.
+      bytes += 3
+    }
+  }
+  return bytes
+}
 
 /**
  * Encodes a frame for the tunnel socket. A frame without bytes becomes a JSON

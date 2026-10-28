@@ -1,5 +1,13 @@
 import { describe, expect, test } from 'bun:test'
-import { decodeFrame, encodeFrame, MAX_TUNNEL_FRAME_BYTES, machineFrame, serverFrame, type TunnelFrame } from './tunnel'
+import {
+  decodeFrame,
+  encodeFrame,
+  MAX_TUNNEL_FRAME_BYTES,
+  machineFrame,
+  serverFrame,
+  type TunnelFrame,
+  wsPayloadBytes,
+} from './tunnel'
 
 const proof = `${'A'.repeat(42)}w`
 const allBytes = Uint8Array.from({ length: 256 }, (_, i) => i)
@@ -42,6 +50,7 @@ describe('tunnel frames', () => {
       { type: 'ws.data', channel: 1, data: allBytes },
       { type: 'ws.close', channel: 1 },
       { type: 'ws.close', channel: 1, code: 1000, reason: 'bye' },
+      { type: 'ws.ack', channel: 1, bytes: 4096 },
       { type: 'ping', nonce: 7 },
       { type: 'pong', nonce: 7 },
     ]
@@ -100,6 +109,8 @@ describe('tunnel frames', () => {
       [machineFrame, JSON.stringify({ type: 'http.end', id: 0 })],
       [machineFrame, JSON.stringify({ type: 'http.end', id: 1.5 })],
       [machineFrame, JSON.stringify({ type: 'ws.close', channel: -1 })],
+      [machineFrame, JSON.stringify({ type: 'ws.ack', channel: 1, bytes: 0 })],
+      [serverFrame, JSON.stringify({ type: 'ws.ack', channel: 1, bytes: 1.5 })],
       [machineFrame, new Uint8Array([0, 0, 0])],
       [machineFrame, binary({ type: 'http.body', id: 1 }, new Uint8Array(), 1000)],
       [machineFrame, binary({ type: 'ping', nonce: 1 })],
@@ -109,5 +120,12 @@ describe('tunnel frames', () => {
       [machineFrame, 42],
     ]
     for (const [schema, input] of bad) expect(decodeFrame(schema, input)).toBeNull()
+  })
+
+  test('ws payloads count their UTF-8 length for strings and their byte length for binary', () => {
+    for (const text of ['', 'abc', 'héllo', '€', '😀 ok', 'lone \ud800 surrogate']) {
+      expect(wsPayloadBytes(text)).toBe(new TextEncoder().encode(text).byteLength)
+    }
+    expect(wsPayloadBytes(allBytes)).toBe(256)
   })
 })
