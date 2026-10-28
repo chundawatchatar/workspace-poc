@@ -9,7 +9,7 @@ function fakeSession(alive: boolean) {
 
 // The HTTP routes under test only read the session list and the daemon's start time.
 const sessions = { list: () => [fakeSession(true), fakeSession(true), fakeSession(false)] } as SessionManager
-const app = createApp({ sessions, daemonStartedAt: () => Date.now() - 90_000 } as AppDeps)
+const { app } = createApp({ sessions, daemonStartedAt: () => Date.now() - 90_000 } as AppDeps)
 
 describe('createApp', () => {
   test('serves the module routes under /api', async () => {

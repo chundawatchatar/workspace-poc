@@ -106,7 +106,14 @@ function send(conn: Conn, frame: ServerFrame) {
 function start(options: Partial<TunnelClientOptions> = {}) {
   const url = parseServerUrl(`ws://127.0.0.1:${server.port}`)
   if (!url) throw new Error('rejected the test server URL')
-  const client = new TunnelClient({ url, secret, handle: async () => new Response('ok'), timings, ...options })
+  const client = new TunnelClient({
+    url,
+    secret,
+    handle: async () => new Response('ok'),
+    openSocket: () => ({ code: 1008, reason: 'no sockets here' }),
+    timings,
+    ...options,
+  })
   clients.push(client)
   client.start()
   return client
@@ -227,7 +234,7 @@ describe('TunnelClient', () => {
     expect(conns[0]?.closed?.code).toBe(1000)
   })
 
-  test('drops the requests of a lost connection, and answers ws.open with a close', async () => {
+  test('drops the requests of a lost connection, and answers a refused ws.open with a close', async () => {
     let signal: AbortSignal | undefined
     let cancelled = false
     start({
@@ -260,8 +267,8 @@ describe('TunnelClient', () => {
     expect(first.frames.find((f) => f.type === 'ws.close')).toEqual({
       type: 'ws.close',
       channel: 3,
-      code: 1011,
-      reason: 'not supported',
+      code: 1008,
+      reason: 'no sockets here',
     })
     expect(signal?.aborted).toBe(true)
     expect(first.frames.filter((f) => f.type.startsWith('http.')).map((f) => f.type)).toEqual([

@@ -4,8 +4,10 @@ import {
   CLOSE_REPLACED,
   CLOSE_UNSUPPORTED_VERSION,
   decodeFrame,
+  FrameScheduler,
   type MachineFrame,
   machineFrame,
+  type ServerFrame,
   TUNNEL_PATH,
   TUNNEL_PROTOCOL_VERSION,
 } from '@orch/shared'
@@ -13,7 +15,6 @@ import { Hono } from 'hono'
 import type { WSContext } from 'hono/ws'
 import { z } from 'zod'
 import { bunSocket, type ServerSocketEvents } from '../../lib/websocket'
-import { FrameScheduler } from './tunnel.scheduler'
 import { type MachineConnection, type MachineRegistry, machineIdFromProof } from './tunnel.service'
 
 /** Close code for a missing, invalid or repeated `hello`. */
@@ -57,7 +58,7 @@ export function createTunnelSocket({
       let helloTimer: Timer | undefined
       let pingTimer: Timer | undefined
       let heartbeatTimer: Timer | undefined
-      let scheduler: FrameScheduler | undefined
+      let scheduler: FrameScheduler<ServerFrame> | undefined
 
       // Stops the timers and releases the tunnel at once, so a replaced or failed tunnel goes quiet,
       // and its pending requests fail, before its close event arrives.
@@ -83,9 +84,11 @@ export function createTunnelSocket({
       }
 
       const welcome = (ws: WSContext, proof: string) => {
-        const lanes = new FrameScheduler({
+        // `http.request` goes in the bulk lane, so a large upload never holds back terminal traffic.
+        const lanes = new FrameScheduler<ServerFrame>({
           write: (data) => ws.send(data),
           bufferedAmount: () => bunSocket(ws).getBufferedAmount(),
+          lane: (frame) => (frame.type === 'http.request' ? 'bulk' : 'interactive'),
         })
         scheduler = lanes
         const live: MachineConnection = {

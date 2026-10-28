@@ -31,7 +31,7 @@ function bodyOf(frames: MachineFrame[], id: number) {
 describe('TunnelHttp', () => {
   test('answers like a direct app.fetch', async () => {
     const sessions = { list: () => [] } as unknown as SessionManager
-    const app = createApp({ sessions, daemonStartedAt: () => null } as AppDeps)
+    const { app } = createApp({ sessions, daemonStartedAt: () => null } as AppDeps)
     let seen: Request | undefined
     const { frames, request } = setup(async (req) => {
       seen = req
