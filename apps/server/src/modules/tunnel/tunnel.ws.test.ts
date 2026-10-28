@@ -11,6 +11,7 @@ import {
 } from '@orch/shared'
 import type { Server } from 'bun'
 import { createApp } from '../../app'
+import { HttpForwarder } from '../forward/forward.service'
 import { MachineRegistry, machineIdFromProof } from './tunnel.service'
 import { CLOSE_HEARTBEAT_TIMEOUT, CLOSE_REPLACED, CLOSE_UNSUPPORTED_VERSION } from './tunnel.ws'
 
@@ -24,7 +25,12 @@ let clients: Machine[]
 
 beforeEach(() => {
   registry = new MachineRegistry()
-  server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: createApp({ registry, ...timings }).fetch, websocket })
+  server = Bun.serve({
+    hostname: '127.0.0.1',
+    port: 0,
+    fetch: createApp({ registry, forwarder: new HttpForwarder({ registry }), ...timings }).fetch,
+    websocket,
+  })
   clients = []
 })
 
