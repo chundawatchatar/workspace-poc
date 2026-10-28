@@ -66,6 +66,8 @@ interface Channel {
   heldAck: number
   /** True between a backpressured send and the socket's drain. */
   backpressured: boolean
+  /** The IP of the browser that opened the channel. */
+  clientIp: string
 }
 
 /** The open channels on one tunnel. It lives until the tunnel closes, so channel ids are never reused. */
@@ -95,9 +97,16 @@ export class ChannelBridge {
   /**
    * Opens a channel to the machine for a browser socket and sends its
    * `ws.open`. Returns null after closing the socket when the machine is offline
-   * (`CLOSE_MACHINE_OFFLINE`) or has too many channels (1013).
+   * (`CLOSE_MACHINE_OFFLINE`) or has too many channels (1013). `clientIp` is
+   * kept with the channel, for `clientIpOf`.
    */
-  open(machineId: string, path: string, headers: [string, string][], socket: BrowserSocket): BrowserChannel | null {
+  open(
+    machineId: string,
+    path: string,
+    headers: [string, string][],
+    socket: BrowserSocket,
+    clientIp = '',
+  ): BrowserChannel | null {
     const conn = this.registry.get(machineId)
     if (!conn || this.closed.has(conn)) {
       socket.close(CLOSE_MACHINE_OFFLINE, 'machine offline')
@@ -117,6 +126,7 @@ export class ChannelBridge {
       inbound: 0,
       heldAck: 0,
       backpressured: false,
+      clientIp,
     }
     state.channels.set(channel.id, channel)
     conn.send({ type: 'ws.open', channel: channel.id, path, headers })
@@ -160,6 +170,11 @@ export class ChannelBridge {
     if (!state) return
     this.connections.delete(conn)
     for (const channel of state.channels.values()) channel.socket.close(CLOSE_MACHINE_OFFLINE, 'machine offline')
+  }
+
+  /** The IP of the browser that opened `channel` on `conn`. Undefined means no such channel is open. */
+  clientIpOf(conn: MachineConnection, channel: number): string | undefined {
+    return this.connections.get(conn)?.channels.get(channel)?.clientIp
   }
 
   /** The number of open channels, across every tunnel. */

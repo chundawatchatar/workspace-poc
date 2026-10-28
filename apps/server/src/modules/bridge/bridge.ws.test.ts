@@ -14,6 +14,7 @@ import type { Server } from 'bun'
 import { createApp } from '../../app'
 import { serverWebSocket } from '../../lib/websocket'
 import { HttpForwarder } from '../forward/forward.service'
+import { ConnectionLimiter } from '../limits/limits.service'
 import { MachineRegistry, machineIdFromProof } from '../tunnel/tunnel.service'
 import { ChannelBridge } from './bridge.service'
 
@@ -30,7 +31,14 @@ beforeEach(() => {
   registry = new MachineRegistry()
   bridge = new ChannelBridge({ registry })
   const forwarder = new HttpForwarder({ registry })
-  const app = createApp({ registry, forwarder, bridge, pingIntervalMs: 30, heartbeatTimeoutMs: 120 })
+  const app = createApp({
+    registry,
+    forwarder,
+    bridge,
+    limiter: new ConnectionLimiter(),
+    pingIntervalMs: 30,
+    heartbeatTimeoutMs: 120,
+  })
   server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: app.fetch, websocket: serverWebSocket })
   sockets = []
 })

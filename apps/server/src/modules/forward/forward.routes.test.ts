@@ -15,6 +15,7 @@ import type { Server } from 'bun'
 import { createApp } from '../../app'
 import { serverWebSocket } from '../../lib/websocket'
 import { ChannelBridge } from '../bridge/bridge.service'
+import { ConnectionLimiter } from '../limits/limits.service'
 import { MachineRegistry, machineIdFromProof } from '../tunnel/tunnel.service'
 import { HttpForwarder } from './forward.service'
 
@@ -35,6 +36,7 @@ beforeEach(() => {
     registry,
     forwarder,
     bridge: new ChannelBridge({ registry }),
+    limiter: new ConnectionLimiter(),
     pingIntervalMs: 30,
     heartbeatTimeoutMs: 120,
   })
@@ -111,6 +113,8 @@ describe('forward routes', () => {
           ['x-teapot', 'yes'],
           ['set-cookie', 'a=1'],
           ['set-cookie', 'b=2'],
+          ['access-control-allow-origin', '*'],
+          ['Access-Control-Allow-Credentials', 'true'],
         ],
       })
       m.send({ type: 'http.body', id: 1, data: encoder.encode('hello ') })
@@ -118,6 +122,9 @@ describe('forward routes', () => {
       expect(response.status).toBe(418)
       expect(response.headers.get('x-teapot')).toBe('yes')
       expect(response.headers.getSetCookie()).toEqual(['a=1', 'b=2'])
+      // The server answers for CORS itself, and adds its own security headers.
+      expect([...response.headers.keys()].some((name) => name.startsWith('access-control-'))).toBe(false)
+      expect(response.headers.get('x-content-type-options')).toBe('nosniff')
 
       // The first chunk is readable before the machine ends the response.
       const reader = response.body?.getReader() as ReadableStreamDefaultReader<Uint8Array>

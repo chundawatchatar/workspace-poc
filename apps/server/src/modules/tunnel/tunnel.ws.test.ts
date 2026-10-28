@@ -16,6 +16,7 @@ import { createApp } from '../../app'
 import { serverWebSocket } from '../../lib/websocket'
 import { ChannelBridge } from '../bridge/bridge.service'
 import { HttpForwarder } from '../forward/forward.service'
+import { ConnectionLimiter } from '../limits/limits.service'
 import { MachineRegistry, machineIdFromProof } from './tunnel.service'
 
 const proofA = `${'A'.repeat(42)}a`
@@ -35,6 +36,7 @@ beforeEach(() => {
       registry,
       forwarder: new HttpForwarder({ registry }),
       bridge: new ChannelBridge({ registry }),
+      limiter: new ConnectionLimiter(),
       ...timings,
     }).fetch,
     websocket: serverWebSocket,

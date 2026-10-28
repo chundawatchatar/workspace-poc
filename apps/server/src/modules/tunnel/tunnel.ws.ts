@@ -15,13 +15,14 @@ import { Hono } from 'hono'
 import type { WSContext } from 'hono/ws'
 import { z } from 'zod'
 import { bunSocket, type ServerSocketEvents } from '../../lib/websocket'
+import { type LimitsDeps, limitTunnelUpgrades } from '../limits/limits.middleware'
 import { type MachineConnection, type MachineRegistry, machineIdFromProof } from './tunnel.service'
 
 /** Close code for a missing, invalid or repeated `hello`. */
 const CLOSE_POLICY = 1008
 
 /** What the tunnel socket needs from the server. The timings are in milliseconds. */
-export interface TunnelSocketDeps {
+export interface TunnelSocketDeps extends LimitsDeps {
   registry: MachineRegistry
   /** How long a new socket has to send its `hello`. Defaults to 10 s. */
   helloTimeoutMs?: number
@@ -39,8 +40,10 @@ export interface TunnelSocketDeps {
 // version is told so even when the rest of its `hello` has changed shape.
 const versionedHello = z.object({ type: z.literal('hello'), version: z.number() })
 
-/** Serves `TUNNEL_PATH`, where each machine keeps one outbound tunnel. */
+/** Serves `TUNNEL_PATH`, where each machine keeps one outbound tunnel. Upgrades are rate limited per IP. */
 export function createTunnelSocket({
+  limiter,
+  clientIp,
   registry,
   helloTimeoutMs = 10_000,
   pingIntervalMs = 15_000,
@@ -50,6 +53,7 @@ export function createTunnelSocket({
 }: TunnelSocketDeps) {
   return new Hono().get(
     TUNNEL_PATH,
+    limitTunnelUpgrades({ limiter, clientIp }),
     upgradeWebSocket(() => {
       let conn: MachineConnection | null = null
       let closed = false

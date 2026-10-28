@@ -146,7 +146,11 @@ That only stays easy if every remote access job keeps these rules:
 
 - **The server routes on the envelope, never the contents.** It may read the machine id, the frame type, the request
   or channel id, and frame sizes. It never reads, rewrites or decides anything from the method, path, headers, body or
-  response status. The only responses it makes up itself are 502 (machine offline) and 504 (timeout).
+  response status. The only responses it makes up itself are 403 (an `Origin` it does not allow), 429 (a rate
+  limit), 502 (machine offline) and 504 (timeout), plus its own answers to CORS preflights, which never reach the
+  machine. Origin checks, CORS and rate limits read only the outer request: its `Origin` and `Host` headers, the
+  socket address and the machine id in the URL. Dropping the machine's `Access-Control-*` headers is a filter on
+  header names, like the hop-by-hop list.
 - **Only the host checks access.** The access key travels in a header and the first socket message, and the server
   never checks it.
 - **The host reports problems the server must react to as control frames.** Rate-limiting bad access keys must not

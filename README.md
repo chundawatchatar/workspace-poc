@@ -38,6 +38,18 @@ global app. The client URL is `CLIENT_URL` if set, otherwise `SERVER_URL` with
 off? Run `bun run host:rotate-key`: it prints a new link and closes every remote
 session that used the old key.
 
+The server serves the global app itself, so the connect link opens on the
+server's own origin and needs no CORS. Build the client with
+`bun run --filter @orch/client build`, then start the server with
+`bun run --filter @orch/server start` (127.0.0.1:4600). It serves
+`apps/client/dist`, or `SERVER_STATIC_DIR`; without a build it only relays. It
+answers cross-origin calls only from the exact origins in
+`SERVER_ALLOWED_ORIGINS` (comma-separated), so to use `bun run dev:client`
+against it, start it with `SERVER_ALLOWED_ORIGINS=http://127.0.0.1:3220`. It
+rate-limits connections per IP and per machine, and blocks an IP for a while
+after too many rejected keys. Behind a proxy that sets `X-Forwarded-For`, set
+`SERVER_TRUST_PROXY=1` so the limits see the client's IP, not the proxy's.
+
 ## Layout
 
 | Path | What it is |
