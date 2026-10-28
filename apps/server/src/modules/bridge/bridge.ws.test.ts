@@ -179,6 +179,21 @@ describe('bridge socket', () => {
     expect(bridge.size).toBe(0)
   })
 
+  test('an auth.failed frame keeps the tunnel and the channel open and reaches no browser', async () => {
+    const m = await machine(proofA)
+    const b = browser('/ws/events')
+    await opened(b)
+    await until(() => of(m, 'ws.open').length === 1)
+
+    m.send({ type: 'auth.failed', channel: 1 })
+    m.send({ type: 'auth.failed', id: 5 })
+    m.send({ type: 'ws.data', channel: 1, data: 'still here' })
+    await until(() => b.received.length > 0)
+    expect(b.received).toEqual(['still here'])
+    expect(m.ws.readyState).toBe(WebSocket.OPEN)
+    expect(bridge.size).toBe(1)
+  })
+
   test('closes sockets with machine offline when there is no tunnel, or when it drops or times out', async () => {
     const offline = browser('/ws/a')
     expect((await offline.closed).code).toBe(CLOSE_MACHINE_OFFLINE)

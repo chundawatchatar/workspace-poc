@@ -15,6 +15,8 @@ export function createApp(deps: AppDeps): Hono {
     createTunnelSocket({
       ...deps,
       onFrame: (conn, frame) => {
+        // The machine refused a key. Rate limiting by browser will read it here; until then it is dropped.
+        if (frame.type === 'auth.failed') return
         if (frame.type === 'ws.data' || frame.type === 'ws.close' || frame.type === 'ws.ack') {
           bridge.handleFrame(conn, frame)
         } else {

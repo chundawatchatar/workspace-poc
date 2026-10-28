@@ -38,6 +38,8 @@ describe('tunnel frames', () => {
       { type: 'http.body', id: 1, data: allBytes },
       { type: 'http.end', id: 1 },
       { type: 'http.end', id: 2, error: 'stream failed' },
+      { type: 'auth.failed', id: 3 },
+      { type: 'auth.failed', channel: 7 },
     ]
     const server: TunnelFrame[] = [
       { type: 'welcome', machineId: 'm-1' },
@@ -118,6 +120,10 @@ describe('tunnel frames', () => {
       [machineFrame, binary({ type: 'http.body', id: 1 }, new Uint8Array(MAX_TUNNEL_FRAME_BYTES))],
       [machineFrame, JSON.stringify({ type: 'ws.data', channel: 1, data: 'x'.repeat(MAX_TUNNEL_FRAME_BYTES) })],
       [machineFrame, 42],
+      [machineFrame, JSON.stringify({ type: 'auth.failed', id: 3, channel: 7 })],
+      [machineFrame, JSON.stringify({ type: 'auth.failed' })],
+      [machineFrame, JSON.stringify({ type: 'auth.failed', id: 3, key: 'k' })],
+      [serverFrame, JSON.stringify({ type: 'auth.failed', id: 3 })],
     ]
     for (const [schema, input] of bad) expect(decodeFrame(schema, input)).toBeNull()
   })
