@@ -27,8 +27,9 @@ with `SERVER_URL` set: `wss://<server>`, or `ws://127.0.0.1:4600` (any loopback
 host) for a local server. The host then keeps one tunnel open to it, identified
 by a random secret it creates in `apps/host/.data/machine-secret`. Keep that
 file: the machine id is derived from it, and deleting it gives the machine a new
-id. Tunneled requests are not access-checked yet, so only set `SERVER_URL` for
-testing.
+id. Terminals and layout sync work through the tunnel as well as the HTTP API.
+Tunneled requests and sockets are not access-checked yet, so only set
+`SERVER_URL` for testing.
 
 ## Layout
 

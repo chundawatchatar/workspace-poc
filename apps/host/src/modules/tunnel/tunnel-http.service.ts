@@ -1,5 +1,6 @@
-import { API_PREFIX, HOST_PORT, type httpRequestFrame, type MachineFrame } from '@orch/shared'
+import { API_PREFIX, type httpRequestFrame, type MachineFrame } from '@orch/shared'
 import type { z } from 'zod'
+import { HOST_ORIGIN } from '../../lib/localOrigin'
 
 type HttpRequestFrame = z.infer<typeof httpRequestFrame>
 
@@ -8,9 +9,6 @@ export type TunnelHandler = (request: Request) => Promise<Response>
 
 /** The largest `http.body` payload, so every encoded frame stays far below `MAX_TUNNEL_FRAME_BYTES`. */
 export const MAX_BODY_CHUNK_BYTES = 64 * 1024
-
-/** The origin tunneled requests are addressed to, as if they came straight to the host. */
-const HOST_ORIGIN = `http://127.0.0.1:${HOST_PORT}`
 
 const encoder = new TextEncoder()
 
@@ -38,8 +36,9 @@ export function tunneledRequest(frame: HttpRequestFrame, signal?: AbortSignal): 
 /**
  * Serves the `http.request` frames of one tunnel connection through `handle`,
  * streaming each response back as `http.response`, `http.body` and `http.end`.
- * After `close()` it writes nothing more, so a dropped connection's requests
- * never reach the next one.
+ * Each body chunk waits for `room`, so a large response is read only as fast
+ * as the tunnel takes it. After `close()` it writes nothing more, so a dropped
+ * connection's requests never reach the next one.
  */
 export class TunnelHttp {
   private readonly inFlight = new Map<number, AbortController>()
@@ -48,6 +47,7 @@ export class TunnelHttp {
   constructor(
     private readonly handle: TunnelHandler,
     private readonly send: (frame: MachineFrame) => void,
+    private readonly room: () => Promise<void> = () => Promise.resolve(),
   ) {}
 
   /** Starts answering `frame`. A frame whose `id` is already in flight is ignored. */
@@ -102,6 +102,8 @@ export class TunnelHttp {
         if (done || signal.aborted) break
         const bytes: Uint8Array<ArrayBuffer> = typeof value === 'string' ? encoder.encode(value) : value
         for (let start = 0; start < bytes.byteLength; start += MAX_BODY_CHUNK_BYTES) {
+          await this.room()
+          if (signal.aborted) break
           send({ type: 'http.body', id, data: bytes.subarray(start, start + MAX_BODY_CHUNK_BYTES) })
         }
       }

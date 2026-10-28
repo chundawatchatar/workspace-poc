@@ -45,7 +45,7 @@ const inspector = setInterval(() => {
     })
 }, 2000)
 
-const { app } = createApp({ hub, layout, sessions, info, daemonStartedAt: () => daemon.shared.startedAt })
+const { app, sockets } = createApp({ hub, layout, sessions, info, daemonStartedAt: () => daemon.shared.startedAt })
 const server = Bun.serve({
   hostname: '127.0.0.1',
   port: HOST_PORT,
@@ -74,11 +74,16 @@ function startTunnel(serverUrl: string | undefined): TunnelClient | null {
     console.error(`no tunnel: ${error instanceof Error ? error.message : 'the machine secret could not be read'}`)
     return null
   }
-  // The access-key job wraps `handle` with the key check; until then the origin check is all there is.
+  // The access-key job wraps `handle` and `openSocket` with the key check; until then the origin check is all there is.
   console.warn(
-    'warning: tunneled requests are not access-checked yet. Anyone who knows this machine id can reach its API through the server',
+    'warning: tunneled requests and sockets are not access-checked yet. Anyone who knows this machine id can reach its API and open terminals on it through the server',
   )
-  const client = new TunnelClient({ url, secret, handle: async (request) => app.fetch(request) })
+  const client = new TunnelClient({
+    url,
+    secret,
+    handle: async (request) => app.fetch(request),
+    openSocket: (path, headers, conn) => sockets.open(path, headers, conn),
+  })
   client.start()
   return client
 }
