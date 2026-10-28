@@ -6,8 +6,10 @@ export interface PageOptions {
   machine: { id: string; name: string } | undefined
   /** Rendered at the top of the sidebar. */
   header: ReactNode
-  /** Shown under "The host is not running." */
+  /** Shown under "The host is not running." and "The machine is offline." */
   offlineHint: ReactNode
+  /** Shown under "The access key was rejected." */
+  deniedHint: ReactNode
   /** Follows the workspace name in the document title. */
   titleSuffix: string
 }

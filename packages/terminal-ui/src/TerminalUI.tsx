@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { type ReactNode, useEffect, useMemo } from 'react'
-import { LOCAL_OFFLINE_HINT } from './components/HostStatus'
+import { ConnectionBanner } from './components/ConnectionBanner'
+import { DEFAULT_DENIED_HINT, LOCAL_OFFLINE_HINT } from './components/HostStatus'
 import { Overlays } from './components/Overlays'
 import { Sidebar } from './components/Sidebar'
 import { Toaster } from './components/Toaster'
@@ -28,6 +29,8 @@ export interface TerminalUIProps {
   header?: ReactNode
   /** Says how to start the host when it is offline. Defaults to running `bun run dev` in the project root. */
   offlineHint?: ReactNode
+  /** Says what to do when the host rejects the access key. Defaults to asking the machine's owner for a new link. */
+  deniedHint?: ReactNode
   /** Follows the workspace name in the document title. Defaults to `Workspaces`. */
   titleSuffix?: string
 }
@@ -42,6 +45,7 @@ export function TerminalUI({
   machine,
   header,
   offlineHint = LOCAL_OFFLINE_HINT,
+  deniedHint = DEFAULT_DENIED_HINT,
   titleSuffix = 'Workspaces',
 }: TerminalUIProps) {
   // One cache per transport, so another host's answers are never shown. The host may be on loopback, which stays
@@ -57,8 +61,8 @@ export function TerminalUI({
     [workspaceId, navigate, workspaceHref],
   )
   const options = useMemo<PageOptions>(
-    () => ({ machine, header, offlineHint, titleSuffix }),
-    [machine, header, offlineHint, titleSuffix],
+    () => ({ machine, header, offlineHint, deniedHint, titleSuffix }),
+    [machine, header, offlineHint, deniedHint, titleSuffix],
   )
 
   useEffect(() => connect(transport), [transport])
@@ -87,7 +91,10 @@ function Page({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-screen w-screen">
       <Sidebar activeId={workspaceId} open={sidebar} />
-      <main className="flex min-w-0 flex-1 flex-col">{children}</main>
+      <main className="flex min-w-0 flex-1 flex-col">
+        <ConnectionBanner />
+        {children}
+      </main>
       <Overlays />
       <Toaster />
     </div>
