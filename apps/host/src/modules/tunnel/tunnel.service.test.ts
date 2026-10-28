@@ -191,7 +191,8 @@ describe('TunnelClient', () => {
 
     mode = 'silent'
     conns[0]?.ws.close(1000)
-    await until(() => conns.length >= 3)
+    // The third socket can open before its hello arrives, so wait for the frame itself.
+    await until(() => (conns[2]?.frames.length ?? 0) > 0)
     expect(conns[1]?.closed?.code).toBe(1000)
     expect(conns[2]?.frames[0]).toMatchObject({ type: 'hello' })
   })
@@ -199,7 +200,7 @@ describe('TunnelClient', () => {
   test('gives up on a server that never welcomes and dials again', async () => {
     mode = 'mute'
     start()
-    await until(() => conns.length >= 2)
+    await until(() => (conns[1]?.frames.length ?? 0) > 0 && conns[0]?.closed !== null)
     expect(conns[0]?.closed?.code).toBe(1000)
     expect(conns[1]?.frames).toEqual([{ type: 'hello', version: TUNNEL_PROTOCOL_VERSION, proof: secret }])
   })
