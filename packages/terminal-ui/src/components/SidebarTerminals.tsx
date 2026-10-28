@@ -1,10 +1,10 @@
 import { AGENT_LABELS, listPanes, type SessionInfo, type Workspace } from '@orch/shared'
 import { CircleAlert, LoaderCircle } from '@orch/ui/icons'
-import { useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { revealSurface } from '../lib/commands'
 import { shortPath } from '../lib/paths'
 import { useApp } from '../lib/store'
+import { useGoToWorkspace } from '../navigation'
 import { tidyTitle } from './LayoutView'
 
 const COLLAPSED_KEY = 'poc-sidebar-collapsed'
@@ -64,7 +64,7 @@ export function SidebarTerminals({ workspace, active }: { workspace: Workspace; 
   const sessions = useApp((s) => s.sessions)
   const home = useApp((s) => s.info?.home)
   const shell = useApp((s) => s.info?.shell.split('/').pop() ?? 'shell')
-  const navigate = useNavigate()
+  const goToWorkspace = useGoToWorkspace()
   const now = useNow(5000)
   const ids = terminalIds(workspace)
 
@@ -73,7 +73,7 @@ export function SidebarTerminals({ workspace, active }: { workspace: Workspace; 
     event.preventDefault()
     event.stopPropagation()
     const workspaceId = revealSurface(id)
-    if (workspaceId) void navigate({ to: '/w/$workspaceId', params: { workspaceId } })
+    if (workspaceId) goToWorkspace(workspaceId)
   }
 
   if (ids.length === 0) return null

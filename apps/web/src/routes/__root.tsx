@@ -1,23 +1,14 @@
+import { HOST_PORT } from '@orch/shared'
+import { createLocalTransport, SIDEBAR_BOOT_SCRIPT, TerminalUI, type TerminalUIProps } from '@orch/terminal-ui'
 import { THEME_BOOT_SCRIPT } from '@orch/ui'
-import type { QueryClient } from '@tanstack/react-query'
-import {
-  createRootRouteWithContext,
-  HeadContent,
-  Outlet,
-  Scripts,
-  useNavigate,
-  useParams,
-} from '@tanstack/react-router'
-import { type ReactNode, useEffect } from 'react'
-import { Overlays } from '../components/Overlays'
-import { Sidebar } from '../components/Sidebar'
-import { Toaster } from '../components/Toaster'
-import { useShortcuts } from '../lib/shortcuts'
-import { SIDEBAR_BOOT_SCRIPT } from '../lib/sidebarWidth'
-import { connect, initTheme, useApp } from '../lib/store'
+import { createRootRoute, HeadContent, Scripts, useMatches, useNavigate, useParams } from '@tanstack/react-router'
+import { type ReactNode, useCallback } from 'react'
 import appCss from '../styles.css?url'
 
-export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
+// The host listens on the loopback address only.
+const transport = createLocalTransport(`http://127.0.0.1:${HOST_PORT}`)
+
+export const Route = createRootRoute({
   head: () => ({
     meta: [
       { charSet: 'utf-8' },
@@ -46,24 +37,23 @@ function RootDocument({ children }: { children: ReactNode }) {
   )
 }
 
+/** Rendered once for every route, so moving between workspaces keeps the page and its connection. */
 function RootLayout() {
   const { workspaceId } = useParams({ strict: false }) as { workspaceId?: string }
-  const workspace = useApp((s) => s.state?.workspaces.find((w) => w.id === workspaceId))
-  const sidebar = useApp((s) => s.sidebar)
-  const navigate = useNavigate()
+  const found = useMatches({ select: (matches) => matches.length > 1 })
+  const routerNavigate = useNavigate()
 
-  useEffect(connect, [])
-  useEffect(initTheme, [])
-  useShortcuts(workspace, (id) => void navigate({ to: '/w/$workspaceId', params: { workspaceId: id } }))
+  const navigate = useCallback<TerminalUIProps['navigate']>(
+    ({ workspaceId }, options) =>
+      void (workspaceId === undefined
+        ? routerNavigate({ to: '/', replace: options?.replace })
+        : routerNavigate({ to: '/w/$workspaceId', params: { workspaceId }, replace: options?.replace })),
+    [routerNavigate],
+  )
+  const workspaceHref = useCallback((id: string) => `/w/${encodeURIComponent(id)}`, [])
 
+  if (!found) return <div className="p-6 text-dim">Page not found.</div>
   return (
-    <div className="flex h-screen w-screen">
-      <Sidebar activeId={workspaceId} open={sidebar} />
-      <main className="flex min-w-0 flex-1 flex-col">
-        <Outlet />
-      </main>
-      <Overlays />
-      <Toaster />
-    </div>
+    <TerminalUI transport={transport} workspaceId={workspaceId} navigate={navigate} workspaceHref={workspaceHref} />
   )
 }

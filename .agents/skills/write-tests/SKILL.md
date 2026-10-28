@@ -15,13 +15,13 @@ The goal is confidence with as few tests as possible. A test earns its place by 
 
 Test, in this order of value:
 
-1. **Pure logic with branches**: the reducer in `packages/shared/src/model.ts`, helpers in `apps/web/src/lib/` (`tabOrder.ts`, layout math in `commands.ts`), and host logic that doesn't need a live PTY.
+1. **Pure logic with branches**: the reducer in `packages/shared/src/model.ts`, helpers in `packages/terminal-ui/src/lib/` (`tabOrder.ts`, layout math in `commands.ts`), and host logic that doesn't need a live PTY.
 2. **Edge cases a user can hit**: closing the last tab, clamping, empty or corrupt input, unknown ids.
 3. **Contracts other code relies on**, such as "returns the same object when nothing changed" (React and the host depend on it to skip work).
 
 Don't test:
 
-- Presentational components in `packages/ui` or `apps/web/src/components`. Check UI changes in the running app instead (the `run` skill).
+- Presentational components in `packages/ui` or `packages/terminal-ui/src/components`. Check UI changes in the running app instead (the `run` skill).
 - Thin wrappers, re-exports, constants, or code that only forwards to a library.
 - Real shells or sockets (`apps/host/src/sessions.ts`, `index.ts`). If logic in there needs a test, extract it into a pure function first.
 - The same behavior twice through different entry points.

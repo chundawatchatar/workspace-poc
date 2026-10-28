@@ -42,7 +42,7 @@ export {
 
 /**
  * Every route the host serves. Use these on both sides instead of writing paths:
- * `createRouter(routes.git, …)` on the host, `callApi(routes.git.status, { cwd })` in the web app.
+ * `createRouter(routes.git, …)` on the host, `callApi(routes.git.status, { cwd })` in `@orch/terminal-ui`.
  */
 export const routes = {
   system: systemContract,

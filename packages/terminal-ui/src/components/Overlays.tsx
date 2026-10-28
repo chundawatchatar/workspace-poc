@@ -2,13 +2,13 @@ import { routes } from '@orch/shared'
 import { FolderBrowser, Modal } from '@orch/ui'
 import { FolderOpen } from '@orch/ui/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 import { apiKey, apiMutation, apiQuery } from '../lib/api'
 import { addWorkspace } from '../lib/commands'
 import { LEADER_LABEL, SHORTCUT_ROWS } from '../lib/shortcuts'
 import { setOverlay, useApp } from '../lib/store'
 import { formatUptime } from '../lib/uptime'
+import { useGoToWorkspace } from '../navigation'
 import { CommandPalette } from './CommandPalette'
 import { ThemePicker } from './ThemePicker'
 
@@ -68,7 +68,7 @@ function DaemonStatusLine() {
 
 function NewWorkspace() {
   const home = useApp((s) => s.info?.home) ?? '~'
-  const navigate = useNavigate()
+  const goToWorkspace = useGoToWorkspace()
   const [name, setName] = useState('')
   const [path, setPath] = useState('~')
   const [error, setError] = useState<string | null>(null)
@@ -130,7 +130,7 @@ function NewWorkspace() {
       const fallbackName = resolved === home ? 'home' : (resolved.split('/').filter(Boolean).pop() ?? 'workspace')
       const id = addWorkspace(name.trim() || fallbackName, resolved)
       setOverlay(null)
-      void navigate({ to: '/w/$workspaceId', params: { workspaceId: id } })
+      goToWorkspace(id)
     } catch {
       setError('Could not reach the host.')
     }

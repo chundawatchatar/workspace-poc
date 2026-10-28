@@ -1,6 +1,6 @@
 import { buildRequest, type Endpoint, type EndpointInput, type EndpointOutput } from '@orch/shared'
 import { queryOptions } from '@tanstack/react-query'
-import { HOST_HTTP } from './store'
+import { getTransport } from './store'
 
 /**
  * Calls a host endpoint from `routes` in `@orch/shared` and parses the response with its output schema,
@@ -14,7 +14,7 @@ export async function callApi<E extends Endpoint>(
 ): Promise<EndpointOutput<E>> {
   const { url, body } = buildRequest(endpoint, input as Record<string, unknown>)
   const headers = body === undefined ? undefined : { 'content-type': 'application/json' }
-  const response = await fetch(`${HOST_HTTP}${url}`, { method: endpoint.method, body, headers, signal })
+  const response = await getTransport().request(url, { method: endpoint.method, body, headers, signal })
   if (!response.ok) {
     const detail = await response.text().catch(() => '')
     throw new Error(`${endpoint.method} ${url} failed with ${response.status}${detail ? `: ${detail}` : ''}`)

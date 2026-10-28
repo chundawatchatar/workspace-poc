@@ -3,8 +3,8 @@ import type { ITheme, Terminal } from '@xterm/xterm'
 import { useEffect, useRef, useState } from 'react'
 
 interface Props {
-  /** The host's WebSocket address, such as `ws://127.0.0.1:4599`. */
-  hostUrl: string
+  /** Opens a socket to the host for a path built by `buildSocketUrl`, such as `/ws/term/t1?cols=80`. */
+  openSocket: (path: string) => WebSocket
   sessionId: string
   cwd: string
   /** True when this terminal is the visible tab of the focused pane. */
@@ -51,7 +51,7 @@ function themeColors(theme: ITheme | undefined): TermColors {
  * can show and then displays whatever size the host says is in force, which
  * differs only while another, focused view of the same session is a different size.
  */
-export function TerminalView({ hostUrl, sessionId, cwd, active, theme }: Props) {
+export function TerminalView({ openSocket, sessionId, cwd, active, theme }: Props) {
   const container = useRef<HTMLDivElement>(null)
   const terminal = useRef<Terminal | null>(null)
   const [ready, setReady] = useState(false)
@@ -165,7 +165,7 @@ export function TerminalView({ hostUrl, sessionId, cwd, active, theme }: Props) 
 
       const connect = () => {
         const url = buildSocketUrl(routes.sockets.terminal, { id: sessionId, cwd, cols: term.cols, rows: term.rows })
-        const ws = new WebSocket(`${hostUrl}${url}`)
+        const ws = openSocket(url)
         ws.binaryType = 'arraybuffer'
         socket = ws
         ws.onopen = () => sendColors.current?.()
@@ -254,7 +254,7 @@ export function TerminalView({ hostUrl, sessionId, cwd, active, theme }: Props) 
       disposed = true
       cleanup()
     }
-  }, [hostUrl, sessionId, cwd])
+  }, [openSocket, sessionId, cwd])
 
   useEffect(() => {
     if (ready && active) terminal.current?.focus()

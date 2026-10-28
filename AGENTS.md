@@ -4,7 +4,7 @@ Instructions for AI coding agents working in this repository. Shared by Claude C
 
 ## Commands
 
-- Bun workspaces monorepo (`apps/web`, `apps/host`, `packages/shared`, `packages/ui`). Use `bun`, never npm/yarn/pnpm. `bunfig.toml` hoists all dependencies into the root `node_modules`.
+- Bun workspaces monorepo (`apps/web`, `apps/host`, `apps/ptyd-bun`, `apps/server`, `packages/shared`, `packages/terminal`, `packages/ui`, `packages/terminal-ui`). Use `bun`, never npm/yarn/pnpm. `bunfig.toml` hoists all dependencies into the root `node_modules`.
 - `bun run dev` starts both apps: web on 127.0.0.1:3210 (strict port), host on 127.0.0.1:4599.
 - Verify changes with `bun run typecheck` (runs `tsc` in every workspace) and `bun test`.
 - Tests use Bun's built-in runner and live next to the source as `*.test.ts`. Keep them few and behavior-focused (see the `write-tests` skill). `bun run test:coverage` shows coverage.
@@ -20,7 +20,9 @@ Instructions for AI coding agents working in this repository. Shared by Claude C
 ## Architecture gotchas
 
 - `packages/shared` holds the layout model, its reducer and the wire protocol (`protocol.ts`). It is consumed as raw TS (`exports: ./src/index.ts`), so it has no build step. Protocol changes must be made on both the host and the web side.
-- `packages/ui` holds the shared, presentational UI (components, themes, `styles.css`), consumed as raw TS like `packages/shared`. It is reused by a closed-source app, so components take data and callbacks as props and never import from an app (store, commands, router). `apps/web/src/components` wraps them to connect its store.
+- `packages/ui` holds the shared, presentational UI (components, themes, `styles.css`), consumed as raw TS like `packages/shared`. It is reused by a closed-source app, so components take data and callbacks as props and never import from an app (store, commands, router). `packages/terminal-ui` wraps them to connect its store.
+- `packages/terminal-ui` holds the page inside a machine (sidebar, layout, terminals, palette, shortcuts, overlays, toasts and their store), consumed as raw TS. Its root `<TerminalUI>` takes a `HostTransport` (every request and socket goes through it) and navigation callbacks as props. Like `packages/ui`, it never imports from an app (router, app store); differences between apps come in as props, never as app checks (`isClient`, `isLocal`, …).
+- `apps/web` is a thin shell: the document, the TanStack Router routes and a `<TerminalUI>` with a local transport. Page code goes in `packages/terminal-ui`.
 - Import icons from `@orch/ui/icons` (lucide-react, re-exported), never from `lucide-react` directly.
 - The host is organized into feature modules (`apps/host/src/modules/<feature>/`), one responsibility per file: `.routes.ts` (HTTP), `.ws.ts` (WebSocket), `.service.ts` (logic), `.repository.ts` (persistence). Every HTTP and WebSocket route is defined once in the `routes` registry in `packages/shared/src/contracts/` (full path + Zod schemas). The host serves it, and clients call it with `callApi`/`buildSocketUrl`, so never write `/api` or `/ws` paths by hand. Follow the `host-feature-module` skill.
 - The host owns the shells (Bun's built-in PTY, so macOS/Linux only) and the layout state. State persists in `apps/host/.data/state.json` (gitignored); delete it to reset the layout.
