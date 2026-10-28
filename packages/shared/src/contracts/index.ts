@@ -17,9 +17,11 @@ export {
 export { type GitInfo, gitStatusQuery, gitStatusResponse } from './git'
 export {
   ACCESS_KEY_HEADER,
+  CLOSE_MACHINE_OFFLINE,
   type ConnectTarget,
   formatConnectFragment,
   MACHINE_API_ROUTE,
+  MACHINE_WS_ROUTE,
   machinePathPrefix,
   parseConnectFragment,
   type SocketAuthMessage,
@@ -44,10 +46,13 @@ export {
   TUNNEL_PATH,
   TUNNEL_PROTOCOL_VERSION,
   type TunnelFrame,
+  WS_CHANNEL_WINDOW_BYTES,
   welcomeFrame,
+  wsAckFrame,
   wsCloseFrame,
   wsDataFrame,
   wsOpenFrame,
+  wsPayloadBytes,
 } from './tunnel'
 
 /**
