@@ -1,13 +1,13 @@
 import { resolve } from 'node:path'
 import { buildRequest, HOST_PORT, type RotateAccessResponse, rotateAccessResponse, routes } from '@orch/shared'
 import { AccessKeyRepository, accessKeysPath } from './modules/access/access.repository'
+import { AccessKeys, machineIdFromSecret, rotateAccess } from './modules/access/access.service'
 import {
-  AccessKeys,
-  clientUrlFromServerUrl,
-  machineIdFromSecret,
-  parseClientUrl,
-  rotateAccess,
-} from './modules/access/access.service'
+  RemoteAccessRepository,
+  type RemoteAccessSettings,
+  remoteAccessPath,
+} from './modules/remote-access/remote-access.repository'
+import { linkClientUrl } from './modules/remote-access/remote-access.service'
 import { loadOrCreateMachineSecret, machineSecretFile } from './modules/tunnel/tunnel.repository'
 
 // `bun run host:rotate-key`: replaces the access key. A running host rotates it
@@ -29,18 +29,27 @@ async function rotateThroughHost(): Promise<RotateAccessResponse | null> {
   } catch {
     return null
   }
-  // 409: the host runs without `SERVER_URL`, so the file is rotated for its next start.
+  // 409: the host knows no server address, so the file is rotated for its next start.
   if (response.status === 409) return null
   if (!response.ok) throw new Error(`the host refused to rotate the key (${response.status})`)
   return rotateAccessResponse.parse(await response.json())
 }
 
-/** Rotates `access-keys.json` directly, for a host that is not running. */
+/**
+ * Rotates `access-keys.json` directly, for a host that is not running. The link
+ * is built like the host builds it: `CLIENT_URL` and `SERVER_URL` first, then
+ * the saved Remote access setting.
+ */
 function rotateFile(): RotateAccessResponse {
   const secret = loadOrCreateMachineSecret(machineSecretFile(hostRoot))
   const keys = new AccessKeys(new AccessKeyRepository(accessKeysPath(hostRoot)))
-  const fromEnv = process.env.CLIENT_URL ? parseClientUrl(process.env.CLIENT_URL) : null
-  const clientUrl = fromEnv ?? (process.env.SERVER_URL ? clientUrlFromServerUrl(process.env.SERVER_URL) : null)
+  let saved: RemoteAccessSettings | null = null
+  try {
+    saved = new RemoteAccessRepository(remoteAccessPath(hostRoot)).load()
+  } catch (error) {
+    console.error(`ignoring the saved setting: ${error instanceof Error ? error.message : error}`)
+  }
+  const clientUrl = linkClientUrl({ SERVER_URL: process.env.SERVER_URL, CLIENT_URL: process.env.CLIENT_URL }, saved)
   return rotateAccess({ keys, machineId: machineIdFromSecret(secret), clientUrl })
 }
 
@@ -50,7 +59,7 @@ try {
   console.log(
     throughHost
       ? 'Access key rotated. Sessions that used the old key were closed.'
-      : 'Access key rotated. The host was not serving remote access; it uses this key from its next start with SERVER_URL.',
+      : 'Access key rotated. The host was not serving remote access; it uses this key once remote access is on.',
   )
   console.log(
     result.link ? `Connect link: ${result.link}` : `Machine id: ${result.machineId}\nAccess key: ${result.key}`,

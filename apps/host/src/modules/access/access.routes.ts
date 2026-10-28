@@ -7,8 +7,8 @@ import { type RemoteAccess, rotateAccess } from './access.service'
 
 /** What the access routes need from the host. */
 export interface AccessDeps {
-  /** Null when the host runs without `SERVER_URL`, so it has no keys to rotate. */
-  access?: RemoteAccess | null
+  /** What rotating the key needs right now. Null means no server address is known, so there is nothing to rotate. */
+  access?: () => RemoteAccess | null
 }
 
 /** Serves `routes.access`, to local callers only: a request that came through the tunnel gets 403. */
@@ -22,9 +22,13 @@ export function createAccessRoutes({ access }: AccessDeps) {
       '/',
       createRouter(routes.access, {
         rotate: async () => {
-          if (!access)
-            throw new HTTPException(409, { message: 'remote access is off: the host runs without SERVER_URL' })
-          return rotateAccess(access)
+          const current = access?.()
+          if (!current) {
+            throw new HTTPException(409, {
+              message: 'remote access is off: no server address is set, in the Remote access setting or SERVER_URL',
+            })
+          }
+          return rotateAccess(current)
         },
       }),
     )
