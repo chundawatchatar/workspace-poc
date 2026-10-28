@@ -1,6 +1,7 @@
 import { buildSocketUrl, routes, type TermClientMsg, type TermColors, type TermServerMsg } from '@orch/shared'
 import type { ITheme, Terminal } from '@xterm/xterm'
 import { useEffect, useRef, useState } from 'react'
+import { createReattacher, type Reattacher } from './lib/reconnect'
 
 interface Props {
   /** Opens a socket to the host for a path built by `buildSocketUrl`, such as `/ws/term/t1?cols=80`. */
@@ -10,6 +11,11 @@ interface Props {
   /** True when this terminal is the visible tab of the focused pane. */
   active: boolean
   theme?: ITheme
+  /**
+   * True while the page is connected to the host. While false the view opens no socket and keeps its last screen;
+   * turning true reattaches at once. Defaults to true.
+   */
+  online?: boolean
 }
 
 const ANSI = [
@@ -51,7 +57,7 @@ function themeColors(theme: ITheme | undefined): TermColors {
  * can show and then displays whatever size the host says is in force, which
  * differs only while another, focused view of the same session is a different size.
  */
-export function TerminalView({ openSocket, sessionId, cwd, active, theme }: Props) {
+export function TerminalView({ openSocket, sessionId, cwd, active, theme, online = true }: Props) {
   const container = useRef<HTMLDivElement>(null)
   const terminal = useRef<Terminal | null>(null)
   const [ready, setReady] = useState(false)
@@ -60,6 +66,10 @@ export function TerminalView({ openSocket, sessionId, cwd, active, theme }: Prop
   initialTheme.current = theme
   // Tells the host the current theme's colours; set while a connection exists.
   const sendColors = useRef<(() => void) | null>(null)
+  // Read when the terminal is created; later changes reach the reattacher through an effect.
+  const initialOnline = useRef(online)
+  initialOnline.current = online
+  const reattacher = useRef<Reattacher | null>(null)
 
   useEffect(() => {
     const element = container.current
@@ -87,7 +97,6 @@ export function TerminalView({ openSocket, sessionId, cwd, active, theme }: Prop
       fit.fit()
 
       let socket: WebSocket | null = null
-      let retry: ReturnType<typeof setTimeout> | undefined
       let serverQueries = false
       let pendingBytes = 0
       let writes = Promise.resolve()
@@ -190,10 +199,12 @@ export function TerminalView({ openSocket, sessionId, cwd, active, theme }: Prop
         }
         ws.onclose = () => {
           if (socket === ws) socket = null
-          if (!disposed) retry = setTimeout(connect, 1000)
+          reattach.closed(ws)
         }
+        return ws
       }
-      connect()
+      const reattach = createReattacher({ open: connect, online: initialOnline.current })
+      reattacher.current = reattach
 
       const onData = term.onData((data) => send({ type: 'input', data }))
 
@@ -239,12 +250,12 @@ export function TerminalView({ openSocket, sessionId, cwd, active, theme }: Prop
       cleanup = () => {
         observer.disconnect()
         clearTimeout(timer)
-        clearTimeout(retry)
+        reattach.dispose()
+        reattacher.current = null
         term.textarea?.removeEventListener('focus', onFocus)
         onData.dispose()
         for (const handler of queryHandlers) handler.dispose()
         sendColors.current = null
-        socket?.close()
         term.dispose()
         terminal.current = null
       }
@@ -255,6 +266,10 @@ export function TerminalView({ openSocket, sessionId, cwd, active, theme }: Prop
       cleanup()
     }
   }, [openSocket, sessionId, cwd])
+
+  useEffect(() => {
+    if (ready) reattacher.current?.setOnline(online)
+  }, [ready, online])
 
   useEffect(() => {
     if (ready && active) terminal.current?.focus()
