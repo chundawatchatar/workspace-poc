@@ -25,7 +25,9 @@ function serverUrl(): string {
   return import.meta.env.VITE_SERVER_URL || location.origin
 }
 
-const linkClass = 'text-accent hover:underline'
+/** A visible focus ring for keyboard users, in the theme's accent colour. */
+const focusClass = 'rounded outline-none focus-visible:ring-2 focus-visible:ring-accent/60'
+const linkClass = `text-accent hover:underline ${focusClass}`
 
 const rootRoute = createRootRoute({
   component: Outlet,
@@ -95,12 +97,18 @@ function MachineList() {
               <span className="min-w-0 flex-1 truncate" title={machine.id}>
                 {machine.name}
               </span>
-              <Link to="/m/$machineId" params={{ machineId: machine.id }} className={`text-xs ${linkClass}`}>
+              <Link
+                to="/m/$machineId"
+                params={{ machineId: machine.id }}
+                aria-label={`Open ${machine.name}`}
+                className={`text-xs ${linkClass}`}
+              >
                 Open
               </Link>
               <button
                 type="button"
-                className="rounded px-1.5 py-0.5 text-xs text-dim hover:bg-raised hover:text-ink"
+                aria-label={`Forget ${machine.name}`}
+                className={`px-1.5 py-0.5 text-xs text-dim hover:bg-raised hover:text-ink active:bg-line ${focusClass}`}
                 onClick={() => forgetMachine(machine.id)}
               >
                 Forget
@@ -166,7 +174,7 @@ function MachineTerminalUI({ machine }: { machine: SavedMachine }) {
     () => (
       <Link
         to="/"
-        className="flex h-9 shrink-0 items-center gap-1.5 border-b border-line px-3 text-xs text-dim hover:text-ink"
+        className="flex h-9 shrink-0 items-center gap-1.5 border-b border-line px-3 text-xs text-dim outline-none hover:text-ink focus-visible:bg-raised focus-visible:text-ink"
       >
         <ArrowLeft size={13} />
         All machines
