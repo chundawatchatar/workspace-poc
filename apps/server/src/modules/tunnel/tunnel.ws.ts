@@ -1,15 +1,10 @@
 import { upgradeWebSocket } from '@hono/bun'
-import {
-  decodeFrame,
-  encodeFrame,
-  type MachineFrame,
-  machineFrame,
-  TUNNEL_PATH,
-  TUNNEL_PROTOCOL_VERSION,
-} from '@orch/shared'
+import { decodeFrame, type MachineFrame, machineFrame, TUNNEL_PATH, TUNNEL_PROTOCOL_VERSION } from '@orch/shared'
 import { Hono } from 'hono'
 import type { WSContext } from 'hono/ws'
 import { z } from 'zod'
+import { bunSocket, type ServerSocketEvents } from '../../lib/websocket'
+import { FrameScheduler } from './tunnel.scheduler'
 import { type MachineConnection, type MachineRegistry, machineIdFromProof } from './tunnel.service'
 
 /** Close code for a `hello` with another protocol version. The machine should not retry until it is updated. */
@@ -30,7 +25,7 @@ export interface TunnelSocketDeps {
   pingIntervalMs?: number
   /** How long a machine may stay silent before it is dropped. Defaults to 45 s. */
   heartbeatTimeoutMs?: number
-  /** Receives the `http.response`, `http.body` and `http.end` frames of a welcomed machine. */
+  /** Receives the `http.*` and `ws.*` frames of a welcomed machine. */
   onFrame?(conn: MachineConnection, frame: MachineFrame): void
   /** Called once when a welcomed machine's tunnel closes, is dropped or is replaced. */
   onClose?(conn: MachineConnection): void
@@ -59,11 +54,13 @@ export function createTunnelSocket({
       let helloTimer: Timer | undefined
       let pingTimer: Timer | undefined
       let heartbeatTimer: Timer | undefined
+      let scheduler: FrameScheduler | undefined
 
       // Stops the timers and releases the tunnel at once, so a replaced or failed tunnel goes quiet,
       // and its pending requests fail, before its close event arrives.
       const shutdown = (ws: WSContext, code: number, reason: string) => {
         stopTimers()
+        scheduler?.clear()
         release()
         if (closed) return
         closed = true
@@ -83,9 +80,16 @@ export function createTunnelSocket({
       }
 
       const welcome = (ws: WSContext, proof: string) => {
+        const lanes = new FrameScheduler({
+          write: (data) => ws.send(data),
+          bufferedAmount: () => bunSocket(ws).getBufferedAmount(),
+        })
+        scheduler = lanes
         const live: MachineConnection = {
           machineId: machineIdFromProof(proof),
-          send: (frame) => ws.send(encodeFrame(frame)),
+          send: (frame) => {
+            if (!closed) lanes.send(frame)
+          },
           close: (code, reason) => shutdown(ws, code, reason),
         }
         conn = live
@@ -110,7 +114,7 @@ export function createTunnelSocket({
         }
       }
 
-      return {
+      const events: ServerSocketEvents = {
         onOpen(_event, ws) {
           helloTimer = setTimeout(() => shutdown(ws, CLOSE_POLICY, 'hello timeout'), helloTimeoutMs)
         },
@@ -125,16 +129,19 @@ export function createTunnelSocket({
           heartbeatTimer?.refresh()
           if (frame.type === 'hello') shutdown(ws, CLOSE_POLICY, 'unexpected hello')
           else if (frame.type === 'ping') conn.send({ type: 'pong', nonce: frame.nonce })
-          else if (frame.type === 'http.response' || frame.type === 'http.body' || frame.type === 'http.end') {
-            onFrame?.(conn, frame)
-          }
+          else if (frame.type !== 'pong') onFrame?.(conn, frame)
+        },
+        onDrain() {
+          if (!closed) scheduler?.flush()
         },
         onClose() {
           closed = true
           stopTimers()
+          scheduler?.clear()
           release()
         },
       }
+      return events
     }),
   )
 }
