@@ -109,6 +109,7 @@ function start(options: Partial<TunnelClientOptions> = {}) {
   const client = new TunnelClient({
     url,
     secret,
+    authorize: () => ({ keyId: 'k1', name: 'default' }),
     handle: async () => new Response('ok'),
     openSocket: () => ({ code: 1008, reason: 'no sockets here' }),
     timings,
@@ -164,7 +165,7 @@ describe('backoffDelay', () => {
 
 describe('TunnelClient', () => {
   test('says hello once, logs the machine id, and keeps both heartbeats', async () => {
-    start()
+    start({ expectedMachineId: 'machine-expected' })
     await until(() => conns[0]?.frames.filter((f) => f.type === 'ping').length >= 2)
     const [conn] = conns
     if (!conn) throw new Error('no connection')
@@ -177,6 +178,10 @@ describe('TunnelClient', () => {
     expect(new Set(nonces).size).toBe(nonces.length)
     expect(conn.frames.find((f) => f.type === 'pong')).toEqual({ type: 'pong', nonce: 77 })
     expect(logs).toContain('tunnel connected as machine-0')
+    // The id differs from the one the secret implies; the warning names neither.
+    const warnings = logs.filter((line) => line.startsWith('warning:'))
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).not.toContain('machine-')
   })
 
   test('replaces a silent server with a new connection, but keeps a live one', async () => {
@@ -186,7 +191,8 @@ describe('TunnelClient', () => {
 
     mode = 'silent'
     conns[0]?.ws.close(1000)
-    await until(() => conns.length >= 3)
+    // The third socket can open before its hello arrives, so wait for the frame itself.
+    await until(() => (conns[2]?.frames.length ?? 0) > 0)
     expect(conns[1]?.closed?.code).toBe(1000)
     expect(conns[2]?.frames[0]).toMatchObject({ type: 'hello' })
   })
@@ -194,7 +200,7 @@ describe('TunnelClient', () => {
   test('gives up on a server that never welcomes and dials again', async () => {
     mode = 'mute'
     start()
-    await until(() => conns.length >= 2)
+    await until(() => (conns[1]?.frames.length ?? 0) > 0 && conns[0]?.closed !== null)
     expect(conns[0]?.closed?.code).toBe(1000)
     expect(conns[1]?.frames).toEqual([{ type: 'hello', version: TUNNEL_PROTOCOL_VERSION, proof: secret }])
   })
@@ -258,6 +264,7 @@ describe('TunnelClient', () => {
     first.ws.send('not a frame')
     send(first, { type: 'ws.data', channel: 1, data: 'x' })
     send(first, { type: 'ws.open', channel: 3, path: '/ws/events', headers: [] })
+    send(first, { type: 'ws.data', channel: 3, data: JSON.stringify({ type: 'auth', key: 'k' }) })
     send(first, { type: 'http.request', id: 1, method: 'GET', path: '/api/slow', headers: [] })
     await until(() => first.frames.some((f) => f.type === 'http.body'))
     first.ws.close(1000)

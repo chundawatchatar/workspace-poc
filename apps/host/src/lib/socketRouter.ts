@@ -1,5 +1,6 @@
 import type { Socket } from '@orch/shared'
 import { HOST_ORIGIN, localOrigin } from './localOrigin'
+import type { Principal } from './principal'
 import type { SocketConn, SocketHandler, SocketSession } from './socket'
 
 /** Why a socket was not opened, as the close code and reason to answer with. */
@@ -22,8 +23,17 @@ export function socketEntry<S extends Socket>(socket: S, handler: SocketHandler<
 
 /** Opens sockets by path, for connections that do not come through Hono. */
 export interface SocketRouter {
-  /** Opens the socket at `path` (with its query string) on `conn`, or says why not. */
-  open(path: string, headers: [string, string][], conn: SocketConn): SocketSession | SocketRefusal
+  /**
+   * Opens the socket at `path` (with its query string) on `conn`, or says why
+   * not. With a `principal`, the tunnel has authorized the channel by its key,
+   * so the origin check is skipped.
+   */
+  open(
+    path: string,
+    headers: [string, string][],
+    conn: SocketConn,
+    principal?: Principal | null,
+  ): SocketSession | SocketRefusal
 }
 
 /** True when `open` refused the socket. */
@@ -39,12 +49,12 @@ const CLOSE_POLICY = 1008
  * URL's pathname must match one socket's path segment for segment, `:param`
  * segments are percent-decoded once, the query is read as `c.req.query()`
  * reads it, the input must pass the socket's schema, and an `origin` header
- * must pass `localOrigin`.
+ * must pass `localOrigin` unless the channel was authorized by its key.
  */
 export function createSocketRouter(entries: SocketEntry[]): SocketRouter {
   const routes = entries.map((entry) => ({ ...entry, segments: entry.socket.path.split('/') }))
   return {
-    open(path, headers, conn) {
+    open(path, headers, conn, principal) {
       let url: URL
       try {
         // Joined as strings, so the path is never resolved against the origin as a relative URL.
@@ -65,7 +75,7 @@ export function createSocketRouter(entries: SocketEntry[]): SocketRouter {
       if (!matched) return { code: CLOSE_POLICY, reason: 'not found' }
 
       const origin = headers.find(([name]) => name.toLowerCase() === 'origin')?.[1]
-      if (!localOrigin(origin)) return { code: CLOSE_POLICY, reason: 'forbidden' }
+      if (!principal && !localOrigin(origin)) return { code: CLOSE_POLICY, reason: 'forbidden' }
 
       const input = matched.entry.socket.input.safeParse({ ...readQuery(url), ...matched.params })
       if (!input.success) return { code: CLOSE_POLICY, reason: 'bad input' }

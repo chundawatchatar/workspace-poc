@@ -95,9 +95,21 @@ export const pingFrame = z.object({ type: z.literal('ping'), nonce: z.number().i
 /** Answers a `ping`, echoing its `nonce`. */
 export const pongFrame = z.object({ type: z.literal('pong'), nonce: z.number().int() })
 
+/**
+ * Tells the server the machine refused a request (`id`) or a channel
+ * (`channel`) for a missing or wrong access key. It carries exactly one of
+ * the two, and never the key, so the server can rate-limit without reading
+ * traffic. It is sent before the 401 or the `ws.close`, while the server still
+ * knows which browser it was.
+ */
+export const authFailedFrame = z
+  .strictObject({ type: z.literal('auth.failed'), id: id.optional(), channel: id.optional() })
+  .refine((frame) => (frame.id === undefined) !== (frame.channel === undefined), 'needs exactly one of id and channel')
+
 /** Frames the machine sends to the server. */
 export const machineFrame = z.discriminatedUnion('type', [
   helloFrame,
+  authFailedFrame,
   httpResponseFrame,
   httpBodyFrame,
   httpEndFrame,

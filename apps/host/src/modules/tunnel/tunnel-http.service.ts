@@ -1,11 +1,40 @@
-import { API_PREFIX, type httpRequestFrame, type MachineFrame } from '@orch/shared'
+import { ACCESS_KEY_HEADER, API_PREFIX, type httpRequestFrame, type MachineFrame } from '@orch/shared'
 import type { z } from 'zod'
 import { HOST_ORIGIN } from '../../lib/localOrigin'
+import type { Principal } from '../../lib/principal'
 
 type HttpRequestFrame = z.infer<typeof httpRequestFrame>
 
-/** Answers one tunneled request. In the host this is `app.fetch`. */
-export type TunnelHandler = (request: Request) => Promise<Response>
+/**
+ * Answers one tunneled request, as the key that authorized it. The principal
+ * is null only for a CORS preflight, which carries no key. In the host this is
+ * `app.fetch`.
+ */
+export type TunnelHandler = (request: Request, principal: Principal | null) => Promise<Response>
+
+/** Decides whether an access key may in. In the host this is `AccessKeys.authorize`. */
+export type Authorize = (key: string | null) => Principal | null
+
+/**
+ * The access key of a request: the value of its one `ACCESS_KEY_HEADER`, or
+ * null when there is none or more than one. Never read from the query string.
+ */
+export function accessKeyOf(headers: [string, string][]): string | null {
+  const values = headers.filter(([name]) => name.toLowerCase() === ACCESS_KEY_HEADER)
+  return values.length === 1 ? (values[0]?.[1] ?? null) : null
+}
+
+/**
+ * True for a CORS preflight. Browsers send it without custom headers, so it
+ * cannot carry the key; it goes on without one and only reaches the CORS
+ * middleware, which answers every `OPTIONS` before any route runs.
+ */
+function isPreflight(frame: HttpRequestFrame): boolean {
+  return (
+    frame.method.toUpperCase() === 'OPTIONS' &&
+    frame.headers.some(([name]) => name.toLowerCase() === 'access-control-request-method')
+  )
+}
 
 /** The largest `http.body` payload, so every encoded frame stays far below `MAX_TUNNEL_FRAME_BYTES`. */
 export const MAX_BODY_CHUNK_BYTES = 64 * 1024
@@ -35,10 +64,11 @@ export function tunneledRequest(frame: HttpRequestFrame, signal?: AbortSignal): 
 
 /**
  * Serves the `http.request` frames of one tunnel connection through `handle`,
- * streaming each response back as `http.response`, `http.body` and `http.end`.
+ * once `authorize` has accepted the request's access key, streaming each response back as `http.response`, `http.body` and `http.end`.
  * Each body chunk waits for `room`, so a large response is read only as fast
  * as the tunnel takes it. After `close()` it writes nothing more, so a dropped
- * connection's requests never reach the next one.
+ * connection's requests never reach the next one. A request without a valid
+ * key gets `auth.failed`, then a 401, and never reaches `handle`.
  */
 export class TunnelHttp {
   private readonly inFlight = new Map<number, AbortController>()
@@ -46,6 +76,7 @@ export class TunnelHttp {
 
   constructor(
     private readonly handle: TunnelHandler,
+    private readonly authorize: Authorize,
     private readonly send: (frame: MachineFrame) => void,
     private readonly room: () => Promise<void> = () => Promise.resolve(),
   ) {}
@@ -77,11 +108,22 @@ export class TunnelHttp {
       send({ type: 'http.end', id })
     }
 
-    const request = tunneledRequest(frame, signal)
+    let principal: Principal | null = null
+    if (!isPreflight(frame)) {
+      principal = this.authorize(accessKeyOf(frame.headers))
+      if (!principal) {
+        // First, so the server still knows the request's browser when it reads it.
+        send({ type: 'auth.failed', id })
+        return fail(401)
+      }
+    }
+    // The key has done its job, so no handler ever sees it.
+    const headers = frame.headers.filter(([name]) => name.toLowerCase() !== ACCESS_KEY_HEADER)
+    const request = tunneledRequest({ ...frame, headers }, signal)
     if (!request) return fail(400)
     let response: Response
     try {
-      response = await this.handle(request)
+      response = await this.handle(request, principal)
     } catch {
       return fail(500)
     }

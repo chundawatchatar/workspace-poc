@@ -1,9 +1,11 @@
+import { accessContract } from './access'
 import { eventsSocket } from './events'
 import { fsContract } from './fs'
 import { gitContract } from './git'
 import { systemContract } from './system'
 import { terminalSocket } from './terminals'
 
+export { type RotateAccessResponse, rotateAccessResponse } from './access'
 export * from './contract'
 export {
   type DirListing,
@@ -17,6 +19,7 @@ export {
 export { type GitInfo, gitStatusQuery, gitStatusResponse } from './git'
 export {
   ACCESS_KEY_HEADER,
+  CLOSE_ACCESS_DENIED,
   CLOSE_MACHINE_OFFLINE,
   type ConnectTarget,
   formatConnectFragment,
@@ -29,6 +32,7 @@ export {
 } from './remote'
 export { type DaemonReport, daemonResponse, healthResponse } from './system'
 export {
+  authFailedFrame,
   CLOSE_HEARTBEAT_TIMEOUT,
   CLOSE_REPLACED,
   CLOSE_UNSUPPORTED_VERSION,
@@ -66,6 +70,7 @@ export const routes = {
   system: systemContract,
   fs: fsContract,
   git: gitContract,
+  access: accessContract,
   sockets: {
     events: eventsSocket,
     terminal: terminalSocket,

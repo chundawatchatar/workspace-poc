@@ -1,16 +1,32 @@
 import {
+  CLOSE_ACCESS_DENIED,
   encodeFrame,
   MAX_TUNNEL_FRAME_BYTES,
   type MachineFrame,
+  parseMessage,
   type ServerFrame,
+  socketAuthMessage,
   WS_CHANNEL_WINDOW_BYTES,
   wsPayloadBytes,
 } from '@orch/shared'
+import type { Principal } from '../../lib/principal'
 import type { SocketConn, SocketData, SocketSession } from '../../lib/socket'
 import type { SocketRefusal } from '../../lib/socketRouter'
+import type { Authorize } from './tunnel-http.service'
 
-/** Opens the socket a `ws.open` asks for, or says why not. In the host this is the app's `SocketRouter`. */
-export type OpenSocket = (path: string, headers: [string, string][], conn: SocketConn) => SocketSession | SocketRefusal
+/**
+ * Opens the socket a `ws.open` asks for, as the key that authorized it, or
+ * says why not. In the host this is the app's `SocketRouter`.
+ */
+export type OpenSocket = (
+  path: string,
+  headers: [string, string][],
+  conn: SocketConn,
+  principal: Principal,
+) => SocketSession | SocketRefusal
+
+/** How long a channel has to send its auth message before it is closed. */
+export const AUTH_TIMEOUT_MS = 10_000
 
 /** The most payload bytes a channel may queue while it waits for window. Past it, the channel closes with 1011. */
 export const CHANNEL_QUEUE_CAP_BYTES = 4 * 1024 * 1024
@@ -35,6 +51,12 @@ type ChannelFrame = Extract<ServerFrame, { type: 'ws.open' | 'ws.data' | 'ws.clo
 /** One open channel. Byte counts are `ws.data` payload bytes. */
 interface Channel {
   id: number
+  path: string
+  headers: [string, string][]
+  /** Null until the channel's auth message has been accepted. */
+  principal: Principal | null
+  /** Runs out when no auth message arrives in time. Cleared once one does. */
+  authTimer: Timer | undefined
   /** Null until the handler has returned it. */
   session: SocketSession | null
   open: boolean
@@ -53,6 +75,10 @@ interface Channel {
  * `WS_CHANNEL_WINDOW_BYTES` window: messages past it wait in the channel's
  * queue, and delivered messages are acked once per tick. After `close()` it
  * writes nothing more.
+ *
+ * No handler runs before the channel's first message, which must be a
+ * `socketAuthMessage` whose key `authorize` accepts. Anything else, or nothing
+ * within the auth timeout, gets `auth.failed` and a `CLOSE_ACCESS_DENIED` close.
  */
 export class TunnelChannels {
   private readonly channels = new Map<number, Channel>()
@@ -60,11 +86,18 @@ export class TunnelChannels {
   private ackScheduled = false
   private closed = false
 
+  private readonly queueCapBytes: number
+  private readonly authTimeoutMs: number
+
   constructor(
     private readonly openSocket: OpenSocket,
+    private readonly authorize: Authorize,
     private readonly send: (frame: MachineFrame) => void,
-    private readonly queueCapBytes = CHANNEL_QUEUE_CAP_BYTES,
-  ) {}
+    options: { queueCapBytes?: number; authTimeoutMs?: number } = {},
+  ) {
+    this.queueCapBytes = options.queueCapBytes ?? CHANNEL_QUEUE_CAP_BYTES
+    this.authTimeoutMs = options.authTimeoutMs ?? AUTH_TIMEOUT_MS
+  }
 
   /** Takes a `ws.*` frame from the server. Frames for unknown or closed channels are ignored. */
   receive(frame: ChannelFrame): void {
@@ -89,6 +122,16 @@ export class TunnelChannels {
     for (const channel of channels) this.end(channel)
   }
 
+  /** Closes every channel authorized by one of `keyIds` with `CLOSE_ACCESS_DENIED`, for a rotated key. */
+  closeChannels(keyIds: Iterable<string>): void {
+    const revoked = new Set(keyIds)
+    for (const channel of [...this.channels.values()]) {
+      if (channel.principal && revoked.has(channel.principal.keyId)) {
+        this.fail(channel, CLOSE_ACCESS_DENIED, 'key rotated')
+      }
+    }
+  }
+
   /** The number of open channels. */
   get size(): number {
     return this.channels.size
@@ -96,9 +139,46 @@ export class TunnelChannels {
 
   private open(id: number, path: string, headers: [string, string][]) {
     if (this.channels.has(id)) return
-    const channel: Channel = { id, session: null, open: true, unacked: 0, queue: [], queuedBytes: 0, owed: 0 }
-    // Registered first: a handler may send while it opens, as a terminal sends its snapshot.
+    const channel: Channel = {
+      id,
+      path,
+      headers,
+      principal: null,
+      authTimer: undefined,
+      session: null,
+      open: true,
+      unacked: 0,
+      queue: [],
+      queuedBytes: 0,
+      owed: 0,
+    }
     this.channels.set(id, channel)
+    channel.authTimer = setTimeout(() => this.deny(channel, 'auth timeout'), this.authTimeoutMs)
+  }
+
+  /** Reads a channel's first message as its auth message, then opens its socket or refuses it. */
+  private authenticate(channel: Channel, data: SocketData) {
+    clearTimeout(channel.authTimer)
+    channel.authTimer = undefined
+    const message = parseMessage(socketAuthMessage, data)
+    const principal = message ? this.authorize(message.key) : null
+    if (!principal) {
+      this.deny(channel, 'access denied')
+      return
+    }
+    channel.principal = principal
+    this.start(channel, principal)
+  }
+
+  /** Refuses a channel's key: `auth.failed` first, while the server still knows its browser, then the close. */
+  private deny(channel: Channel, reason: string) {
+    if (!channel.open || this.closed) return
+    this.send({ type: 'auth.failed', channel: channel.id })
+    this.fail(channel, CLOSE_ACCESS_DENIED, reason)
+  }
+
+  private start(channel: Channel, principal: Principal) {
+    const { id, path, headers } = channel
     const conn: SocketConn = {
       send: (data) => this.write(channel, data),
       buffered: () => (channel.open ? channel.unacked + channel.queuedBytes : 0),
@@ -106,7 +186,8 @@ export class TunnelChannels {
     }
     let result: SocketSession | SocketRefusal
     try {
-      result = this.openSocket(path, headers, conn)
+      // A handler may send while it opens, as a terminal sends its snapshot; the channel is registered already.
+      result = this.openSocket(path, headers, conn, principal)
     } catch (error) {
       console.error(`tunneled socket ${id} failed to open`, error)
       this.fail(channel, CLOSE_INTERNAL_ERROR, 'internal error')
@@ -124,7 +205,8 @@ export class TunnelChannels {
 
   private deliver(channel: Channel, data: SocketData) {
     try {
-      channel.session?.message(data)
+      if (channel.principal) channel.session?.message(data)
+      else this.authenticate(channel, data)
     } catch (error) {
       // A local socket's handler error ends at Bun's socket; here it must not reach the tunnel's own listener.
       console.error(`tunneled socket ${channel.id} failed on a message`, error)
@@ -212,6 +294,8 @@ export class TunnelChannels {
 
   private remove(channel: Channel) {
     channel.open = false
+    clearTimeout(channel.authTimer)
+    channel.authTimer = undefined
     channel.queue.length = 0
     channel.queuedBytes = 0
     channel.owed = 0

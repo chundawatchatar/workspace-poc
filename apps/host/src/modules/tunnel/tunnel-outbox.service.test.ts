@@ -19,15 +19,21 @@ function setup() {
     outbox.send(frame)
     mostQueued = Math.max(mostQueued, outbox.bulkBytes)
   }
+  const authorize = () => ({ keyId: 'k1', name: 'default' })
   const http = new TunnelHttp(
     async () => new Response(new Uint8Array(4 * 1024 * 1024).fill(1)),
+    authorize,
     send,
     () => outbox.room(),
   )
-  const channels = new TunnelChannels((_path, _headers, conn) => {
-    for (const line of ['$ ls', 'a b c']) conn.send(line)
-    return { message: () => {}, close: () => {} }
-  }, send)
+  const channels = new TunnelChannels(
+    (_path, _headers, conn) => {
+      for (const line of ['$ ls', 'a b c']) conn.send(line)
+      return { message: () => {}, close: () => {} }
+    },
+    authorize,
+    send,
+  )
   return { socket, outbox, http, channels, mostQueued: () => mostQueued }
 }
 
@@ -46,13 +52,15 @@ describe('TunnelOutbox', () => {
     await until(() => outbox.bulkBytes >= BULK_CAP_BYTES)
     await Bun.sleep(30)
     channels.receive({ type: 'ws.open', channel: 1, path: '/ws/term/t', headers: [] })
+    channels.receive({ type: 'ws.data', channel: 1, data: JSON.stringify({ type: 'auth', key: 'k' }) })
+    await Bun.sleep(1)
     expect(socket.written).toEqual([])
     expect(outbox.bulkBytes).toBeLessThan(BULK_CAP_BYTES + 2 * MAX_BODY_CHUNK_BYTES)
 
     socket.buffered = 0
     await until(() => socket.written.some((f) => f.type === 'http.end'))
     const types = socket.written.map((f) => f.type)
-    expect(types.slice(0, 3)).toEqual(['ws.data', 'ws.data', 'http.response'])
+    expect(types.slice(0, 4)).toEqual(['ws.data', 'ws.data', 'ws.ack', 'http.response'])
     const body = socket.written.reduce((sum, f) => sum + (f.type === 'http.body' ? f.data.byteLength : 0), 0)
     expect(body).toBe(4 * 1024 * 1024)
     expect(mostQueued()).toBeLessThan(BULK_CAP_BYTES + 2 * MAX_BODY_CHUNK_BYTES)
