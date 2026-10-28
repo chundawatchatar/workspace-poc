@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
-import { websocket } from '@hono/bun'
 import {
   decodeFrame,
   encodeFrame,
@@ -11,6 +10,8 @@ import {
 } from '@orch/shared'
 import type { Server } from 'bun'
 import { createApp } from '../../app'
+import { serverWebSocket } from '../../lib/websocket'
+import { ChannelBridge } from '../bridge/bridge.service'
 import { HttpForwarder } from '../forward/forward.service'
 import { MachineRegistry, machineIdFromProof } from './tunnel.service'
 import { CLOSE_HEARTBEAT_TIMEOUT, CLOSE_REPLACED, CLOSE_UNSUPPORTED_VERSION } from './tunnel.ws'
@@ -28,8 +29,13 @@ beforeEach(() => {
   server = Bun.serve({
     hostname: '127.0.0.1',
     port: 0,
-    fetch: createApp({ registry, forwarder: new HttpForwarder({ registry }), ...timings }).fetch,
-    websocket,
+    fetch: createApp({
+      registry,
+      forwarder: new HttpForwarder({ registry }),
+      bridge: new ChannelBridge({ registry }),
+      ...timings,
+    }).fetch,
+    websocket: serverWebSocket,
   })
   clients = []
 })

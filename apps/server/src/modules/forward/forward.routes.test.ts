@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
-import { websocket } from '@hono/bun'
 import {
   ACCESS_KEY_HEADER,
   decodeFrame,
@@ -14,6 +13,8 @@ import {
 } from '@orch/shared'
 import type { Server } from 'bun'
 import { createApp } from '../../app'
+import { serverWebSocket } from '../../lib/websocket'
+import { ChannelBridge } from '../bridge/bridge.service'
 import { MachineRegistry, machineIdFromProof } from '../tunnel/tunnel.service'
 import { HttpForwarder } from './forward.service'
 
@@ -30,8 +31,14 @@ let machines: Machine[]
 beforeEach(() => {
   registry = new MachineRegistry()
   forwarder = new HttpForwarder({ registry, requestTimeoutMs: 1000 })
-  const app = createApp({ registry, forwarder, pingIntervalMs: 30, heartbeatTimeoutMs: 120 })
-  server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: app.fetch, websocket })
+  const app = createApp({
+    registry,
+    forwarder,
+    bridge: new ChannelBridge({ registry }),
+    pingIntervalMs: 30,
+    heartbeatTimeoutMs: 120,
+  })
+  server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: app.fetch, websocket: serverWebSocket })
   machines = []
 })
 
