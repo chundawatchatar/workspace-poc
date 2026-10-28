@@ -29,6 +29,9 @@ export {
 } from './remote'
 export { type DaemonReport, daemonResponse, healthResponse } from './system'
 export {
+  CLOSE_HEARTBEAT_TIMEOUT,
+  CLOSE_REPLACED,
+  CLOSE_UNSUPPORTED_VERSION,
   decodeFrame,
   encodeFrame,
   helloFrame,

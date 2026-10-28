@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
 import {
+  CLOSE_HEARTBEAT_TIMEOUT,
+  CLOSE_REPLACED,
+  CLOSE_UNSUPPORTED_VERSION,
   decodeFrame,
   encodeFrame,
   type MachineFrame,
@@ -14,7 +17,6 @@ import { serverWebSocket } from '../../lib/websocket'
 import { ChannelBridge } from '../bridge/bridge.service'
 import { HttpForwarder } from '../forward/forward.service'
 import { MachineRegistry, machineIdFromProof } from './tunnel.service'
-import { CLOSE_HEARTBEAT_TIMEOUT, CLOSE_REPLACED, CLOSE_UNSUPPORTED_VERSION } from './tunnel.ws'
 
 const proofA = `${'A'.repeat(42)}a`
 const proofB = `${'B'.repeat(42)}b`

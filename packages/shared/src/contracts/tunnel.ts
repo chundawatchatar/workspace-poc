@@ -22,6 +22,13 @@ export const MAX_TUNNEL_FRAME_BYTES = 1024 * 1024
  */
 export const WS_CHANNEL_WINDOW_BYTES = 256 * 1024
 
+/** Close code for a `hello` with another protocol version. The machine should not retry until it is updated. */
+export const CLOSE_UNSUPPORTED_VERSION = 4000
+/** Close code for a tunnel that a newer connection from the same machine took over. */
+export const CLOSE_REPLACED = 4001
+/** Close code for a machine that sent nothing for the server's heartbeat timeout. */
+export const CLOSE_HEARTBEAT_TIMEOUT = 4002
+
 const id = z.number().int().positive()
 const bytes = z.instanceof(Uint8Array)
 /** Header `[name, value]` pairs in order, so repeated headers survive. */
