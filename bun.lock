@@ -10,6 +10,26 @@
         "typescript": "^6.0.2",
       },
     },
+    "apps/client": {
+      "name": "@orch/client",
+      "version": "0.0.0",
+      "dependencies": {
+        "@orch/shared": "workspace:*",
+        "@orch/terminal-ui": "workspace:*",
+        "@orch/ui": "workspace:*",
+        "@tailwindcss/vite": "^4.3.3",
+        "@tanstack/react-router": "^1.170.44",
+        "react": "^19.2.0",
+        "react-dom": "^19.2.0",
+        "tailwindcss": "^4.3.3",
+      },
+      "devDependencies": {
+        "@types/react": "^19.2.0",
+        "@types/react-dom": "^19.2.0",
+        "@vitejs/plugin-react": "^6.0.1",
+        "vite": "^8.0.0",
+      },
+    },
     "apps/host": {
       "name": "@orch/host",
       "version": "0.0.0",
@@ -188,6 +208,8 @@
     "@oozcitak/url": ["@oozcitak/url@3.0.0", "", { "dependencies": { "@oozcitak/infra": "^2.0.2", "@oozcitak/util": "^10.0.0" } }, "sha512-ZKfET8Ak1wsLAiLWNfFkZc/BraDccuTJKR6svTYc7sVjbR+Iu0vtXdiDMY4o6jaFl5TW2TlS7jbLl4VovtAJWQ=="],
 
     "@oozcitak/util": ["@oozcitak/util@10.0.0", "", {}, "sha512-hAX0pT/73190NLqBPPWSdBVGtbY6VOhWYK3qqHqtXQ1gK7kS2yz4+ivsN07hpJ6I3aeMtKP6J6npsEKOAzuTLA=="],
+
+    "@orch/client": ["@orch/client@workspace:apps/client"],
 
     "@orch/host": ["@orch/host@workspace:apps/host"],
 
