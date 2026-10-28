@@ -2,6 +2,8 @@ import {
   type Action,
   type AppState,
   buildSocketUrl,
+  CLOSE_ACCESS_DENIED,
+  CLOSE_MACHINE_OFFLINE,
   type ClientEvent,
   type HostInfo,
   listPanes,
@@ -26,8 +28,14 @@ import type { HostTransport } from '../transport'
 export type Overlay = 'help' | 'new-workspace' | 'palette' | 'themes' | null
 export type Theme = 'light' | 'dark'
 
+/**
+ * The page's connection to the host, read from the events socket. `connecting` lasts until the first `hello`;
+ * `offline` means the server is up but the machine is not; `denied` means the host rejected the access key.
+ */
+export type ConnectionStatus = 'connecting' | 'open' | 'reconnecting' | 'offline' | 'denied'
+
 export interface Snapshot {
-  status: 'connecting' | 'open' | 'closed'
+  status: ConnectionStatus
   /** The transport the store is connected through, set by `connect` and cleared only by its own cleanup. */
   transport: HostTransport | null
   /** The shared layout, owned by the host. */
@@ -109,6 +117,7 @@ function handle(event: ServerEvent) {
   switch (event.type) {
     case 'hello':
       set({
+        status: 'open',
         state: event.state,
         info: event.info,
         sessions: Object.fromEntries(event.sessions.map((s) => [s.id, s])),
@@ -128,41 +137,92 @@ function handle(event: ServerEvent) {
   }
 }
 
+/** The timer `connect` schedules reopens with. Tests pass a fake one. */
+export interface ConnectTimer {
+  set: (callback: () => void, ms: number) => unknown
+  clear: (handle: unknown) => void
+}
+
+const realTimer: ConnectTimer = {
+  set: (callback, ms) => setTimeout(callback, ms),
+  clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+}
+
+/** The wait before each reopen of the events socket, in milliseconds; later retries use the last one. */
+export const RETRY_DELAYS = [1000, 2000, 4000, 8000, 10_000]
+
+/** Opens the events socket again at once on the current connection; null while not connected. */
+let reopenNow: (() => void) | null = null
+
 /**
- * Keeps the events socket open through `via`, reconnecting a second after it drops.
- * Returns a cleanup that closes the socket and stops reconnecting.
+ * Keeps the events socket open through `via`. After a drop it reopens with a
+ * growing wait (`RETRY_DELAYS`), reset by each `hello`; after a rejected key it
+ * stops until `reconnect` is called. Returns a cleanup that closes the socket
+ * and stops reconnecting.
  */
-export function connect(via: HostTransport): () => void {
+export function connect(via: HostTransport, timer: ConnectTimer = realTimer): () => void {
   // A new connection may be to another host, so drop what the last one said.
-  set({ transport: via, state: null, sessions: {}, info: null })
+  set({ status: 'connecting', transport: via, state: null, sessions: {}, info: null })
   let stopped = false
-  let retry: ReturnType<typeof setTimeout> | undefined
+  let retry: unknown
+  let attempt = 0
   let own: WebSocket | null = null
 
   const open = () => {
-    set({ status: 'connecting' })
+    retry = undefined
     const ws = via.openSocket(buildSocketUrl(routes.sockets.events, {}))
     own = ws
     socket = ws
-    ws.onopen = () => !stopped && set({ status: 'open' })
-    ws.onmessage = (message) => !stopped && handle(JSON.parse(message.data) as ServerEvent)
-    ws.onclose = () => {
+    ws.onmessage = (message) => {
+      if (stopped || own !== ws) return
+      const event = JSON.parse(message.data) as ServerEvent
+      if (event.type === 'hello') attempt = 0
+      handle(event)
+    }
+    ws.onclose = (event) => {
       if (socket === ws) socket = null
-      if (stopped) return
-      set({ status: 'closed' })
-      retry = setTimeout(open, 1000)
+      // A socket replaced by `reconnect` closes late; only the current one decides the status.
+      if (stopped || own !== ws) return
+      own = null
+      if (event.code === CLOSE_ACCESS_DENIED) {
+        // The same key can't succeed, and each try counts against the server's bad-key limit.
+        set({ status: 'denied' })
+        return
+      }
+      set({ status: event.code === CLOSE_MACHINE_OFFLINE ? 'offline' : 'reconnecting' })
+      retry = timer.set(open, RETRY_DELAYS[Math.min(attempt, RETRY_DELAYS.length - 1)])
+      attempt++
     }
   }
+
+  const reopen = () => {
+    if (stopped) return
+    timer.clear(retry)
+    attempt = 0
+    const old = own
+    own = null
+    if (socket === old) socket = null
+    old?.close()
+    set({ status: 'connecting' })
+    open()
+  }
+  reopenNow = reopen
   open()
 
   // A cleanup that runs after a newer `connect` only closes its own socket and leaves the newer transport in place.
   return () => {
     stopped = true
-    clearTimeout(retry)
+    timer.clear(retry)
     own?.close()
     if (socket === own) socket = null
+    if (reopenNow === reopen) reopenNow = null
     if (snapshot.transport === via) set({ transport: null })
   }
+}
+
+/** Opens the events socket again at once, with the backoff reset, such as after a rejected key. */
+export function reconnect() {
+  reopenNow?.()
 }
 
 /** Sends the current layout to the host, which stores it and passes it to other windows. */

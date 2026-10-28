@@ -1,5 +1,6 @@
 export * from './FolderBrowser'
 export * from './Icon'
+export * from './lib/reconnect'
 export * from './lib/utils'
 export * from './Modal'
 export * from './TerminalInterrupted'

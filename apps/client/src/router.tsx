@@ -144,6 +144,14 @@ function MachinePage() {
 
 const offlineHint = 'The machine is offline, or not connected to the server. Check that its host is running.'
 
+const deniedHint = (
+  <>
+    The machine's key has changed. Run{' '}
+    <code className="rounded bg-raised px-1.5 py-0.5 font-mono text-ink">bun run host:rotate-key</code> on the machine
+    and open the new connect link it prints.
+  </>
+)
+
 function MachineTerminalUI({ machine }: { machine: SavedMachine }) {
   const { id, name, key } = machine
   const { workspaceId } = useParams({ strict: false })
@@ -192,6 +200,7 @@ function MachineTerminalUI({ machine }: { machine: SavedMachine }) {
       machine={info}
       header={header}
       offlineHint={offlineHint}
+      deniedHint={deniedHint}
       titleSuffix={name}
     >
       <Outlet />

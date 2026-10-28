@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { apiQuery } from '../lib/api'
 import { removeWorkspace, renameWorkspace } from '../lib/commands'
+import { connectionCopy } from '../lib/connection'
 import { shortPath } from '../lib/paths'
 import { LEADER_LABEL } from '../lib/shortcuts'
 import { SIDEBAR_WIDTH, setSidebarWidth, sidebarWidth } from '../lib/sidebarWidth'
@@ -69,12 +70,8 @@ export function Sidebar({ activeId, open }: { activeId: string | undefined; open
 
         <div className="flex h-9 shrink-0 items-center justify-between border-t border-line px-3 text-xs text-dim">
           <span className="flex items-center gap-1.5">
-            <span
-              className={`h-1.5 w-1.5 rounded-full ${
-                status === 'open' ? 'bg-good' : status === 'connecting' ? 'bg-warn' : 'bg-bad'
-              }`}
-            />
-            {status === 'open' ? 'Host connected' : status === 'connecting' ? 'Connecting…' : 'Host offline'}
+            <span className={`h-1.5 w-1.5 rounded-full ${connectionCopy(status).dot}`} />
+            {connectionCopy(status).label}
           </span>
           {leader ? (
             <span className="rounded bg-accent px-1.5 py-0.5 text-[11px] font-medium text-on-accent">
