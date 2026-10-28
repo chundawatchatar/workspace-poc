@@ -22,7 +22,8 @@ shells reopen in their last folder and agent terminals offer to resume the
 agent's conversation. See [terminal daemon](docs/terminal-daemon.md) for how it
 works.
 
-To reach this machine through the cloud server (`apps/server`), open
+To reach this machine through the cloud server (`apps/server`), follow the
+[remote access guide](docs/remote-access.md). In short: open
 "Remote access…" from the command palette in the local app. Enter the server
 address, `wss://<server>` or `ws://127.0.0.1:4600` (any loopback host) for a
 local server, and optionally the client address, then turn it on. The host
@@ -53,9 +54,8 @@ server's own origin and needs no CORS. Build the client with
 `apps/client/dist`, or `SERVER_STATIC_DIR`; without a build it only relays. It
 answers cross-origin calls only from the exact origins in
 `SERVER_ALLOWED_ORIGINS` (comma-separated); `bun run dev:client` sets it for the
-dev client. It
-rate-limits connections per IP and per machine, and blocks an IP for a while
-after too many rejected keys. Behind a proxy that sets `X-Forwarded-For`, set
+dev client. It rate-limits connections per IP and per machine, and blocks an
+IP for a while after too many rejected keys. Behind a proxy that sets `X-Forwarded-For`, set
 `SERVER_TRUST_PROXY=1` so the limits see the client's IP, not the proxy's.
 
 ## Layout
