@@ -1,5 +1,12 @@
 import { upgradeWebSocket } from '@hono/bun'
-import { decodeFrame, encodeFrame, machineFrame, TUNNEL_PATH, TUNNEL_PROTOCOL_VERSION } from '@orch/shared'
+import {
+  decodeFrame,
+  encodeFrame,
+  type MachineFrame,
+  machineFrame,
+  TUNNEL_PATH,
+  TUNNEL_PROTOCOL_VERSION,
+} from '@orch/shared'
 import { Hono } from 'hono'
 import type { WSContext } from 'hono/ws'
 import { z } from 'zod'
@@ -23,6 +30,10 @@ export interface TunnelSocketDeps {
   pingIntervalMs?: number
   /** How long a machine may stay silent before it is dropped. Defaults to 45 s. */
   heartbeatTimeoutMs?: number
+  /** Receives the `http.response`, `http.body` and `http.end` frames of a welcomed machine. */
+  onFrame?(conn: MachineConnection, frame: MachineFrame): void
+  /** Called once when a welcomed machine's tunnel closes, is dropped or is replaced. */
+  onClose?(conn: MachineConnection): void
 }
 
 // Just enough of a `hello` to read its version, so a machine on another protocol
@@ -35,20 +46,25 @@ export function createTunnelSocket({
   helloTimeoutMs = 10_000,
   pingIntervalMs = 15_000,
   heartbeatTimeoutMs = 45_000,
+  onFrame,
+  onClose,
 }: TunnelSocketDeps) {
   return new Hono().get(
     TUNNEL_PATH,
     upgradeWebSocket(() => {
       let conn: MachineConnection | null = null
       let closed = false
+      let released = false
       let nonce = 0
       let helloTimer: Timer | undefined
       let pingTimer: Timer | undefined
       let heartbeatTimer: Timer | undefined
 
-      // Stops the timers at once, so a replaced or failed tunnel goes quiet before its close event arrives.
+      // Stops the timers and releases the tunnel at once, so a replaced or failed tunnel goes quiet,
+      // and its pending requests fail, before its close event arrives.
       const shutdown = (ws: WSContext, code: number, reason: string) => {
         stopTimers()
+        release()
         if (closed) return
         closed = true
         ws.close(code, reason)
@@ -57,6 +73,13 @@ export function createTunnelSocket({
         clearTimeout(helloTimer)
         clearInterval(pingTimer)
         clearTimeout(heartbeatTimer)
+      }
+
+      const release = () => {
+        if (!conn || released) return
+        released = true
+        registry.remove(conn)
+        onClose?.(conn)
       }
 
       const welcome = (ws: WSContext, proof: string) => {
@@ -98,11 +121,14 @@ export function createTunnelSocket({
           heartbeatTimer?.refresh()
           if (frame.type === 'hello') shutdown(ws, CLOSE_POLICY, 'unexpected hello')
           else if (frame.type === 'ping') conn.send({ type: 'pong', nonce: frame.nonce })
+          else if (frame.type === 'http.response' || frame.type === 'http.body' || frame.type === 'http.end') {
+            onFrame?.(conn, frame)
+          }
         },
         onClose() {
           closed = true
           stopTimers()
-          if (conn) registry.remove(conn)
+          release()
         },
       }
     }),

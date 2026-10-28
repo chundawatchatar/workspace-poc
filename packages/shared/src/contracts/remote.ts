@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { API_PREFIX } from './contract'
 
 // How a browser reaches a machine through the cloud server. The server forwards
 // `/m/<machineId>/api/*` and `/m/<machineId>/ws/*` to the machine, and the
@@ -17,6 +18,9 @@ export type SocketAuthMessage = z.infer<typeof socketAuthMessage>
 export function machinePathPrefix(machineId: string): string {
   return `/m/${encodeURIComponent(machineId)}`
 }
+
+/** The server route pattern for a machine's HTTP endpoints, `/m/:machineId/api/*`, in Hono syntax. */
+export const MACHINE_API_ROUTE = `/m/:machineId${API_PREFIX}/*`
 
 /** What a connect link carries: the machine to open and the key to open it with. */
 export interface ConnectTarget {
