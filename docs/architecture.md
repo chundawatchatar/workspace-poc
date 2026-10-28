@@ -52,6 +52,7 @@ interface TerminalUIProps {
   machine?: { id: string; name: string }  // client only: which machine is open, named in the sidebar
   header?: ReactNode            // client only: back to the machine list, account menu
   offlineHint?: ReactNode       // what to do when the host is offline
+  deniedHint?: ReactNode        // what to do when the host rejects the access key
   titleSuffix?: string          // follows the workspace name in the document title
   children: ReactNode           // the main area, from the app's router outlet (home, workspace or not found)
 }
