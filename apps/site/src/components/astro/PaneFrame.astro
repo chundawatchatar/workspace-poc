@@ -12,12 +12,12 @@ interface Props {
 const { tabs, class: className = '', bodyClass = 'p-5', ring = false, zoom = false } = Astro.props
 ---
 
-<section class={`relative flex flex-col overflow-hidden rounded-lg border border-line bg-panel ${className}`}>
+<section data-tilt class={`relative flex flex-col overflow-hidden rounded-lg border border-line bg-panel ${className}`}>
   <div class="flex h-8 shrink-0 items-stretch border-b border-line bg-sidebar">
     {
       tabs.map((tab, i) => (
         <span
-          class={`flex max-w-56 min-w-0 items-center gap-1.5 border-r border-line px-3 font-mono text-[11px] ${
+          class={`flex max-w-56 min-w-0 items-center gap-1.5 border-r border-line px-3 text-xs ${
             i === 0 ? 'bg-panel text-ink' : 'text-faint'
           }`}
         >

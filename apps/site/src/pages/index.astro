@@ -20,6 +20,7 @@ import {
 import ArchitectureDiagram from '../components/astro/ArchitectureDiagram.astro'
 import Faq from '../components/astro/Faq.astro'
 import GithubMark from '../components/astro/GithubMark.astro'
+import HeroWaves from '../components/astro/HeroWaves.astro'
 import PaneFrame from '../components/astro/PaneFrame.astro'
 import Pricing from '../components/astro/Pricing.astro'
 import SectionHead from '../components/astro/SectionHead.astro'
@@ -101,7 +102,8 @@ const agents = ['claude', 'codex', 'opencode', 'cursor-agent', 'aider', 'gemini'
 
 <Shell tab="overview" path="~/orchestrator">
   <!-- Hero -->
-  <section id="top" class="canvas-grid relative overflow-hidden border-b border-line">
+  <!-- overflow-clip, not hidden: a hidden overflow is a scroll container, which would stall the window's scroll timeline. -->
+  <section id="top" class="canvas-grid relative overflow-clip border-b border-line">
     <div class="mx-auto max-w-6xl px-4 pt-14 pb-16 sm:px-8 sm:pt-20">
       <p class="mb-5 inline-flex items-center gap-2 rounded-full border border-line bg-panel px-3 py-1 text-xs text-dim">
         <span class="h-1.5 w-1.5 rounded-full bg-good"></span>
@@ -129,10 +131,25 @@ const agents = ['claude', 'codex', 'opencode', 'cursor-agent', 'aider', 'gemini'
         </div>
       </div>
 
-      <div class="mt-14">
-        <HeroDemo client:load />
-        <p class="mt-3 text-center text-xs text-faint">
-          A scripted session. The agent finishes while you watch the dev server: click its pane to clear the ring.
+      <div class="relative mt-14">
+        <!-- Behind the window: a slow aurora and signal waves streaming into it. -->
+        <div class="aurora pointer-events-none absolute -inset-x-16 -inset-y-10" aria-hidden="true"></div>
+        <HeroWaves />
+        <div class="rise relative">
+          <HeroDemo client:load />
+        </div>
+        <!-- A solid pill, so the caption stays readable over the aurora and the waves. -->
+        <p class="relative mt-4 flex justify-center">
+          <span class="inline-flex max-w-full items-center gap-2 rounded-full border border-line bg-panel/90 px-3 py-1.5 text-xs text-dim shadow-sm backdrop-blur">
+            <span class="h-2.5 w-2.5 shrink-0 rounded-full border-2 border-accent" aria-hidden="true"></span>
+            <span class="hidden sm:inline">
+              <span class="text-ink">The blue ring means claude finished while you watched the dev server.</span> Click it
+              to clear.
+            </span>
+            <span class="sm:hidden">
+              <span class="text-ink">Blue ring: claude is done.</span> Tap it to clear.
+            </span>
+          </span>
         </p>
       </div>
     </div>
@@ -146,7 +163,7 @@ const agents = ['claude', 'codex', 'opencode', 'cursor-agent', 'aider', 'gemini'
         title="Agents got fast. Keeping track of them didn't."
         lead="You run three, five, ten agents in parallel now. They live in tabs you forget, on sessions that die, on machines you can't reach. The work is fast; the babysitting isn't."
       />
-      <div class="grid gap-4 md:grid-cols-2">
+      <div class="grid gap-4 md:grid-cols-2" data-stagger>
         {
           problems.map((p) => (
             <PaneFrame tabs={['before', 'with orch']} bodyClass="p-0">
@@ -187,14 +204,14 @@ const agents = ['claude', 'codex', 'opencode', 'cursor-agent', 'aider', 'gemini'
         lead="A small host service owns the layout and talks to a terminal daemon that owns your shells. The browser is only a window onto them, which is why closing it changes nothing."
       />
       <ArchitectureDiagram />
-      <ol class="mt-10 grid gap-4 md:grid-cols-3">
+      <ol class="mt-10 grid gap-4 md:grid-cols-3" data-stagger>
         {
           [
             ['Run the host', 'Clone, bun install, bun run dev. It binds to 127.0.0.1 only.'],
             ['Open the workspace', `Visit ${SITE.localUrl}. Add a workspace for any folder.`],
             ['Split and start agents', 'Ctrl+B D splits right. Start claude, codex or a dev server in each pane.'],
           ].map(([title, text], i) => (
-            <li class="flex gap-4 rounded-lg border border-line bg-panel p-5">
+            <li data-tilt class="relative flex gap-4 rounded-lg border border-line bg-panel p-5">
               <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent font-mono text-sm font-semibold text-on-accent">
                 {i + 1}
               </span>
@@ -207,7 +224,7 @@ const agents = ['claude', 'codex', 'opencode', 'cursor-agent', 'aider', 'gemini'
         }
       </ol>
 
-      <div class="mt-16 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div class="mt-16 grid gap-4 sm:grid-cols-2 lg:grid-cols-3" data-stagger>
         {
           features.map((f) => (
             <PaneFrame tabs={[f.tab]}>
@@ -223,7 +240,7 @@ const agents = ['claude', 'codex', 'opencode', 'cursor-agent', 'aider', 'gemini'
 
   <!-- Agents -->
   <section id="agents" class="border-b border-line">
-    <div class="mx-auto grid max-w-6xl gap-12 px-4 py-20 sm:px-8 sm:py-24 lg:grid-cols-[1fr_1.1fr]" data-reveal>
+    <div class="mx-auto grid max-w-6xl gap-12 px-4 py-20 sm:px-8 sm:py-24 lg:grid-cols-[1fr_1.1fr]" data-reveal data-follow-row>
       <div>
         <SectionHead
           path="agents"
@@ -272,7 +289,7 @@ const agents = ['claude', 'codex', 'opencode', 'cursor-agent', 'aider', 'gemini'
 
   <!-- Remote -->
   <section id="remote" class="border-b border-line bg-sidebar/40">
-    <div class="mx-auto grid max-w-6xl items-center gap-12 px-4 py-20 sm:px-8 sm:py-24 lg:grid-cols-2" data-reveal>
+    <div class="mx-auto grid max-w-6xl gap-12 px-4 py-20 sm:px-8 sm:py-24 lg:grid-cols-2" data-reveal data-follow-row>
       <div>
         <SectionHead
           path="remote"

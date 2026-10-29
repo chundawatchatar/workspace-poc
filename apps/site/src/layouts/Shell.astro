@@ -255,6 +255,57 @@ const iconButton = 'rounded p-1 hover:bg-raised hover:text-ink'
         badge.textContent = String(count)
       })
 
+      // Cards lean toward the pointer, less the bigger they are, with a glare where it is.
+      if (matchMedia('(hover: hover) and (prefers-reduced-motion: no-preference)').matches) {
+        for (const card of document.querySelectorAll<HTMLElement>('[data-tilt]')) {
+          card.addEventListener('pointermove', (event) => {
+            const box = card.getBoundingClientRect()
+            const x = (event.clientX - box.left) / box.width
+            const y = (event.clientY - box.top) / box.height
+            const max = Math.min(5, 1600 / box.width)
+            card.style.setProperty('--ry', `${((x - 0.5) * max).toFixed(2)}deg`)
+            card.style.setProperty('--rx', `${((0.5 - y) * max).toFixed(2)}deg`)
+            card.style.setProperty('--mx', `${(x * 100).toFixed(1)}%`)
+            card.style.setProperty('--my', `${(y * 100).toFixed(1)}%`)
+            card.style.setProperty('--glare', '1')
+          })
+          card.addEventListener('pointerleave', () => {
+            for (const name of ['--rx', '--ry', '--glare']) card.style.removeProperty(name)
+          })
+        }
+      }
+
+      // In rows marked data-follow-row, the shorter column glides between the top and the base with the scroll direction.
+      const rows = [...document.querySelectorAll<HTMLElement>('[data-follow-row]')]
+      if (rows.length && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        // Each column's free space beside the tallest. Only columns side by side count: stacked on a phone, none move.
+        const measure = () => {
+          for (const row of rows) {
+            const columns = [...row.children] as HTMLElement[]
+            const sideBySide = columns.every((column) => column.offsetTop === columns[0]?.offsetTop)
+            const tallest = Math.max(...columns.map((column) => column.offsetHeight))
+            for (const column of columns) {
+              column.style.setProperty('--follow', `${sideBySide ? tallest - column.offsetHeight : 0}px`)
+            }
+          }
+        }
+        measure()
+        const resize = new ResizeObserver(measure)
+        for (const row of rows) resize.observe(row)
+
+        // Small jitters, like a trackpad settling, don't flip the direction.
+        let last = scrollY
+        window.addEventListener(
+          'scroll',
+          () => {
+            if (Math.abs(scrollY - last) < 6) return
+            document.documentElement.dataset.scrollDir = scrollY > last ? 'down' : 'up'
+            last = scrollY
+          },
+          { passive: true },
+        )
+      }
+
       // Following a link inside the drawer closes it.
       document.getElementById('sidebar')?.addEventListener('click', (event) => {
         if ((event.target as HTMLElement).closest('a')) document.documentElement.classList.remove('drawer-open')

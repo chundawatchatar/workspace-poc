@@ -1,0 +1,34 @@
+---
+// Signal waves streaming behind the hero window, in the accent and full-screen violet. Decorative only.
+// In a 1200×300 box stretched over the hero stage, the window covers y≈30–245: waves run in the bands above and below.
+const waves = [
+  { d: 'M0 22 C 150 4, 300 40, 450 20 S 750 2, 900 22 S 1100 40, 1200 18', color: 'accent', slow: false },
+  { d: 'M0 10 C 200 34, 380 0, 600 16 S 950 36, 1200 8', color: 'zoom', slow: true },
+  { d: 'M0 268 C 180 250, 320 292, 520 270 S 820 248, 1000 276 S 1150 290, 1200 266', color: 'zoom', slow: false },
+  { d: 'M0 284 C 220 296, 420 256, 640 280 S 980 298, 1200 274', color: 'accent', slow: true },
+]
+---
+
+<svg
+  class="pointer-events-none absolute inset-x-[-12%] top-[-12%] h-[124%] w-[124%] [mask-image:linear-gradient(90deg,transparent,black_18%,black_82%,transparent)]"
+  viewBox="0 0 1200 300"
+  preserveAspectRatio="none"
+  fill="none"
+  aria-hidden="true"
+>
+  {
+    waves.map((wave) => (
+      <g style={`stroke: var(--color-${wave.color})`}>
+        <path d={wave.d} stroke-width="1" opacity="0.18" vector-effect="non-scaling-stroke" />
+        <path
+          d={wave.d}
+          class={`stream ${wave.slow ? 'stream-slow' : ''}`}
+          stroke-width="2"
+          stroke-linecap="round"
+          opacity="0.55"
+          vector-effect="non-scaling-stroke"
+        />
+      </g>
+    ))
+  }
+</svg>

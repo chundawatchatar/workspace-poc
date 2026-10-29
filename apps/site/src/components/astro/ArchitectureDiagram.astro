@@ -1,80 +1,118 @@
 ---
 // How the pieces connect: a browser on the machine talks to the host over loopback; a browser elsewhere goes
 // through the relay, which the host reaches with one outbound tunnel.
-const box = 'fill: var(--color-panel); stroke: var(--color-line);'
-const label = 'fill: var(--color-ink); font: 600 13px var(--font-sans);'
-const sub = 'fill: var(--color-dim); font: 11.5px var(--font-mono);'
-const tag = 'font: 600 10.5px var(--font-mono); letter-spacing: 0.06em;'
+// Drawn at its desktop width and never scaled up, so the type matches the app's sizes exactly, and sharp: every
+// stroke stays 1px on screen, on half-pixel coordinates.
+const hair = 'vector-effect: non-scaling-stroke; fill: none;'
+const box = (color = 'var(--color-line)') =>
+  `fill: var(--color-panel); stroke: ${color}; vector-effect: non-scaling-stroke;`
+// The app's type: names 13px semibold, paths 12px mono faint, notes 11px dim, labels 11px semibold uppercase.
+const name = 'fill: var(--color-ink); font: 600 13px var(--font-sans);'
+const path = 'fill: var(--color-faint); font: 12px var(--font-mono);'
+const note = 'fill: var(--color-dim); font: 11px var(--font-sans);'
+const label = (color: string) => `fill: ${color}; font: 600 11px var(--font-sans); letter-spacing: 0.05em;`
+// A faint rail with crisp dashes flowing along it.
+const rail = (color: string) => `${hair} stroke: ${color}; opacity: 0.35;`
+const flow = (color: string) => `${hair} stroke: ${color}; stroke-width: 1.5; stroke-dasharray: 6 10;`
 ---
 
-<figure class="rounded-lg border border-line bg-sidebar p-4 sm:p-6">
+<figure class="rounded-md border border-line bg-sidebar p-4 sm:p-6">
   <svg
-    viewBox="0 0 760 320"
-    class="hidden h-auto w-full md:block"
+    viewBox="0 0 1040 372"
+    class="mx-auto hidden h-auto w-full max-w-[1040px] md:block"
     role="img"
     aria-label="A browser on your machine talks to the host over 127.0.0.1. A browser elsewhere goes through the relay, which your host reaches through one outbound tunnel. The host runs the terminal daemon, which owns your shells and agents."
   >
     <defs>
-      <marker id="arrow-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-        <path d="M0 0L10 5L0 10z" style="fill: var(--color-accent)"></path>
+      <marker id="head-accent" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto">
+        <path d="M0 0.5L7.5 4L0 7.5z" style="fill: var(--color-accent)"></path>
       </marker>
-      <marker id="arrow-zoom" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-        <path d="M0 0L10 5L0 10z" style="fill: var(--color-zoom)"></path>
+      <marker id="head-zoom" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto">
+        <path d="M0 0.5L7.5 4L0 7.5z" style="fill: var(--color-zoom)"></path>
       </marker>
     </defs>
 
     <!-- Your machine -->
-    <rect x="500" y="14" width="246" height="292" rx="12" style="fill: none; stroke: var(--color-accent); stroke-dasharray: 5 5; opacity: 0.6"></rect>
-    <text x="516" y="38" style={`${tag} fill: var(--color-accent)`}>YOUR MACHINE OR VM</text>
+    <rect x="700.5" y="16.5" width="323" height="340" rx="4" style={`${hair} stroke: var(--color-line); fill: var(--color-bg);`}></rect>
+    <text x="720" y="42" style={label('var(--color-faint)')}>YOUR MACHINE OR VM</text>
 
-    <rect x="520" y="54" width="206" height="62" rx="8" style={box}></rect>
-    <text x="536" y="80" style={label}>Host</text>
-    <text x="536" y="100" style={sub}>layout · git · :4599</text>
+    <rect x="720.5" y="60.5" width="284" height="64" rx="4" style={box('var(--color-accent)')}></rect>
+    <text x="736" y="87" style={name}>Host</text>
+    <text x="736" y="107" style={path}>layout · git · :4599</text>
 
-    <rect x="520" y="140" width="206" height="62" rx="8" style={box}></rect>
-    <text x="536" y="166" style={label}>Terminal daemon</text>
-    <text x="536" y="186" style={sub}>owns every PTY</text>
+    <rect x="720.5" y="160.5" width="284" height="64" rx="4" style={box()}></rect>
+    <text x="736" y="187" style={name}>Terminal daemon</text>
+    <text x="736" y="207" style={note}>Keeps every shell alive past the browser</text>
 
-    <rect x="520" y="226" width="206" height="62" rx="8" style={box}></rect>
-    <text x="536" y="252" style={label}>Shells and agents</text>
-    <text x="536" y="272" style={sub}>claude · codex · zsh · vim</text>
+    <rect x="720.5" y="260.5" width="284" height="64" rx="4" style={box()}></rect>
+    <text x="736" y="287" style={name}>Shells and agents</text>
+    <text x="736" y="307" style={path}>claude · codex · zsh · vim</text>
 
-    <path d="M623 116v22M623 202v22" style="stroke: var(--color-line); stroke-width: 2"></path>
+    <path d="M862.5 125V160M862.5 225V260" style={`${hair} stroke: var(--color-line)`}></path>
 
-    <!-- Local browser -->
-    <rect x="14" y="54" width="196" height="62" rx="8" style="fill: var(--color-panel); stroke: var(--color-accent)"></rect>
-    <text x="30" y="80" style={label}>Browser on your machine</text>
-    <text x="30" y="100" style={sub}>127.0.0.1:3210</text>
-    <path d="M210 85H514" style="stroke: var(--color-accent); stroke-width: 2" marker-end="url(#arrow-accent)"></path>
-    <text x="300" y="76" style={`${tag} fill: var(--color-accent)`}>LOOPBACK ONLY · FREE</text>
+    <!-- Local browser, over loopback -->
+    <rect x="16.5" y="60.5" width="260" height="64" rx="4" style={box('var(--color-accent)')}></rect>
+    <text x="32" y="87" style={name}>Browser on your machine</text>
+    <text x="32" y="107" style={path}>127.0.0.1:3210</text>
+    <path d="M277 92.5H719" style={rail('var(--color-accent)')}></path>
+    <path class="stream" d="M277 92.5H719" style={flow('var(--color-accent)')} marker-end="url(#head-accent)"></path>
+    <text x="498" y="81" text-anchor="middle" style={label('var(--color-accent)')}>LOOPBACK ONLY · FREE</text>
 
-    <!-- Remote browser and relay -->
-    <rect x="14" y="226" width="196" height="62" rx="8" style="fill: var(--color-panel); stroke: var(--color-zoom)"></rect>
-    <text x="30" y="252" style={label}>Any browser, anywhere</text>
-    <text x="30" y="272" style={sub}>#machine=…&key=…</text>
+    <!-- Remote browser, through the relay and the tunnel -->
+    <rect x="16.5" y="260.5" width="260" height="64" rx="4" style={box('var(--color-zoom)')}></rect>
+    <text x="32" y="287" style={name}>Any browser, anywhere</text>
+    <text x="32" y="307" style={path}>#machine=…&key=…</text>
+    <path d="M277 292.5H371" style={rail('var(--color-zoom)')}></path>
+    <path class="stream" d="M277 292.5H371" style={flow('var(--color-zoom)')} marker-end="url(#head-zoom)"></path>
 
-    <rect x="262" y="226" width="186" height="62" rx="8" style="fill: var(--color-panel); stroke: var(--color-zoom)"></rect>
-    <text x="278" y="252" style={label}>Relay</text>
-    <text x="278" y="272" style={sub}>forwards, stores nothing</text>
+    <rect x="372.5" y="260.5" width="260" height="64" rx="4" style={box('var(--color-zoom)')}></rect>
+    <text x="388" y="287" style={name}>Relay</text>
+    <text x="388" y="307" style={note}>Forwards traffic, stores nothing</text>
 
-    <path d="M210 257H256" style="stroke: var(--color-zoom); stroke-width: 2" marker-end="url(#arrow-zoom)"></path>
-    <path d="M514 100H476V246H454" style="fill: none; stroke: var(--color-zoom); stroke-width: 2; stroke-dasharray: 6 4" marker-end="url(#arrow-zoom)"></path>
-    <text x="320" y="170" style={`${tag} fill: var(--color-zoom)`}>ONE OUTBOUND TUNNEL</text>
-    <text x="320" y="188" style={`${tag} fill: var(--color-faint)`}>NO PORTS TO OPEN</text>
+    <path d="M720 108.5H666.5V292.5H633" style={rail('var(--color-zoom)')}></path>
+    <path
+      class="stream stream-slow"
+      d="M720 108.5H666.5V292.5H633"
+      style={flow('var(--color-zoom)')}
+      marker-end="url(#head-zoom)"
+    ></path>
+    <text x="652" y="190" text-anchor="end" style={label('var(--color-zoom)')}>ONE OUTBOUND TUNNEL</text>
+    <text x="652" y="207" text-anchor="end" style={note}>No ports to open</text>
+
+    <!-- Packets: small squares riding each route. -->
+    <g class="packet">
+      <rect x="-2.5" y="-2.5" width="5" height="5" style="fill: var(--color-accent)">
+        <animateMotion dur="2.4s" repeatCount="indefinite" path="M280 92.5H710"></animateMotion>
+      </rect>
+      <rect x="-2" y="-2" width="4" height="4" style="fill: var(--color-accent)">
+        <animateMotion dur="1s" repeatCount="indefinite" path="M862.5 127V158"></animateMotion>
+      </rect>
+      <rect x="-2" y="-2" width="4" height="4" style="fill: var(--color-accent)">
+        <animateMotion dur="1s" begin="-0.5s" repeatCount="indefinite" path="M862.5 227V258"></animateMotion>
+      </rect>
+      <rect x="-2.5" y="-2.5" width="5" height="5" style="fill: var(--color-zoom)">
+        <animateMotion dur="1.3s" repeatCount="indefinite" path="M280 292.5H362"></animateMotion>
+      </rect>
+      <rect x="-2.5" y="-2.5" width="5" height="5" style="fill: var(--color-zoom)">
+        <animateMotion dur="2.8s" repeatCount="indefinite" path="M717 108.5H666.5V292.5H640"></animateMotion>
+      </rect>
+    </g>
   </svg>
 
-  <ol class="space-y-2 text-sm md:hidden" aria-label="How the pieces connect">
-    <li class="rounded-md border border-accent bg-panel px-3 py-2">
+  <ol class="space-y-2 text-[13px] md:hidden" aria-label="How the pieces connect">
+    <li class="rounded border border-accent bg-panel px-3 py-2">
       <b class="font-semibold">Browser on your machine</b>
-      <span class="block font-mono text-xs text-dim">127.0.0.1:3210 · loopback only</span>
+      <span class="block font-mono text-xs text-faint">127.0.0.1:3210</span>
+      <span class="block text-[11px] text-dim">Loopback only, free</span>
     </li>
-    <li class="rounded-md border border-zoom bg-panel px-3 py-2">
+    <li class="rounded border border-zoom bg-panel px-3 py-2">
       <b class="font-semibold">Or any browser, via the relay</b>
-      <span class="block font-mono text-xs text-dim">connect link · one outbound tunnel · stores nothing</span>
+      <span class="block font-mono text-xs text-faint">#machine=…&key=…</span>
+      <span class="block text-[11px] text-dim">One outbound tunnel. The relay stores nothing.</span>
     </li>
-    <li class="rounded-md border border-dashed border-accent/60 px-3 py-2">
+    <li class="rounded border border-line bg-bg px-3 py-2">
       <b class="font-semibold">Your machine or VM</b>
-      <span class="block font-mono text-xs text-dim">host → terminal daemon → shells and agents</span>
+      <span class="block text-[11px] text-dim">Host → terminal daemon → shells and agents</span>
     </li>
   </ol>
 </figure>

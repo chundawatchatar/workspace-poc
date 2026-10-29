@@ -71,6 +71,12 @@ body {
   transform: none;
 }
 
+/* Cards entering at an angle poke past the edges. Clip, not hidden: hidden would make #main a scroll container,
+ * breaking the sticky header and the scroll timelines. */
+#main {
+  overflow-x: clip;
+}
+
 #sidebar,
 #main {
   transition:
@@ -217,4 +223,209 @@ body {
 }
 .prose blockquote p:last-child {
   margin: 0;
+}
+
+/* ---- Life on scroll ----
+ * Scroll-driven where the browser supports it (off the main thread); elsewhere everything simply sits in place.
+ * Entrance animations move with `translate`/`rotate`/`scale`, so the hover tilt's `transform` composes with them. */
+
+@media (prefers-reduced-motion: no-preference) {
+  @supports (animation-timeline: view()) {
+    /* The hero window rises from a tilt and flattens as it scrolls into view. */
+    .rise {
+      transform-origin: 50% 0;
+      animation: rise linear both;
+    }
+
+    /* Cards in a grid drop in at an angle, overshoot, and settle, alternating direction. */
+    [data-stagger] > * {
+      animation: settle linear both;
+    }
+    [data-stagger] > :nth-child(even) {
+      animation-name: settle-mirrored;
+    }
+
+    /* Section paths type themselves in, like a shell. */
+    .type-path {
+      display: inline-block;
+      overflow: hidden;
+      white-space: nowrap;
+      vertical-align: bottom;
+      animation: type-in steps(var(--chars)) both;
+    }
+
+    /* The timelines sit in rules of their own, after the shorthands they refine. In the same rule the minifier folds
+     * them into `animation`, which cannot carry a timeline, and the whole declaration is dropped. `:where(*)` keeps
+     * the specificity equal while keeping the selectors distinct. */
+    .rise:where(*) {
+      animation-timeline: view();
+      animation-range: entry 0% cover 42%;
+    }
+    [data-stagger] > :where(*) {
+      animation-timeline: view();
+      animation-range: entry 0% cover 38%;
+    }
+    /* Every second card trails its neighbour. */
+    [data-stagger] > :where(:nth-child(even)) {
+      animation-range: entry 10% cover 48%;
+    }
+    .type-path:where(*) {
+      animation-timeline: view();
+      animation-range: entry 30% cover 30%;
+    }
+  }
+
+  /* A slow aurora behind the hero window. */
+  .aurora::before,
+  .aurora::after {
+    content: '';
+    position: absolute;
+    width: 46%;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    filter: blur(70px);
+    opacity: 0.28;
+    animation: drift 18s ease-in-out infinite alternate;
+  }
+  .aurora::before {
+    left: 4%;
+    top: 8%;
+    background: var(--color-accent);
+  }
+  .aurora::after {
+    right: 4%;
+    bottom: 0;
+    background: var(--color-zoom);
+    animation-delay: -9s;
+  }
+
+  /* Signal streams flowing along waves and diagram arrows. */
+  .stream {
+    animation: stream 1.6s linear infinite;
+  }
+  .stream-slow {
+    animation-duration: 3.2s;
+  }
+}
+
+.stream {
+  stroke-dasharray: 2 14;
+}
+
+/* Packets travelling the diagram's arrows (SMIL, which ignores CSS motion settings, so they hide instead). */
+@media (prefers-reduced-motion: reduce) {
+  .packet {
+    display: none;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0.35;
+    transform: perspective(1400px) rotateX(18deg) scale(0.93);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes settle {
+  0% {
+    opacity: 0;
+    translate: 0 64px;
+    rotate: -4deg;
+  }
+  60% {
+    opacity: 1;
+    translate: 0 -8px;
+    rotate: 1.5deg;
+  }
+  80% {
+    translate: 0 2px;
+    rotate: -0.4deg;
+  }
+  100% {
+    opacity: 1;
+    translate: 0 0;
+    rotate: 0deg;
+  }
+}
+@keyframes settle-mirrored {
+  0% {
+    opacity: 0;
+    translate: 0 64px;
+    rotate: 4deg;
+  }
+  60% {
+    opacity: 1;
+    translate: 0 -8px;
+    rotate: -1.5deg;
+  }
+  80% {
+    translate: 0 2px;
+    rotate: 0.4deg;
+  }
+  100% {
+    opacity: 1;
+    translate: 0 0;
+    rotate: 0deg;
+  }
+}
+@keyframes type-in {
+  from {
+    width: 0;
+  }
+  to {
+    width: calc(var(--chars) * 1ch);
+  }
+}
+@keyframes drift {
+  to {
+    translate: 18% 12%;
+    scale: 1.25;
+  }
+}
+@keyframes stream {
+  to {
+    stroke-dashoffset: -32;
+  }
+}
+
+/* In a row marked data-follow-row, the shorter column follows the scroll direction: level with the top of the row
+ * while scrolling up, with its base while scrolling down. Shell.astro sets each column's --follow (its free space,
+ * 0 for the tallest) and data-scroll-dir on the root. */
+[data-follow-row] > * {
+  /* Their own heights, not the row's: grid rows stretch their items by default. */
+  align-self: start;
+}
+
+/* Cards lean toward the pointer (Shell.astro sets --rx, --ry, --mx, --my), with a soft glare where it is. */
+[data-tilt] {
+  transform: perspective(900px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
+  transition: transform 180ms ease-out;
+}
+[data-tilt]::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  opacity: var(--glare, 0);
+  background: radial-gradient(
+    420px circle at var(--mx, 50%) var(--my, 50%),
+    color-mix(in srgb, var(--color-accent) 12%, transparent),
+    transparent 60%
+  );
+  transition: opacity 200ms ease;
+}
+
+/* After the tilt rule on purpose: a column that also tilts (a pane) needs both transitions, and one `transition`
+ * declaration replaces the other. */
+[data-follow-row] > * {
+  transition:
+    translate 700ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    transform 180ms ease-out;
+}
+[data-scroll-dir='down'] [data-follow-row] > * {
+  translate: 0 var(--follow, 0px);
 }

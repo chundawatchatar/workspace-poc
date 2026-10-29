@@ -4,7 +4,7 @@ import { PLANS } from '../../site.config'
 import PaneFrame from './PaneFrame.astro'
 ---
 
-<div class="grid gap-5 md:grid-cols-2">
+<div class="grid gap-5 md:grid-cols-2" data-stagger>
   {
     PLANS.map((plan) => (
       <PaneFrame tabs={[plan.tab]} ring={plan.featured} bodyClass="flex flex-col p-6">
