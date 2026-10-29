@@ -1,4 +1,4 @@
-import { and, eq, getTableColumns, type InferInsertModel, type InferSelectModel, is, type SQL } from 'drizzle-orm'
+import { and, eq, getTableColumns, type InferInsertModel, type InferSelectModel, is, type SQL, sql } from 'drizzle-orm'
 import { type PgColumn, type PgDatabase, type PgQueryResultHKT, PgTable } from 'drizzle-orm/pg-core'
 
 /** Any Drizzle Postgres client, whatever its driver and schema. */
@@ -38,7 +38,9 @@ export function scopedRepository<T extends ScopedTable>(
   table: T,
   userId: string,
 ): ScopedRepository<T> {
-  const owned = (where?: SQL) => and(eq(table.userId, userId), where)
+  // The caller's condition gets its own parentheses: `and()` inlines a raw `sql` chunk as is, so a top-level `or`
+  // in it would otherwise bind looser than the `userId` check and reach other users' rows.
+  const owned = (where?: SQL) => and(eq(table.userId, userId), where ? sql`(${where})` : undefined)
   // Drizzle can't follow a generic table through its builders, so rows are typed here at the boundary.
   type Row = InferSelectModel<T>
   const anyTable = table as PgTable

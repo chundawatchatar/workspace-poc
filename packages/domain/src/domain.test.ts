@@ -66,6 +66,18 @@ describe('forUser', () => {
     expect(await allNotes()).toEqual([{ id: 'nb', userId: 'b', body: 'from b' }])
   })
 
+  test("a raw where with a top-level or still can't reach another user's rows", async () => {
+    const { a, allNotes } = await setup()
+    const either = sql`${notes.id} = 'na' or ${notes.id} = 'nb'`
+    expect(await a.list(either)).toMatchObject([{ id: 'na' }])
+    expect(await a.update(sql`false or true`, { body: 'edited' })).toMatchObject([{ id: 'na' }])
+    expect(await a.delete(sql`false or ${notes.id} = 'nb'`)).toEqual([])
+    expect(await allNotes()).toEqual([
+      { id: 'na', userId: 'a', body: 'edited' },
+      { id: 'nb', userId: 'b', body: 'from b' },
+    ])
+  })
+
   test('writes always keep the row with its owner', async () => {
     const { a, allNotes } = await setup()
     // @ts-expect-error `userId` is not accepted on insert.
