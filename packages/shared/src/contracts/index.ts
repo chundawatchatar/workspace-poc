@@ -3,6 +3,7 @@ import { eventsSocket } from './events'
 import { fsContract } from './fs'
 import { gitContract } from './git'
 import { remoteAccessContract } from './remoteAccess'
+import { serverSystemContract } from './serverSystem'
 import { systemContract } from './system'
 import { terminalSocket } from './terminals'
 
@@ -40,6 +41,8 @@ export {
   type UpdateRemoteAccessBody,
   updateRemoteAccessBody,
 } from './remoteAccess'
+export * from './server'
+export { serverHealthResponse } from './serverSystem'
 export { type DaemonReport, daemonResponse, healthResponse } from './system'
 export {
   authFailedFrame,
@@ -86,4 +89,13 @@ export const routes = {
     events: eventsSocket,
     terminal: terminalSocket,
   },
+}
+
+/**
+ * Every endpoint of the cloud server's own API, apart from `routes`, which the
+ * server relays to machines under `/m/<id>`. `createServerRouter(serverRoutes.system, …)`
+ * in `apps/server`, `callServer(serverRoutes.system.health, {})` in `apps/client`.
+ */
+export const serverRoutes = {
+  system: serverSystemContract,
 }
