@@ -4,9 +4,12 @@ import { createDomain, type Domain } from '@orch/domain'
 import { type ApiModule, createApp } from './app'
 import { type ClientIpOf, clientIpReader } from './lib/clientIp'
 import { type AccountsConfig, loadServerConfig, ServerConfigError } from './lib/config'
+import type { ServerRouterOptions } from './lib/createServerRouter'
 import { checkDatabase, databaseLocation } from './lib/database'
 import { parseAllowedOrigins } from './lib/security'
 import { serverWebSocket } from './lib/websocket'
+import { createAccountModule } from './modules/account/account.routes'
+import { createAuthenticate } from './modules/auth/auth.middleware'
 import { createAuthModule } from './modules/auth/auth.routes'
 import { createAuth } from './modules/auth/auth.service'
 import { ChannelBridge } from './modules/bridge/bridge.service'
@@ -40,8 +43,18 @@ interface AccountsDeps {
   clientIp: ClientIpOf
 }
 
-/** Builds the accounts modules of the server API, mounted only when accounts are on: Better Auth at `/api/auth/*`. */
-function createAccountsModules({ domain, mailer, accounts, trustedOrigins, clientIp }: AccountsDeps): ApiModule[] {
+/** What accounts add to the server API: their modules, and the hooks that give `user` endpoints a principal. */
+interface Accounts {
+  modules: ApiModule[]
+  api: Pick<ServerRouterOptions, 'authenticate' | 'forUser'>
+}
+
+/**
+ * Builds the accounts modules of the server API, mounted only when accounts
+ * are on: Better Auth at `/api/auth/*` and the account endpoints. `forUser` is
+ * a closure, so routers never hold the `Domain`.
+ */
+function createAccountsModules({ domain, mailer, accounts, trustedOrigins, clientIp }: AccountsDeps): Accounts {
   const auth = createAuth({
     domain,
     mailer,
@@ -49,12 +62,15 @@ function createAccountsModules({ domain, mailer, accounts, trustedOrigins, clien
     baseUrl: accounts.betterAuthUrl,
     trustedOrigins,
   })
-  return [createAuthModule({ auth, clientIp })]
+  return {
+    modules: [createAuthModule({ auth, clientIp }), createAccountModule()],
+    api: { authenticate: createAuthenticate({ auth }), forUser: (principal) => domain.forUser(principal) },
+  }
 }
 
 const trustProxy = process.env.SERVER_TRUST_PROXY === '1'
 
-let accountsModules: ApiModule[] = []
+let accountsSetup: Accounts | null = null
 
 if (config.accounts) {
   const domain = createDomain(config.accounts.databaseUrl)
@@ -70,7 +86,7 @@ if (config.accounts) {
     transport: createSmtpTransport(config.accounts.smtpUrl),
     from: config.accounts.mailFrom,
   })
-  accountsModules = createAccountsModules({
+  accountsSetup = createAccountsModules({
     domain,
     mailer,
     accounts: config.accounts,
@@ -106,8 +122,8 @@ const app = createApp({
   site,
   allowedOrigins,
   trustProxy,
-  api: { trustedOrigins: config.trustedOrigins },
-  accounts: config.accounts ? { modules: accountsModules } : null,
+  api: { trustedOrigins: config.trustedOrigins, ...accountsSetup?.api },
+  accounts: accountsSetup ? { modules: accountsSetup.modules } : null,
 })
 // The Bun server goes in as the env, which is where the client IP and socket upgrades come from.
 const server = Bun.serve({
