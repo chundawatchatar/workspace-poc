@@ -107,6 +107,20 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   `domain.forAuthLibrary()`. Sessions live in the database, and the cookie cache is off, so every request reads the
   session there and a sign-out or a password reset (which revokes every session) ends a session on its very next
   request. Accounts never replace a machine's access key.
+- Sessions can be listed and ended, and each revocation takes effect on the session's very next request, both in
+  Better Auth and in our `auth: 'user'` endpoints. A user has Better Auth's core endpoints:
+  `GET /api/auth/list-sessions` (their own sessions only), `POST /api/auth/revoke-session` (one session by its token,
+  only if it is theirs), `POST /api/auth/revoke-other-sessions` (all but the current one) and
+  `POST /api/auth/revoke-sessions` (all, including the current one). The revoke endpoints go through the same origin
+  check as every other `POST`. An operator signs one user out everywhere with
+  `bun run --filter @orch/server sessions:revoke-user <email>` (or `bun apps/server/scripts/revoke-user-sessions.ts
+  <email>`), which deletes the user's `session` rows through `skipAuthorization` and prints only the count.
+- Accepted risk, freshness: `list-sessions` refuses a session older than `session.freshAge` (one day, set in
+  `createAuth`) with 403 `SESSION_NOT_FRESH`, while the revoke endpoints only need a valid session. A page that lists
+  devices must ask for a fresh sign-in first.
+- Open question, tokens: Better Auth's `list-sessions` answers each session's `token`, which `revoke-session` takes.
+  That hands the secrets of the user's other sessions to page JavaScript and weakens `HttpOnly`. We keep the stock
+  behaviour for now; dropping the tokens means our own revoke-by-id endpoint in `serverRoutes`.
 - The session cookie is `Path=/api`, `HttpOnly`, `Secure` and `SameSite=Lax`. Browsers never send it to the relayed
   machines under `/m/*`, and the relay drops `Cookie` there as well. Its name has the `__Secure-` prefix when
   `BETTER_AUTH_URL` is `https://` and none on `http://`.
