@@ -83,6 +83,8 @@ export function accountQuery<E extends ServerReadEndpoint & { auth: 'user' }>(
   })
 }
 
+const TOO_MANY_ATTEMPTS = 'Too many attempts. Wait a minute and try again.'
+
 /**
  * Signs in with an email and password, then reads the session, which hands the cache to the new user. Returns a
  * message to show, or null on success.
@@ -91,12 +93,24 @@ export async function signInWithEmail(queryClient: QueryClient, email: string, p
   const { error } = await authClient().signIn.email({ email, password })
   if (error) {
     if (error.status === 401) return 'Wrong email or password.'
-    if (error.status === 403) return 'Verify your email address first, with the link we sent you.'
-    if (error.status === 429) return 'Too many attempts. Wait a minute and try again.'
+    if (error.status === 403) return 'Verify your email address first: open the link we sent to your inbox.'
+    if (error.status === 429) return TOO_MANY_ATTEMPTS
     return 'Signing in failed. Try again.'
   }
   await refetchSession(queryClient)
   return null
+}
+
+/**
+ * Creates an account and asks the server to email a verification link. It never signs in: the account can't be used
+ * until the address is verified. An address that already has an account gets the same answer as a new one, so this
+ * can't tell which it was. Returns a message to show, or null when the email is on its way.
+ */
+export async function signUpWithEmail(email: string, password: string, name: string) {
+  const { error } = await authClient().signUp.email({ email, password, name })
+  if (!error) return null
+  if (error.status === 429) return TOO_MANY_ATTEMPTS
+  return 'Creating the account failed. Try again.'
 }
 
 /**
@@ -180,6 +194,23 @@ export async function requireSession({
   if (import.meta.env.SSR) return
   const user = await context.queryClient.ensureQueryData({ ...sessionQuery, revalidateIfStale: true })
   if (!user) throw redirect({ to: '/sign-in', search: { redirect: location.href } })
+}
+
+/**
+ * The `beforeLoad` of `/sign-in` and `/sign-up`: a signed-in user goes straight to `safeRedirect(redirect)`. Neither
+ * page is ever guarded, or a signed-out user could never reach it.
+ */
+export async function leaveIfSignedIn({
+  context,
+  search,
+}: {
+  context: { queryClient: QueryClient }
+  search: { redirect?: string }
+}) {
+  if (import.meta.env.SSR) return
+  // A session that can't be read leaves the form up, where submitting it reports the problem.
+  const user = await context.queryClient.ensureQueryData(sessionQuery).catch(() => null)
+  if (user) throw redirect({ href: safeRedirect(search.redirect) })
 }
 
 /**

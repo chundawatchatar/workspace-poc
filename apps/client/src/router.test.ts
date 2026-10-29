@@ -133,4 +133,17 @@ describe('session guard', () => {
     }
     expect((await land('/sign-in')).state.location.href).toBe('/')
   })
+
+  test('sign-up is open when signed out, links to sign-in with the redirect, and is skipped when signed in', async () => {
+    signedIn = false
+    expect((await land('/sign-up?redirect=%2Fm%2Fx')).state.location.pathname).toBe('/sign-up')
+    const signUp = await render('/sign-up?redirect=%2Fm%2Fx')
+    expect(signUp).toContain('Create an account')
+    expect(signUp).toContain('href="/sign-in?redirect=%2Fm%2Fx"')
+    expect(await render('/sign-in?redirect=%2Fm%2Fx')).toContain('href="/sign-up?redirect=%2Fm%2Fx"')
+
+    signedIn = true
+    expect((await land('/sign-up?redirect=%2Fm%2Fsaved-machine')).state.location.pathname).toBe('/m/saved-machine')
+    expect((await land('/sign-up?redirect=https%3A%2F%2Fevil.example')).state.location.href).toBe('/')
+  })
 })

@@ -11,6 +11,7 @@ import {
   sessionQuery,
   signInWithEmail,
   signOut,
+  signUpWithEmail,
   watchIdentity,
 } from './auth'
 import { readPendingMachineLink, setPendingMachineLink } from './pendingLink'
@@ -43,6 +44,13 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit) {
     const { email } = JSON.parse(String(init?.body))
     server.user = [userA, userB].find((u) => u.email === email) ?? null
     return server.user ? Response.json({ token: 't', user: server.user }) : Response.json({}, { status: 401 })
+  }
+  if (path === '/api/auth/sign-up/email') {
+    // Like the cloud server: a new and a taken address get the same answer, and no session either way.
+    const { email } = JSON.parse(String(init?.body))
+    if (email === 'busy@example.com') return Response.json({ message: 'Too many requests' }, { status: 429 })
+    if (email === 'broken@example.com') return Response.json({ message: 'Oops' }, { status: 500 })
+    return Response.json({ token: null, user: { id: 'new', email, name: 'New' } })
   }
   if (path === '/api/me') {
     if (server.user) return Response.json(server.user)
@@ -169,6 +177,27 @@ describe('watchIdentity', () => {
     ).toEqual([['session']])
     expect(readPendingMachineLink()).toBeNull()
     expect(changes()).toBe(1)
+  })
+})
+
+describe('signUpWithEmail', () => {
+  test('posts the name, email and password and stays signed out, alike for a taken address', async () => {
+    const { queryClient } = await setup(null)
+    for (const email of ['new@example.com', userA.email]) {
+      server.requests.length = 0
+      expect(await signUpWithEmail(email, 'long enough', 'Ada')).toBeNull()
+      const request = server.requests.find((r) => r.url.endsWith('/api/auth/sign-up/email'))
+      expect(request?.init?.method).toBe('POST')
+      expect(JSON.parse(String(request?.init?.body))).toMatchObject({ email, password: 'long enough', name: 'Ada' })
+    }
+    expect(await refetchSession(queryClient)).toBeNull()
+
+    expect(await signUpWithEmail('busy@example.com', 'long enough', 'Ada')).toBe(
+      'Too many attempts. Wait a minute and try again.',
+    )
+    expect(await signUpWithEmail('broken@example.com', 'long enough', 'Ada')).toBe(
+      'Creating the account failed. Try again.',
+    )
   })
 })
 
