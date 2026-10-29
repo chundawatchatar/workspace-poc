@@ -76,8 +76,11 @@ function withQuery(path: string, fields: [string, unknown][]) {
   return query ? `${path}?${query}` : path
 }
 
-/** The URL and JSON body for calling an endpoint. GET requests have no body. */
-export function buildRequest(endpoint: Endpoint, input: Record<string, unknown>): { url: string; body?: string } {
+/** The URL and JSON body for calling an endpoint, the host's or the server's. GET requests have no body. */
+export function buildRequest(
+  endpoint: { method: string; path: string },
+  input: Record<string, unknown>,
+): { url: string; body?: string } {
   const { path, rest } = fillPath(endpoint.path, input)
   if (endpoint.method === 'GET') return { url: withQuery(path, rest) }
   return { url: path, body: JSON.stringify(Object.fromEntries(rest)) }

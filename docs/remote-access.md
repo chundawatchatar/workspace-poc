@@ -32,6 +32,12 @@ bun run --filter @orch/server start
 The server then serves `apps/client/dist` on 127.0.0.1:4600, and no CORS is
 needed. Without a build it only relays, and logs that it found no client build.
 
+With a `.env` copied from `.env.example`, `DATABASE_URL` is set, so the server
+turns accounts on and refuses to start until Postgres is up and migrated:
+`bun run db:up`, then `bun run db:migrate` (section 5). Unset `DATABASE_URL`
+(or leave it out of `.env`) to run the relay alone. Either way,
+`curl -s http://127.0.0.1:4600/api/health` answers `{"ok":true}`.
+
 ## 2. Connect a machine
 
 Open the local app at http://127.0.0.1:3210 and pick "Remote access…" from the
@@ -124,7 +130,9 @@ Every port is published on `127.0.0.1` only, so nothing is reachable from the ne
 To reset the database, remove the volume as well: `docker compose down -v`, then `bun run db:up`.
 
 The server loads the root `.env` itself through `loadRootEnv()` from `@orch/shared/env`, however it is started.
-Variables already set in the shell win over the file.
+Variables already set in the shell win over the file. With `DATABASE_URL` set it also needs `BETTER_AUTH_SECRET` (at
+least 32 bytes), `BETTER_AUTH_URL`, `SMTP_URL` and `MAIL_FROM`, which `.env.example` fills with dev values, and it
+exits with a message naming the problem when one is missing, the database is unreachable, or a migration is pending.
 
 ## 6. What changes for a real deploy
 

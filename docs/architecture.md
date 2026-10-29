@@ -86,6 +86,12 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   adapter only; `skipAuthorization(reason)` needs a real reason and is logged on every call. Every new table with a
   `userId` column must be registered in `scopedTables`, which a test enforces.
 - `packages/shared/src/contracts` is the boundary. Any two parts talk only through a contract defined there.
+- The cloud server's own API lives under `/api` on the server and is defined in `serverRoutes`, a registry separate
+  from the host's `routes`. Host routes are relayed under `/m/<id>/api/*` and checked only by the host; server routes
+  are served by `apps/server` itself, default to `auth: 'user'`, and refuse a non-GET request without a same-site or
+  trusted `Origin` and a JSON `Content-Type`. `/api/auth/*` is Better Auth's and is never in `serverRoutes`. The
+  accounts modules are mounted only when `DATABASE_URL` is set, and the server refuses to start against an
+  unreachable or unmigrated database.
 - Server-side config comes from the root `.env` through `loadRootEnv()` (`@orch/shared/env`, Node-only, kept out of
   the browser entry), which never overrides variables already set.
 
