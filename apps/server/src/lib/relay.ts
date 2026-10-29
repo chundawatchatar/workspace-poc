@@ -16,6 +16,10 @@ const HOP_BY_HOP_HEADERS = new Set([
 // `sec-websocket-protocol` is kept: the server negotiates no subprotocol, so it
 // is the machine's to read.
 const SOCKET_HANDSHAKE_HEADERS = new Set(['sec-websocket-key', 'sec-websocket-version', 'sec-websocket-extensions'])
+// The browser's cookies for the server's origin, which hold the account
+// session. Machines share that origin under `/m/<id>`, so a machine never sees
+// them. This is a filter on header names: cookie values are never read.
+const ACCOUNT_COOKIE_HEADERS = new Set(['cookie'])
 
 const encoder = new TextEncoder()
 
@@ -35,12 +39,14 @@ export function relayedPath(url: string, prefix: string): string | null {
 
 /** The headers of an HTTP request that go to the machine, in order. */
 export function relayedRequestHeaders(headers: Headers): [string, string][] {
-  return [...headers].filter(([name]) => !isHopByHop(name))
+  return [...headers].filter(([name]) => !isDroppedRequestHeader(name))
 }
 
 /** The headers of a socket's upgrade request that go to the machine, in order. */
 export function relayedSocketHeaders(headers: Headers): [string, string][] {
-  return [...headers].filter(([name]) => !isHopByHop(name) && !SOCKET_HANDSHAKE_HEADERS.has(name.toLowerCase()))
+  return [...headers].filter(
+    ([name]) => !isDroppedRequestHeader(name) && !SOCKET_HANDSHAKE_HEADERS.has(name.toLowerCase()),
+  )
 }
 
 /** The size of a frame once encoded for the tunnel. */
@@ -49,7 +55,8 @@ export function frameBytes(frame: ServerFrame): number {
   return typeof encoded === 'string' ? encoder.encode(encoded).byteLength : encoded.byteLength
 }
 
-function isHopByHop(name: string): boolean {
+/** True for a request header that never reaches the machine: hop-by-hop framing, or the account cookies. */
+function isDroppedRequestHeader(name: string): boolean {
   const lower = name.toLowerCase()
-  return HOP_BY_HOP_HEADERS.has(lower) || lower.startsWith('proxy-')
+  return HOP_BY_HOP_HEADERS.has(lower) || lower.startsWith('proxy-') || ACCOUNT_COOKIE_HEADERS.has(lower)
 }

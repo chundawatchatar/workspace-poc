@@ -5,11 +5,16 @@ import type { MachineConnection, MachineRegistry } from '../tunnel/tunnel.servic
 
 // Framing of the response that the server redoes for the browser.
 const DROPPED_RESPONSE_HEADERS = new Set(['content-length', 'transfer-encoding', 'connection'])
+// Machines share the server's origin, where the account session cookie lives,
+// so a machine must never set a cookie there (session fixation, or shadowing
+// the server's own `/api` cookies).
+const ACCOUNT_COOKIE_RESPONSE_HEADERS = new Set(['set-cookie'])
 
 /**
  * True for a response header the browser never gets from the machine: its
- * framing, its CORS headers, since the server answers for CORS itself, and its
- * CSP, which the server replaces with `SANDBOX_CSP`. This is a filter on
+ * framing, its CORS headers, since the server answers for CORS itself, its
+ * CSP, which the server replaces with `SANDBOX_CSP`, and its `Set-Cookie`,
+ * since cookies on the server's origin are the account's. This is a filter on
  * header names, like the hop-by-hop list, not a decision on what the machine
  * said.
  */
@@ -17,6 +22,7 @@ function isDroppedResponseHeader(name: string): boolean {
   const lower = name.toLowerCase()
   return (
     DROPPED_RESPONSE_HEADERS.has(lower) ||
+    ACCOUNT_COOKIE_RESPONSE_HEADERS.has(lower) ||
     lower.startsWith('access-control-') ||
     lower.startsWith('content-security-policy')
   )

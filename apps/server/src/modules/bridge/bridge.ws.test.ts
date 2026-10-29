@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
+import { connect, type Socket } from 'node:net'
 import {
   CLOSE_MACHINE_OFFLINE,
   decodeFrame,
@@ -96,6 +97,34 @@ function browser(path: string, machineId = idA, headers?: Record<string, string>
   return b
 }
 
+/**
+ * Sends a socket upgrade by hand, so the request can carry a `Cookie` header and
+ * the 101 head can be read. Resolves with the head once it has arrived.
+ */
+async function rawUpgrade(path: string, headers: Record<string, string>): Promise<{ socket: Socket; head: string }> {
+  const socket = connect(server.port as number, '127.0.0.1')
+  let received = ''
+  const head = new Promise<string>((resolve, reject) => {
+    socket.on('data', (chunk) => {
+      received += chunk.toString('latin1')
+      const end = received.indexOf('\r\n\r\n')
+      if (end >= 0) resolve(received.slice(0, end))
+    })
+    socket.on('error', reject)
+  })
+  const lines = [
+    `GET ${machinePathPrefix(idA)}${path} HTTP/1.1`,
+    `Host: 127.0.0.1:${server.port}`,
+    'Upgrade: websocket',
+    'Connection: Upgrade',
+    'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+    'Sec-WebSocket-Version: 13',
+    ...Object.entries(headers).map(([name, value]) => `${name}: ${value}`),
+  ]
+  socket.write(`${lines.join('\r\n')}\r\n\r\n`)
+  return { socket, head: await head }
+}
+
 const opened = (b: Browser) => new Promise((resolve) => b.ws.addEventListener('open', resolve))
 
 async function until(check: () => boolean, timeoutMs = 1000) {
@@ -162,6 +191,26 @@ describe('bridge socket', () => {
       expect(logged.some((line) => line.includes('secret-key') || line.includes('term/abc'))).toBe(false)
     } finally {
       for (const spy of logs) spy.mockRestore()
+    }
+  })
+
+  test('never relays the account cookies to the machine, and the upgrade response sets none', async () => {
+    const m = await machine(proofA)
+    const { socket, head } = await rawUpgrade('/ws/events', {
+      Cookie: 'session=abc',
+      'x-thing': 'a',
+      'Sec-WebSocket-Protocol': 'orch',
+    })
+    try {
+      expect(head.split('\r\n')[0]).toContain(' 101 ')
+      expect(head.split('\r\n').some((line) => line.toLowerCase().startsWith('set-cookie:'))).toBe(false)
+      await until(() => of(m, 'ws.open').length === 1)
+      const [open] = of(m, 'ws.open')
+      expect(open?.headers).toContainEqual(['x-thing', 'a'])
+      expect(open?.headers).toContainEqual(['sec-websocket-protocol', 'orch'])
+      expect(open?.headers.some(([name]) => name.toLowerCase() === 'cookie')).toBe(false)
+    } finally {
+      socket.destroy()
     }
   })
 

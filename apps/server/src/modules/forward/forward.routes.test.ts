@@ -95,7 +95,7 @@ describe('forward routes', () => {
       const body = new Uint8Array([0, 1, 2, 250, 255])
       const pending = fetch(url('/api/git/status?cwd=%2Ftmp'), {
         method: 'POST',
-        headers: { [ACCESS_KEY_HEADER]: 'secret-key', 'x-thing': 'a', connection: 'keep-alive' },
+        headers: { [ACCESS_KEY_HEADER]: 'secret-key', 'x-thing': 'a', connection: 'keep-alive', Cookie: 'session=abc' },
         body,
       })
       await until(() => m.requests.length === 1)
@@ -104,6 +104,8 @@ describe('forward routes', () => {
       expect(request?.headers).toContainEqual([ACCESS_KEY_HEADER, 'secret-key'])
       expect(request?.headers).toContainEqual(['x-thing', 'a'])
       expect(request?.headers.some(([name]) => name === 'connection' || name === 'host')).toBe(false)
+      // The account session cookie lives on the server's origin, so a machine never sees it.
+      expect(request?.headers.some(([name]) => name.toLowerCase() === 'cookie')).toBe(false)
       expect([...(request?.body ?? [])]).toEqual([...body])
 
       m.send({
@@ -114,6 +116,7 @@ describe('forward routes', () => {
           ['x-teapot', 'yes'],
           ['set-cookie', 'a=1'],
           ['set-cookie', 'b=2'],
+          ['Set-Cookie', 'c=3; Path=/api'],
           ['access-control-allow-origin', '*'],
           ['Access-Control-Allow-Credentials', 'true'],
           ['content-type', 'text/html'],
@@ -124,7 +127,9 @@ describe('forward routes', () => {
       const response = await pending
       expect(response.status).toBe(418)
       expect(response.headers.get('x-teapot')).toBe('yes')
-      expect(response.headers.getSetCookie()).toEqual(['a=1', 'b=2'])
+      expect(response.headers.get('content-type')).toBe('text/html')
+      // A machine shares the server's origin, so it can never set cookies there.
+      expect(response.headers.getSetCookie()).toEqual([])
       // The server answers for CORS itself, and adds its own security headers.
       expect([...response.headers.keys()].some((name) => name.startsWith('access-control-'))).toBe(false)
       expect(response.headers.get('x-content-type-options')).toBe('nosniff')
@@ -141,17 +146,20 @@ describe('forward routes', () => {
         rest += new TextDecoder().decode(chunk.value)
       expect(rest).toBe('world')
 
-      const unauthorised = fetch(url('/api/system/health'), { method: 'OPTIONS' })
+      const unauthorised = fetch(url('/api/system/health'), { method: 'OPTIONS', headers: { COOKIE: 'session=abc' } })
       await until(() => m.requests.length === 2)
       expect(m.requests[1]).toMatchObject({ method: 'OPTIONS', path: '/api/system/health' })
       expect(m.requests[1]?.body).toBeUndefined()
+      expect(m.requests[1]?.headers.some(([name]) => name.toLowerCase() === 'cookie')).toBe(false)
       m.send({ type: 'http.response', id: 2, status: 401, headers: [] })
       m.send({ type: 'http.end', id: 2 })
       expect((await unauthorised).status).toBe(401)
       expect(forwarder.size).toBe(0)
 
       const logged = logs.flatMap((spy) => spy.mock.calls.map((call) => call.join(' ')))
-      expect(logged.some((line) => line.includes('secret-key') || line.includes('git/status'))).toBe(false)
+      expect(logged.some((line) => ['secret-key', 'git/status', 'session=abc'].some((s) => line.includes(s)))).toBe(
+        false,
+      )
     } finally {
       for (const spy of logs) spy.mockRestore()
     }
