@@ -80,6 +80,8 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
 - Code that might be closed later (accounts, billing, hosted flows, paid connectors) lives in its own app or package
   and uses only the public exports of the others. Nothing else imports it.
 - `packages/shared/src/contracts` is the boundary. Any two parts talk only through a contract defined there.
+- Server-side config comes from the root `.env` through `loadRootEnv()` (`@orch/shared/env`, Node-only, kept out of
+  the browser entry), which never overrides variables already set.
 
 ### 2. The host is a set of modules, assembled in one place
 
