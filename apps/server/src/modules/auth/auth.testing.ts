@@ -1,7 +1,25 @@
+import type { TestDomain } from '@orch/domain/testing'
 import type { Hono } from 'hono'
-import type { CaptureTransport } from '../mailer/mailer.testing'
+import { createApp } from '../../app'
+import { clientIpReader } from '../../lib/clientIp'
+import { createAccountModule } from '../account/account.routes'
+import { ChannelBridge } from '../bridge/bridge.service'
+import { HttpForwarder } from '../forward/forward.service'
+import { ConnectionLimiter } from '../limits/limits.service'
+import { createMailer } from '../mailer/mailer.service'
+import { type CaptureTransport, createCaptureTransport } from '../mailer/mailer.testing'
+import { MachineRegistry } from '../tunnel/tunnel.service'
+import { createAuthenticate } from './auth.middleware'
+import { createAuthModule } from './auth.routes'
+import { createAuth } from './auth.service'
 
 // Test-only helpers for driving Better Auth through `createApp`. Never imported by production code.
+
+/** The base URL test apps run on. */
+export const TEST_BASE = 'http://orch.example'
+
+/** The one origin besides `TEST_BASE` that test apps trust. */
+export const TEST_TRUSTED_ORIGIN = 'https://app.example'
 
 /** The test password every `verifiedUser` signs up with. */
 export const TEST_PASSWORD = 'correct horse battery'
@@ -72,22 +90,74 @@ export function authTestClient({
     return new URL(url)
   }
 
-  /** Signs up, follows the verification link and signs in, returning the session cookie line. */
-  async function verifiedUser(email: string, ip: string, name = 'Test'): Promise<string> {
+  /** Signs up and follows the verification link, leaving a verified user with no session. */
+  async function register(email: string, ip: string, name = 'Test'): Promise<void> {
     await call('POST', '/api/auth/sign-up/email', { ip, body: { email, password: TEST_PASSWORD, name } })
     const link = linkTo(email, 'verifyEmail')
     await call('GET', `${link.pathname}${link.search}`, { ip })
-    const signIn = await call('POST', '/api/auth/sign-in/email', { ip, body: { email, password: TEST_PASSWORD } })
-    const setCookie = sessionSetCookie(signIn)
-    if (signIn.status !== 200 || !setCookie) throw new Error(`sign-in answered ${signIn.status}`)
+  }
+
+  /** Signs up, follows the verification link and signs in, returning the session cookie line. */
+  async function verifiedUser(email: string, ip: string, name = 'Test'): Promise<string> {
+    await register(email, ip, name)
+    const setCookie = sessionSetCookie(await signInResponse(email, ip))
+    if (!setCookie) throw new Error('sign-in set no session cookie')
     return setCookie
+  }
+
+  /**
+   * Signs a verified user in with `TEST_PASSWORD` from `ip`, starting one more
+   * session, and returns the `Cookie` header a browser would send back: every
+   * cookie the sign-in set, so a session cache cookie would count too.
+   */
+  async function signIn(email: string, ip: string): Promise<string> {
+    return (await signInResponse(email, ip)).headers.getSetCookie().map(cookiePair).join('; ')
+  }
+
+  async function signInResponse(email: string, ip: string): Promise<Response> {
+    const response = await call('POST', '/api/auth/sign-in/email', { ip, body: { email, password: TEST_PASSWORD } })
+    if (response.status !== 200) throw new Error(`sign-in answered ${response.status}`)
+    return response
   }
 
   return {
     call,
     linkTo,
+    register,
     verifiedUser,
+    signIn,
     freshIp: () => `${ipPrefix}.${nextIp++}`,
     freshEmail: () => `${ipPrefix.replaceAll('.', '-')}-user${nextEmail++}@test.example`,
   }
+}
+
+/**
+ * An app with accounts on over `domain`, as `index.ts` builds it: Better Auth
+ * and the account endpoints, with the real `authenticate` and `forUser`.
+ */
+export function accountsTestApp(domain: TestDomain, ipPrefix: string) {
+  const mail = createCaptureTransport()
+  const auth = createAuth({
+    domain,
+    mailer: createMailer({ transport: mail.transport, from: 'Orch <no-reply@orch.example>' }),
+    secret: 'a-test-secret-that-is-at-least-32-bytes-long',
+    baseUrl: TEST_BASE,
+    trustedOrigins: [TEST_TRUSTED_ORIGIN],
+  })
+  const registry = new MachineRegistry()
+  const app = createApp({
+    registry,
+    forwarder: new HttpForwarder({ registry }),
+    bridge: new ChannelBridge({ registry }),
+    limiter: new ConnectionLimiter(),
+    api: {
+      trustedOrigins: [TEST_TRUSTED_ORIGIN],
+      authenticate: createAuthenticate({ auth }),
+      forUser: (principal) => domain.forUser(principal),
+    },
+    accounts: {
+      modules: [createAuthModule({ auth, clientIp: clientIpReader({ trustProxy: false }) }), createAccountModule()],
+    },
+  })
+  return { app, mail, client: authTestClient({ app, mail, base: TEST_BASE, ipPrefix }) }
 }
