@@ -1,4 +1,4 @@
-import type { Principal } from '@orch/domain'
+import type { Principal, ScopedRepositories, ScopedTables } from '@orch/domain'
 import {
   type ServerAuth,
   type ServerEndpoint,
@@ -10,8 +10,24 @@ import { type Context, Hono } from 'hono'
 import { z } from 'zod'
 import { OriginPolicy, SECURITY_HEADERS } from './security'
 
+/** Who sent a request: the `Principal` the domain scopes by, plus what the session says about the user. */
+export interface SessionPrincipal extends Principal {
+  email: string
+  name: string
+}
+
 /** Finds who sent a request, from its session. Null means nobody is signed in. */
-export type Authenticate = (c: Context) => Promise<Principal | null> | Principal | null
+export type Authenticate = (c: Context) => Promise<SessionPrincipal | null> | SessionPrincipal | null
+
+/** The repositories that only see one user's rows, one per table in `scopedTables`. */
+export type UserData = ScopedRepositories<ScopedTables>
+
+/**
+ * Opens a user's scoped repositories, `(p) => domain.forUser(p)` in `index.ts`.
+ * A function rather than the `Domain`, so no handler can reach
+ * `forAuthLibrary()` or `skipAuthorization`.
+ */
+export type ForUser = (principal: Principal) => UserData
 
 /** What every server API router shares, built once in `index.ts`. */
 export interface ServerRouterOptions {
@@ -19,14 +35,18 @@ export interface ServerRouterOptions {
   trustedOrigins?: readonly string[]
   /** Required for `auth: 'user'` endpoints; without it they all answer 401. */
   authenticate?: Authenticate
+  /** Required for `auth: 'user'` endpoints too; without it a signed-in request answers 500 `internal`. */
+  forUser?: ForUser
   /** Receives an error a handler threw that isn't one of its codes. Defaults to `console.error`. */
   onError?: (endpoint: ServerEndpoint, error: unknown) => void
 }
 
-/** What a handler gets besides its input. */
+/** What a handler gets besides its input. It never holds the `Domain` or a raw database client. */
 export interface ServerHandlerContext<E extends ServerEndpoint> {
   /** Who is calling. Always set on `auth: 'user'` endpoints, and null on public ones. */
-  principal: E extends { auth: 'public' } ? null : Principal
+  principal: E extends { auth: 'public' } ? null : SessionPrincipal
+  /** The caller's scoped repositories from `forUser(principal)`, set and null like `principal`. */
+  data: E extends { auth: 'public' } ? null : UserData
   /** Ends the request with one of the endpoint's error codes, or a common one. */
   fail(code: ServerErrorCode<E>, message?: string): never
   c: Context
@@ -68,7 +88,9 @@ export function serverErrorResponse(status: number, code: string, message = GENE
  * a non-GET request needs a same-site or trusted `Origin` (403 otherwise) and
  * a JSON `Content-Type` (415), an `auth: 'user'` endpoint needs a principal
  * from `authenticate` (401), and input that fails the schema gets 400, all
- * before the handler runs. GET endpoints answer GET and HEAD only.
+ * before the handler runs. A `user` handler gets the principal and its scoped
+ * repositories from `forUser`, never the domain. GET endpoints answer GET and
+ * HEAD only.
  */
 export function createServerRouter<C extends Record<string, ServerEndpoint & { auth: ServerAuth }>>(
   contract: C,
@@ -87,8 +109,10 @@ export function createServerRouter<C extends Record<string, ServerEndpoint & { a
         // Anything but an explicit `public` needs a principal.
         const principal = endpoint.auth === 'public' ? null : await requirePrincipal(c, options.authenticate)
         const input = await readInput(c, endpoint)
-        // `principal` is null only on public endpoints, which the line above guarantees but TS can't follow.
-        const ctx = { principal, fail, c } as ServerHandlerContext<ServerEndpoint>
+        const data = principal ? openData(principal, options.forUser) : null
+        // `principal` and `data` are null only on public endpoints, which the lines above guarantee but TS can't
+        // follow.
+        const ctx = { principal, data, fail, c } as ServerHandlerContext<ServerEndpoint>
         // Parsing strips fields the contract doesn't list, so a handler can't leak a column by returning a row.
         const output = endpoint.output.parse(await handler(input, ctx))
         return withApiHeaders(c.json(output, 200))
@@ -117,8 +141,14 @@ function checkSameSiteJson(c: Context, origins: OriginPolicy): void {
   if (!isJson(c.req.header('content-type'))) fail('unsupported_media_type')
 }
 
-async function requirePrincipal(c: Context, authenticate: Authenticate | undefined): Promise<Principal> {
+async function requirePrincipal(c: Context, authenticate: Authenticate | undefined): Promise<SessionPrincipal> {
   return (await authenticate?.(c)) ?? fail('unauthorized')
+}
+
+/** The principal's scoped repositories. A router built without `forUser` fails closed rather than serve unscoped. */
+function openData(principal: Principal, forUser: ForUser | undefined): UserData {
+  if (!forUser) throw new Error('A user endpoint was called on a router built without `forUser`.')
+  return forUser(principal)
 }
 
 /** The query (GET) or JSON body, with the path params over it, checked against the endpoint's input schema. */
