@@ -1,6 +1,6 @@
 import './env'
 import { join } from 'node:path'
-import { createDomain } from '@orch/domain'
+import { createDomain, type Domain } from '@orch/domain'
 import { type ApiModule, createApp } from './app'
 import { loadServerConfig, ServerConfigError } from './lib/config'
 import { checkDatabase, databaseLocation } from './lib/database'
@@ -9,11 +9,13 @@ import { serverWebSocket } from './lib/websocket'
 import { ChannelBridge } from './modules/bridge/bridge.service'
 import { HttpForwarder } from './modules/forward/forward.service'
 import { ConnectionLimiter } from './modules/limits/limits.service'
+import { createMailer, type Mailer } from './modules/mailer/mailer.service'
+import { createSmtpTransport } from './modules/mailer/mailer.transport'
 import { loadStaticSite } from './modules/static/static.service'
 import { MachineRegistry } from './modules/tunnel/tunnel.service'
 
-// Composition root: reads the environment, checks the accounts database when accounts are on, creates the registry,
-// the forwarder, the bridge and the limiter, loads the built client, and starts the server.
+// Composition root: reads the environment, checks the accounts database and builds the mailer when accounts are on,
+// creates the registry, the forwarder, the bridge and the limiter, loads the built client, and starts the server.
 
 let config: ReturnType<typeof loadServerConfig>
 try {
@@ -24,8 +26,18 @@ try {
   process.exit(1)
 }
 
-// The accounts modules of the server API, mounted only when accounts are on. None exists yet.
-const accountsModules: ApiModule[] = []
+/** What the accounts modules are built from. The mailer is the only way they send email. */
+interface AccountsDeps {
+  domain: Domain
+  mailer: Mailer
+}
+
+/** Builds the accounts modules of the server API, mounted only when accounts are on. None exists yet. */
+function createAccountsModules(_deps: AccountsDeps): ApiModule[] {
+  return []
+}
+
+let accountsModules: ApiModule[] = []
 
 if (config.accounts) {
   const domain = createDomain(config.accounts.databaseUrl)
@@ -37,6 +49,11 @@ if (config.accounts) {
     console.error(problem)
     process.exit(1)
   }
+  const mailer = createMailer({
+    transport: createSmtpTransport(config.accounts.smtpUrl),
+    from: config.accounts.mailFrom,
+  })
+  accountsModules = createAccountsModules({ domain, mailer })
   console.log('accounts are on')
 } else {
   console.log('DATABASE_URL is not set, so accounts are off')
