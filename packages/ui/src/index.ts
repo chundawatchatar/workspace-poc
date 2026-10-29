@@ -1,3 +1,4 @@
+export * from './BrandMark'
 export * from './Button'
 export * from './brand'
 export * from './FolderBrowser'
