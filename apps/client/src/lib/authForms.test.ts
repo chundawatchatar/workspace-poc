@@ -124,6 +124,18 @@ describe('the sign-in and sign-up forms', () => {
     expect(problem as string | null).toBe('Wrong email or password.')
   })
 
+  test('Enter in a corrected field submits, though the field was empty when another field was left', async () => {
+    const form = new FormApi(signInFormOptions(new QueryClient(), { setProblem, onSignedIn: async () => {} }))
+    form.mount()
+    const requests = signInRequests
+    form.setFieldValue('email', 'a@example.com')
+    // Leaving the email field checks the whole form on blur, while the password is still empty.
+    form.validate('blur')
+    form.setFieldValue('password', 'typed but never left')
+    await submitAndWait(form)
+    expect(signInRequests).toBe(requests + 1)
+  })
+
   test('sign-up clears the last refusal as it submits, and empties the form once the email is sent', async () => {
     problem = null
     let sentTo: string | null = null

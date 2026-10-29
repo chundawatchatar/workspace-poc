@@ -58,8 +58,15 @@ export function shownError(meta: FieldMeta, submissionAttempts: number): string 
 }
 
 /** Submits `form` unless a submit is already on its way, so pressing Enter twice sends one request. */
-export function submitOnce(form: { state: { isSubmitting: boolean }; handleSubmit: () => Promise<unknown> }) {
+export function submitOnce(form: {
+  state: { isSubmitting: boolean }
+  handleSubmit: () => Promise<unknown>
+  validate: (cause: 'blur') => unknown
+}) {
   if (form.state.isSubmitting) return
+  // A blur error stays until its field is left again, and Enter submits without leaving the field. Checking on blur
+  // first replaces errors from a field left while another was still empty. The Zod schemas run synchronously.
+  form.validate('blur')
   void form.handleSubmit()
 }
 
