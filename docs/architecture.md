@@ -81,6 +81,10 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   and uses only the public exports of the others. Nothing else imports it.
 - Only `apps/server` imports `packages/domain` (the database schemas, migrations and client), so no browser app or
   the host ever pulls in database code.
+- App code reaches the database only through `domain.forUser(principal)`, whose repositories add
+  `userId = principal.userId` to every query, so a handler can't forget it. `forAuthLibrary()` is for Better Auth's
+  adapter only; `skipAuthorization(reason)` needs a real reason and is logged on every call. Every new table with a
+  `userId` column must be registered in `scopedTables`, which a test enforces.
 - `packages/shared/src/contracts` is the boundary. Any two parts talk only through a contract defined there.
 - Server-side config comes from the root `.env` through `loadRootEnv()` (`@orch/shared/env`, Node-only, kept out of
   the browser entry), which never overrides variables already set.
