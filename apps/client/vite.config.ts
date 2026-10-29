@@ -1,25 +1,19 @@
-import { SIDEBAR_BOOT_SCRIPT } from '@orch/terminal-ui'
-import { FAVICON_HREF, THEME_BOOT_SCRIPT } from '@orch/ui'
 import tailwindcss from '@tailwindcss/vite'
+import { tanstackStart } from '@tanstack/react-start/plugin/vite'
 import viteReact from '@vitejs/plugin-react'
-import { defineConfig, type Plugin } from 'vite'
+import { defineConfig } from 'vite'
 
-/**
- * Inlines the theme and sidebar boot scripts into the document head, so they run before the first paint, and adds
- * the shared favicon.
- */
-function bootScripts(): Plugin {
-  return {
-    name: 'orch-boot-scripts',
-    transformIndexHtml: () => [
-      { tag: 'script', children: `${THEME_BOOT_SCRIPT};${SIDEBAR_BOOT_SCRIPT}`, injectTo: 'head-prepend' },
-      { tag: 'link', attrs: { rel: 'icon', type: 'image/svg+xml', href: FAVICON_HREF }, injectTo: 'head' },
-    ],
-  }
-}
+// Where `/api` goes in dev: the cloud server, which will serve the accounts API on its own origin in production.
+const apiTarget = process.env.CLIENT_API_TARGET || 'http://127.0.0.1:4600'
 
 export default defineConfig({
-  server: { host: '127.0.0.1' },
+  server: { host: '127.0.0.1', proxy: { '/api': { target: apiTarget } } },
   preview: { host: '127.0.0.1' },
-  plugins: [bootScripts(), tailwindcss(), viteReact()],
+  // The build is a static folder: `dist/index.html` (the prerendered SPA shell) and its assets, which `apps/server`
+  // serves. The server bundle only exists to prerender the shell, so it goes to `.output` and is never deployed.
+  environments: {
+    client: { build: { outDir: 'dist' } },
+    ssr: { build: { outDir: '.output/server' } },
+  },
+  plugins: [tailwindcss(), tanstackStart({ spa: { enabled: true, prerender: { outputPath: '/index' } } }), viteReact()],
 })

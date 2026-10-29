@@ -13,7 +13,9 @@
     "@orch/terminal-ui": "workspace:*",
     "@orch/ui": "workspace:*",
     "@tailwindcss/vite": "^4.3.3",
+    "@tanstack/react-query": "^5.104.4",
     "@tanstack/react-router": "^1.170.44",
+    "@tanstack/react-start": "^1.169.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "tailwindcss": "^4.3.3"
