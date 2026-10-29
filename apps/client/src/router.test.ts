@@ -4,7 +4,9 @@ import { useQueryClient } from '@tanstack/react-query'
 import { createMemoryHistory, RouterProvider } from '@tanstack/react-router'
 import { createElement } from 'react'
 import { renderToString } from 'react-dom/server'
+import { CheckInbox } from './components/CheckInbox'
 import { signInWithEmail, signOut } from './lib/auth'
+import { acceptEmailLinkToken, type EmailLinkPage, takeEmailLinkToken } from './lib/emailLink'
 import { saveMachine } from './lib/machines'
 import { installMemoryStorage, uninstallMemoryStorage } from './lib/testStorage'
 
@@ -171,5 +173,74 @@ describe('session guard', () => {
     await signOut(router.options.context.queryClient)
     for (let i = 0; i < 100 && router.state.location.pathname === '/'; i++) await Bun.sleep(10)
     expect(router.state.location.pathname).toBe('/auth/sign-in')
+  })
+})
+
+/** Keeps `token` for `page`, as `getRouter()` does when the browser opens that page's emailed link. */
+function openEmailLink(page: EmailLinkPage, token: string) {
+  const location = { pathname: `/auth/${page}`, search: '', hash: `#token=${token}` }
+  acceptEmailLinkToken({ location, history: { state: null, replaceState() {} } })
+}
+
+/** How many `<input>` elements `html` has. */
+const inputs = (html: string) => html.match(/<input\b/g)?.length ?? 0
+
+describe('email pages', () => {
+  test('sign-in links to forgot password and to the resend form, and sign-up offers to send the link again', async () => {
+    signedIn = false
+    const signIn = await render('/auth/sign-in')
+    expect(signIn).toContain('href="/auth/forgot-password"')
+    expect(signIn).toContain('href="/auth/verify-email"')
+
+    const inbox = renderToString(createElement(CheckInbox, { email: 'ada@example.com', footer: null }))
+    expect(inbox).toContain('ada@example.com')
+    expect(inbox).toMatch(/<button type="button"[^>]*>Send the link again<\/button>/)
+    expect(inbox).not.toMatch(/<button[^>]*\sdisabled=/)
+  })
+
+  test('verify email starts verifying with a token, offers only the resend form without one, and stays signed in', async () => {
+    signedIn = false
+    openEmailLink('verify-email', 'abc')
+    expect(await render('/auth/verify-email')).toContain('Verifying your email address')
+    // The page took the token, so a second visit, like a reload, finds none.
+    expect(takeEmailLinkToken('verify-email')).toBeNull()
+
+    const form = await render('/auth/verify-email')
+    expect(form).toContain('Verify your email address')
+    expect(form).not.toContain('expired')
+    expect(inputs(form)).toBe(1)
+    expect(form).toContain('type="email"')
+
+    signedIn = true
+    expect((await land('/auth/verify-email')).state.location.pathname).toBe('/auth/verify-email')
+  })
+
+  test('reset password asks for a new password with a token, says the link expired without one, and stays signed in', async () => {
+    signedIn = false
+    openEmailLink('reset-password', 't1')
+    // Another page's link token is never handed to this one.
+    expect(await render('/auth/verify-email')).not.toContain('Verifying')
+    const form = await render('/auth/reset-password')
+    expect(form).toContain('Choose a new password')
+    expect(form).toMatch(/<input [^>]*autoComplete="new-password"/i)
+    expect(form).toContain('name="password"')
+
+    const expired = await render('/auth/reset-password')
+    expect(expired).toContain('This link has expired or is no longer valid.')
+    expect(expired).toContain('href="/auth/forgot-password"')
+    expect(inputs(expired)).toBe(0)
+
+    signedIn = true
+    expect((await land('/auth/reset-password')).state.location.pathname).toBe('/auth/reset-password')
+  })
+
+  test('forgot password is a one-field form when signed out, and a signed-in visit goes home', async () => {
+    signedIn = false
+    const form = await render('/auth/forgot-password')
+    expect(inputs(form)).toBe(1)
+    expect(form).toContain('type="email"')
+
+    signedIn = true
+    expect((await land('/auth/forgot-password')).state.location.href).toBe('/')
   })
 })

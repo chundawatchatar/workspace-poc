@@ -113,6 +113,60 @@ export async function signUpWithEmail(email: string, password: string, name: str
   return 'Creating the account failed. Try again.'
 }
 
+/** What a link page shows when the server refuses its token: expired, already used, malformed or for no account. */
+export const EXPIRED_LINK = 'This link has expired or is no longer valid.'
+
+/**
+ * Asks the server to email a new verification link to `email`. The server answers the same whether the address has
+ * an unverified account, a verified one or none, so this can't tell either. Returns a message to show, or null.
+ */
+export async function resendVerificationEmail(email: string) {
+  const { error } = await authClient().sendVerificationEmail({ email })
+  if (!error) return null
+  if (error.status === 429) return TOO_MANY_ATTEMPTS
+  return 'Sending the email failed. Try again.'
+}
+
+/**
+ * Verifies an email address with the token from its emailed link. It never signs in. Returns a message to show,
+ * `EXPIRED_LINK` for any refused token, or null once the address is verified.
+ */
+export async function verifyEmailToken(token: string) {
+  const { error } = await authClient().verifyEmail({ query: { token } })
+  if (!error) return null
+  if (error.status === 400 || error.status === 401) return EXPIRED_LINK
+  if (error.status === 429) return TOO_MANY_ATTEMPTS
+  return 'Verifying the address failed. Try again.'
+}
+
+/**
+ * Asks the server to email a password-reset link to `email`. The answer is the same whether or not the address has
+ * an account. Returns a message to show, or null.
+ */
+export async function requestPasswordReset(email: string) {
+  const { error } = await authClient().requestPasswordReset({ email })
+  if (!error) return null
+  if (error.status === 429) return TOO_MANY_ATTEMPTS
+  return 'Sending the email failed. Try again.'
+}
+
+/**
+ * Sets a new password with the token from a reset link, then reads the session again: the server ends every session
+ * of the account, so one in this browser signs out and the cache is cleared. Returns a message to show,
+ * `EXPIRED_LINK` for a refused token, or null once the password has changed.
+ */
+export async function resetPassword(queryClient: QueryClient, token: string, newPassword: string) {
+  const { error } = await authClient().resetPassword({ token, newPassword })
+  if (error) {
+    if (error.code === 'INVALID_TOKEN') return EXPIRED_LINK
+    if (error.status === 429) return TOO_MANY_ATTEMPTS
+    return 'Changing the password failed. Try again.'
+  }
+  // The password has changed whatever this read finds; a failed read leaves the guards to notice later.
+  await refetchSession(queryClient).catch(() => {})
+  return null
+}
+
 /**
  * Signs out and marks the session as signed out, which clears every account's data from the cache. Throws when the
  * server still holds the session afterwards.

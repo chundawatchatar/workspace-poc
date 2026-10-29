@@ -38,12 +38,20 @@ function SignIn() {
     <AuthCard
       title="Sign in"
       footer={
-        <p>
-          New here?{' '}
-          <Link to="/auth/sign-up" search={target ? { redirect: target } : {}} className={linkClass}>
-            Create an account
+        <>
+          <p>
+            New here?{' '}
+            <Link to="/auth/sign-up" search={target ? { redirect: target } : {}} className={linkClass}>
+              Create an account
+            </Link>
+          </p>
+          <Link to="/auth/forgot-password" className={`self-start ${linkClass}`}>
+            Forgot your password?
           </Link>
-        </p>
+          <Link to="/auth/verify-email" className={`self-start ${linkClass}`}>
+            Didn't get the verification email?
+          </Link>
+        </>
       }
     >
       <form

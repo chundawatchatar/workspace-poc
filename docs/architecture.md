@@ -156,12 +156,27 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   Auth's defaults); the server stays the authority. A new submit clears the last form-level error before its request
   goes out, and a successful sign-up empties the form before showing "Check your inbox", whose heading then takes
   focus. Neither page keeps the email or password outside the form state, logs them or puts them in the URL.
-- Handoff to the email pages job: its pages (check your inbox, verify email, forgot and reset password) go under the
-  `/auth` layout, and the server's email links point at `/auth/*`. Any of them a signed-in user may open, such as a
-  verification link, leaves `leaveIfSignedIn` off. `safeRedirect` already refuses every `/auth` path, so signing in
-  never lands back on one. Sign-up success is still an in-page "Check your inbox" state naming the address, not a
-  route, and the 403 (email not verified) sign-in message only points at the inbox, with no resend button. That job
-  can swap both for links to its own pages, and add the verification `callbackURL`.
+- The client's email pages live under `/auth` too. Sign-up success is an in-page "Check your inbox" state
+  (`src/components/CheckInbox.tsx`), so the address never enters the URL; its "Send the link again" button posts
+  `/api/auth/send-verification-email` and then stays off for 30 seconds (not kept across a reload; Better Auth's limit
+  of 3 a minute is the real guard). `/auth/verify-email` verifies the token from its link once, with
+  `GET /api/auth/verify-email?token=…`, and never signs in; with a refused token (one message for expired, invalid and
+  unknown user) or none it shows a resend form. `/auth/forgot-password` posts `/api/auth/request-password-reset`, and
+  `/auth/reset-password` posts `/api/auth/reset-password` with the link's token and the new password, then reads the
+  session again, since the reset ends every session of the account. Resend and forgot-password give the same
+  confirmation whether or not the address has an account, as the server does. Only `/auth/forgot-password` uses
+  `leaveIfSignedIn`: a verify or reset link may be opened while signed in. The sign-in page links to forgot-password
+  and to verify-email's resend form.
+- Emailed links carry their token in the fragment: the server builds them from the origin of `BETTER_AUTH_URL` and
+  the token Better Auth hands its email callbacks (`emailLinkUrl` in `auth.service.ts`), as
+  `/auth/verify-email#token=<t>` and `/auth/reset-password#token=<t>`, never Better Auth's own `url`. Browsers never
+  send a fragment, so the token stays out of server logs and `Referer`. `acceptEmailLinkToken` (`src/lib/emailLink.ts`)
+  runs in `getRouter()` next to `acceptConnectLink`, and again on `popstate` (registered before the router's own
+  listener) for a link opened in a tab already on its page: it keeps the token in a module variable and replaces the
+  URL with the same path and search, so the token never enters the router's location or history, a query key or
+  storage. The page takes it once with `takeEmailLinkToken(page)`, and calls `verifyEmailToken` or `resetPassword`
+  directly, never as a query. A reload finds no token and shows the page's no-token state. Better Auth's
+  `/api/auth/reset-password/<token>` GET endpoint stays mounted, but no email links to it.
 - Accepted for development, accounts are required by the client: with `DATABASE_URL` unset the server answers 404
   for `/api/auth/*`, the session reads as signed out, and the user is sent to a sign-in that can't work.
   `.env.example` sets `DATABASE_URL`.
