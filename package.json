@@ -13,6 +13,8 @@
     "dev:site": "bun run --filter '*' dev:site",
     "db:up": "docker compose up -d --wait",
     "db:down": "docker compose down",
+    "db:generate": "bun run --filter @orch/domain db:generate",
+    "db:migrate": "bun run --filter @orch/domain db:migrate",
     "host:rotate-key": "bun run --filter @orch/host rotate-key",
     "terminals:stop": "bun scripts/stop-terminals.ts",
     "test:bun-daemon": "bun scripts/verify-bun-daemon.ts",
