@@ -1,9 +1,12 @@
-// Everything a launch will change lives here: the name, links and prices. The URLs are placeholders.
+import { PRODUCT_NAME, PRODUCT_TAGLINE } from '@orch/ui/brand'
+
+// Everything a launch will change lives here: the links and prices. The URLs are placeholders. The name and tagline
+// come from `@orch/ui/brand`, which the apps share.
 
 export const SITE = {
-  name: 'Orchestrator',
+  name: PRODUCT_NAME,
   short: 'orch',
-  tagline: 'Your agents, your machine, any browser.',
+  tagline: PRODUCT_TAGLINE,
   description:
     'A free, local-first workspace for terminals and coding agents. Split panes, tabs and real shells that run on your own machine and live in your browser.',
   domain: 'orchestrator.example.com',
