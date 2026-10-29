@@ -1,3 +1,4 @@
+export * from './brand'
 export * from './FolderBrowser'
 export * from './Icon'
 export * from './lib/reconnect'

@@ -6,7 +6,7 @@ import {
   TerminalUI,
   type TerminalUIProps,
 } from '@orch/terminal-ui'
-import { THEME_BOOT_SCRIPT } from '@orch/ui'
+import { FAVICON_HREF, THEME_BOOT_SCRIPT } from '@orch/ui'
 import { createRootRoute, HeadContent, Outlet, Scripts, useNavigate, useParams } from '@tanstack/react-router'
 import { type ReactNode, useCallback } from 'react'
 import appCss from '../styles.css?url'
@@ -21,7 +21,10 @@ export const Route = createRootRoute({
       { name: 'viewport', content: 'width=device-width, initial-scale=1' },
       { title: 'Workspaces' },
     ],
-    links: [{ rel: 'stylesheet', href: appCss }],
+    links: [
+      { rel: 'stylesheet', href: appCss },
+      { rel: 'icon', type: 'image/svg+xml', href: FAVICON_HREF },
+    ],
   }),
   shellComponent: RootDocument,
   component: RootLayout,
