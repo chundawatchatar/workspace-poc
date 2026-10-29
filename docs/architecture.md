@@ -164,8 +164,9 @@ That only stays easy if every remote access job keeps these rules:
   browser side of encryption goes in one place.
 - **The protocol is versioned.** The `hello` frame already carries a version. Adding sealed frames means a new version,
   and a server that doesn't know it rejects the connection clearly instead of misreading frames.
-- **`apps/client`'s build stays static.** It gets no configuration injected by the server, so it can later be served
-  from an origin the server doesn't control. A server that serves the app could also serve modified JavaScript, which
+- **`apps/client`'s build stays static.** It is a TanStack Start app in SPA mode: the build prerenders only the root
+  shell into `index.html` next to its assets, and no server bundle runs at request time. It gets no configuration
+  injected by the server, so it can later be served from an origin the server doesn't control. A server that serves the app could also serve modified JavaScript, which
   would defeat end-to-end encryption.
 
 #### Keeping the machine connected
