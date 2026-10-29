@@ -12,6 +12,7 @@
     "@hono/bun": "^1.0.1",
     "@orch/domain": "workspace:*",
     "@orch/shared": "workspace:*",
+    "better-auth": "1.7.14",
     "hono": "^4.13.13",
     "nodemailer": "10.3.0",
     "zod": "^4.6.7"
