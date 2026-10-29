@@ -92,6 +92,25 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   trusted `Origin` and a JSON `Content-Type`. `/api/auth/*` is Better Auth's and is never in `serverRoutes`. The
   accounts modules are mounted only when `DATABASE_URL` is set, and the server refuses to start against an
   unreachable or unmigrated database.
+- Better Auth (pinned at 1.7.14, the version `packages/domain` generates its tables with) owns `/api/auth/*`, in
+  `apps/server/src/modules/auth/`. It gives email-and-password sign-up with required email verification, sign-in,
+  sign-out and password reset, and sends its emails through the mailer. It reaches the database only through
+  `domain.forAuthLibrary()`. Sessions live in the database, and the cookie cache is off, so every request reads the
+  session there and a sign-out or a password reset (which revokes every session) ends a session on its very next
+  request. Accounts never replace a machine's access key.
+- The session cookie is `Path=/api`, `HttpOnly`, `Secure` and `SameSite=Lax`. Browsers never send it to the relayed
+  machines under `/m/*`, and the relay drops `Cookie` there as well. Its name has the `__Secure-` prefix when
+  `BETTER_AUTH_URL` is `https://` and none on `http://`.
+- Better Auth checks the `Origin` of non-GET requests against `SERVER_TRUSTED_ORIGINS` plus the origin of
+  `BETTER_AUTH_URL`, and rate limits by client IP in memory (per process, reset on restart). The IP comes from the
+  `x-orch-client-ip` header the auth routes set from the server's own client IP reader, replacing any value a client
+  sent, so a spoofed `X-Forwarded-For` counts only when `SERVER_TRUST_PROXY` is on.
+- Account enumeration: with `requireEmailVerification` on, Better Auth 1.7.14 answers a sign-up for an already
+  registered email exactly like a new one (the same status, a synthetic user of the same shape, no cookie, no
+  `USER_ALREADY_EXISTS`) and creates nothing (`sign-up.mjs`, `shouldReturnGenericDuplicateResponse`). The accepted
+  risk is timing: a new sign-up waits for the verification email to send and a duplicate sends nothing, so response
+  times can still differ. If the mailer fails during sign-up, Better Auth logs the failure and still answers 200; the
+  user exists unverified and recovers through a later "resend" page.
 - The server sends email only through the mailer (`apps/server/src/modules/mailer/`), one template file per email,
   as plain text plus HTML over SMTP (Mailpit in development). Tests read emails from the capturing transport in
   `mailer.testing.ts` instead of a network. Emails carry single-use links, so the link, tokens, the recipient, the
