@@ -64,7 +64,7 @@ not the proxy's.
 | Path | What it is |
 | --- | --- |
 | `apps/web` | The local app shell: TanStack Start and the router, rendering `packages/terminal-ui` against the local host |
-| `apps/client` | The global app: a static Vite SPA that lists the machines linked in this browser and opens one through the cloud server. Run it with `bun run dev:client` |
+| `apps/client` | The global app: a TanStack Start SPA, built to a static folder, that lists the machines linked in this browser and opens one through the cloud server. Run it with `bun run dev:client` |
 | `apps/site` | The marketing site and user docs: a static Astro site styled as an Orchestrator window, reusing the app's themes and shortcut list. Run it with `bun run dev:site` |
 | `apps/host` | The host service: Bun and Hono. Owns the layout and talks to terminals |
 | `apps/ptyd-bun` | The Bun terminal daemon: owns the PTY and screen so shells outlive the host |
