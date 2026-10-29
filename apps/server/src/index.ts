@@ -1,3 +1,4 @@
+import './env'
 import { join } from 'node:path'
 import { createApp } from './app'
 import { parseAllowedOrigins } from './lib/security'
