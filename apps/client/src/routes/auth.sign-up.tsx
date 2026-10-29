@@ -4,6 +4,7 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { useRef, useState } from 'react'
 import { AuthCard } from '../components/AuthCard'
 import { linkClass } from '../components/Centered'
+import { CheckInbox } from '../components/CheckInbox'
 import { leaveIfSignedIn } from '../lib/auth'
 import { focusFirstInvalid, shownError, signUpFormOptions, submitOnce } from '../lib/authForms'
 
@@ -34,20 +35,14 @@ function SignUp() {
 
   if (sentTo) {
     return (
-      <AuthCard
-        title="Check your inbox"
-        focusTitle
+      <CheckInbox
+        email={sentTo}
         footer={
           <Link to="/auth/sign-in" search={signInSearch} className={linkClass}>
             Back to sign in
           </Link>
         }
-      >
-        <p role="status" className="text-[13px] text-dim">
-          We sent a link to <strong className="font-medium text-ink">{sentTo}</strong>. Open it to verify your address,
-          then sign in.
-        </p>
-      </AuthCard>
+      />
     )
   }
 

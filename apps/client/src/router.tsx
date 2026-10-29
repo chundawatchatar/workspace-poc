@@ -1,6 +1,7 @@
 import { QueryClient } from '@tanstack/react-query'
 import { createRouter, type RouterHistory } from '@tanstack/react-router'
 import { watchIdentity } from './lib/auth'
+import { acceptEmailLinkToken } from './lib/emailLink'
 import { acceptConnectLink } from './lib/machines'
 import { ServerError } from './lib/server'
 import { routeTree } from './routeTree.gen'
@@ -16,9 +17,15 @@ export interface RouterContext {
  * a memory history; the app uses the browser's.
  */
 export function getRouter(history?: RouterHistory) {
-  // A connect link works on any path. Read it before the router does, so the router starts on the machine's page
-  // and the key never reaches the router's history.
-  if (!history && typeof window !== 'undefined') acceptConnectLink()
+  // Links carry secrets in the fragment: a connect link's key on any path, and an emailed link's token on its page.
+  // Read them before the router does, so the router starts on the right page and neither reaches its history.
+  if (!history && typeof window !== 'undefined') {
+    acceptConnectLink()
+    acceptEmailLinkToken()
+    // An emailed link opened in a tab already on its page changes only the fragment. This listener is added before
+    // the router's own, so the token leaves the URL before the router reads it.
+    window.addEventListener('popstate', () => acceptEmailLinkToken())
+  }
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: {

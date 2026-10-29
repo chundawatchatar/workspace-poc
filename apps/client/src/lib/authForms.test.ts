@@ -1,14 +1,23 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { FormApi } from '@tanstack/react-form'
 import { QueryClient } from '@tanstack/react-query'
-import { shownError, signInFormOptions, signInSchema, signUpFormOptions, signUpSchema, submitOnce } from './authForms'
+import {
+  emailSchema,
+  resetPasswordSchema,
+  shownError,
+  signInFormOptions,
+  signInSchema,
+  signUpFormOptions,
+  signUpSchema,
+  submitOnce,
+} from './authForms'
 
 /** The message for each field that fails, keyed by field name. */
 function problems(result: { success: boolean; error?: { issues: { path: PropertyKey[]; message: string }[] } }) {
   return Object.fromEntries((result.error?.issues ?? []).map((issue) => [String(issue.path[0]), issue.message]))
 }
 
-describe('signInSchema and signUpSchema', () => {
+describe('the auth schemas', () => {
   test('each missing or malformed field gets its own readable message', () => {
     expect(problems(signInSchema.safeParse({ email: '', password: '' }))).toEqual({
       email: 'Enter your email address.',
@@ -30,6 +39,16 @@ describe('signInSchema and signUpSchema', () => {
     expect(signUpSchema.safeParse({ name: 'Ada', email: 'a@example.com', password: 'x'.repeat(128) }).success).toBe(
       true,
     )
+
+    expect(problems(emailSchema.safeParse({ email: ' ' }))).toEqual({ email: 'Enter your email address.' })
+    expect(emailSchema.parse({ email: ' a@example.com ' }).email).toBe('a@example.com')
+    expect(problems(resetPasswordSchema.safeParse({ password: 'x'.repeat(7) }))).toEqual({
+      password: 'Use at least 8 characters.',
+    })
+    expect(problems(resetPasswordSchema.safeParse({ password: 'x'.repeat(129) }))).toEqual({
+      password: 'Use at most 128 characters.',
+    })
+    expect(resetPasswordSchema.safeParse({ password: 'x'.repeat(8) }).success).toBe(true)
   })
 })
 

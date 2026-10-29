@@ -1,9 +1,16 @@
 import { formOptions } from '@tanstack/react-form'
 import type { QueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
-import { signInWithEmail, signUpWithEmail } from './auth'
+import {
+  EXPIRED_LINK,
+  requestPasswordReset,
+  resendVerificationEmail,
+  resetPassword,
+  signInWithEmail,
+  signUpWithEmail,
+} from './auth'
 
-// The rules and helpers the sign-in and sign-up forms share. The server stays the authority; these only catch
+// The rules and helpers the forms under `/auth` share. The server stays the authority; these only catch
 // mistakes before a request is sent.
 
 const email = z.string().trim().min(1, 'Enter your email address.').pipe(z.email('Enter a valid email address.'))
@@ -14,12 +21,21 @@ export const signInSchema = z.object({
   password: z.string().min(1, 'Enter your password.'),
 })
 
-/** What the sign-up form checks. The password limits are Better Auth's defaults. */
+// A new password. The limits are Better Auth's defaults.
+const newPassword = z.string().min(8, 'Use at least 8 characters.').max(128, 'Use at most 128 characters.')
+
+/** What the sign-up form checks. */
 export const signUpSchema = z.object({
   name: z.string().trim().min(1, 'Enter your name.'),
   email,
-  password: z.string().min(8, 'Use at least 8 characters.').max(128, 'Use at most 128 characters.'),
+  password: newPassword,
 })
+
+/** What the forms that only ask for an address check: resending the verification email, and a forgotten password. */
+export const emailSchema = z.object({ email })
+
+/** What the reset-password form checks: the new password, with the same limits as sign-up. */
+export const resetPasswordSchema = z.object({ password: newPassword })
 
 /** What a form field reports about itself, as TanStack Form keeps it. */
 interface FieldMeta {
@@ -108,6 +124,79 @@ export function signUpFormOptions({
       }
       formApi.reset()
       onSent(email)
+    },
+  })
+}
+
+/**
+ * The options of a form that emails a link to one address through `send`. A submit clears the last `setProblem`
+ * message as it starts, then reports a failure through `setProblem`, or empties the form and calls `onSent` with the
+ * address. The server answers the same whether or not the address has an account, so `onSent` can't tell either.
+ */
+function emailLinkFormOptions(
+  send: (email: string) => Promise<string | null>,
+  { setProblem, onSent }: { setProblem: (message: string | null) => void; onSent: (email: string) => void },
+) {
+  return formOptions({
+    defaultValues: { email: '' },
+    validators: { onChange: emailSchema, onBlur: emailSchema },
+    onSubmit: async ({ value, formApi }) => {
+      setProblem(null)
+      const { email } = emailSchema.parse(value)
+      const message = await send(email).catch(() => 'Sending the email failed. Try again.')
+      if (message) {
+        setProblem(message)
+        return
+      }
+      formApi.reset()
+      onSent(email)
+    },
+  })
+}
+
+/** The options of the form that sends a new verification link; see `emailLinkFormOptions`. */
+export function resendVerificationFormOptions(callbacks: Parameters<typeof emailLinkFormOptions>[1]) {
+  return emailLinkFormOptions(resendVerificationEmail, callbacks)
+}
+
+/** The options of the form that sends a password-reset link; see `emailLinkFormOptions`. */
+export function forgotPasswordFormOptions(callbacks: Parameters<typeof emailLinkFormOptions>[1]) {
+  return emailLinkFormOptions(requestPasswordReset, callbacks)
+}
+
+/**
+ * The reset-password form's options for the link's `token`. A submit clears the last `setProblem` message as it
+ * starts. A refused token calls `onExpired`, another failure goes to `setProblem`, and success empties the form, so
+ * the password is gone, and calls `onChanged`.
+ */
+export function resetPasswordFormOptions(
+  queryClient: QueryClient,
+  token: string,
+  {
+    setProblem,
+    onExpired,
+    onChanged,
+  }: { setProblem: (message: string | null) => void; onExpired: () => void; onChanged: () => void },
+) {
+  return formOptions({
+    defaultValues: { password: '' },
+    validators: { onChange: resetPasswordSchema, onBlur: resetPasswordSchema },
+    onSubmit: async ({ value, formApi }) => {
+      setProblem(null)
+      const { password } = resetPasswordSchema.parse(value)
+      const message = await resetPassword(queryClient, token, password).catch(
+        () => 'Changing the password failed. Try again.',
+      )
+      if (message === EXPIRED_LINK) {
+        onExpired()
+        return
+      }
+      if (message) {
+        setProblem(message)
+        return
+      }
+      formApi.reset()
+      onChanged()
     },
   })
 }

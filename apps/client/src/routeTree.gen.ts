@@ -13,8 +13,11 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as SplatRouteImport } from './routes/$'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthIndexRouteImport } from './routes/auth.index'
+import { Route as AuthForgotPasswordRouteImport } from './routes/auth.forgot-password'
+import { Route as AuthResetPasswordRouteImport } from './routes/auth.reset-password'
 import { Route as AuthSignInRouteImport } from './routes/auth.sign-in'
 import { Route as AuthSignUpRouteImport } from './routes/auth.sign-up'
+import { Route as AuthVerifyEmailRouteImport } from './routes/auth.verify-email'
 import { Route as MMachineIdRouteImport } from './routes/m.$machineId'
 import { Route as MMachineIdIndexRouteImport } from './routes/m.$machineId.index'
 import { Route as MMachineIdSplatRouteImport } from './routes/m.$machineId.$'
@@ -40,6 +43,16 @@ const AuthIndexRoute = AuthIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AuthRoute,
 } as any)
+const AuthForgotPasswordRoute = AuthForgotPasswordRouteImport.update({
+  id: '/forgot-password',
+  path: '/forgot-password',
+  getParentRoute: () => AuthRoute,
+} as any)
+const AuthResetPasswordRoute = AuthResetPasswordRouteImport.update({
+  id: '/reset-password',
+  path: '/reset-password',
+  getParentRoute: () => AuthRoute,
+} as any)
 const AuthSignInRoute = AuthSignInRouteImport.update({
   id: '/sign-in',
   path: '/sign-in',
@@ -48,6 +61,11 @@ const AuthSignInRoute = AuthSignInRouteImport.update({
 const AuthSignUpRoute = AuthSignUpRouteImport.update({
   id: '/sign-up',
   path: '/sign-up',
+  getParentRoute: () => AuthRoute,
+} as any)
+const AuthVerifyEmailRoute = AuthVerifyEmailRouteImport.update({
+  id: '/verify-email',
+  path: '/verify-email',
   getParentRoute: () => AuthRoute,
 } as any)
 const MMachineIdRoute = MMachineIdRouteImport.update({
@@ -75,8 +93,11 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
   '/auth': typeof AuthRouteWithChildren
+  '/auth/forgot-password': typeof AuthForgotPasswordRoute
+  '/auth/reset-password': typeof AuthResetPasswordRoute
   '/auth/sign-in': typeof AuthSignInRoute
   '/auth/sign-up': typeof AuthSignUpRoute
+  '/auth/verify-email': typeof AuthVerifyEmailRoute
   '/m/$machineId': typeof MMachineIdRouteWithChildren
   '/auth/': typeof AuthIndexRoute
   '/m/$machineId/$': typeof MMachineIdSplatRoute
@@ -86,8 +107,11 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
+  '/auth/forgot-password': typeof AuthForgotPasswordRoute
+  '/auth/reset-password': typeof AuthResetPasswordRoute
   '/auth/sign-in': typeof AuthSignInRoute
   '/auth/sign-up': typeof AuthSignUpRoute
+  '/auth/verify-email': typeof AuthVerifyEmailRoute
   '/auth': typeof AuthIndexRoute
   '/m/$machineId/$': typeof MMachineIdSplatRoute
   '/m/$machineId': typeof MMachineIdIndexRoute
@@ -98,8 +122,11 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
   '/auth': typeof AuthRouteWithChildren
+  '/auth/forgot-password': typeof AuthForgotPasswordRoute
+  '/auth/reset-password': typeof AuthResetPasswordRoute
   '/auth/sign-in': typeof AuthSignInRoute
   '/auth/sign-up': typeof AuthSignUpRoute
+  '/auth/verify-email': typeof AuthVerifyEmailRoute
   '/m/$machineId': typeof MMachineIdRouteWithChildren
   '/auth/': typeof AuthIndexRoute
   '/m/$machineId/$': typeof MMachineIdSplatRoute
@@ -112,8 +139,11 @@ export interface FileRouteTypes {
     | '/'
     | '/$'
     | '/auth'
+    | '/auth/forgot-password'
+    | '/auth/reset-password'
     | '/auth/sign-in'
     | '/auth/sign-up'
+    | '/auth/verify-email'
     | '/m/$machineId'
     | '/auth/'
     | '/m/$machineId/$'
@@ -123,8 +153,11 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/$'
+    | '/auth/forgot-password'
+    | '/auth/reset-password'
     | '/auth/sign-in'
     | '/auth/sign-up'
+    | '/auth/verify-email'
     | '/auth'
     | '/m/$machineId/$'
     | '/m/$machineId'
@@ -134,8 +167,11 @@ export interface FileRouteTypes {
     | '/'
     | '/$'
     | '/auth'
+    | '/auth/forgot-password'
+    | '/auth/reset-password'
     | '/auth/sign-in'
     | '/auth/sign-up'
+    | '/auth/verify-email'
     | '/m/$machineId'
     | '/auth/'
     | '/m/$machineId/$'
@@ -180,6 +216,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthIndexRouteImport
       parentRoute: typeof AuthRoute
     }
+    '/auth/forgot-password': {
+      id: '/auth/forgot-password'
+      path: '/forgot-password'
+      fullPath: '/auth/forgot-password'
+      preLoaderRoute: typeof AuthForgotPasswordRouteImport
+      parentRoute: typeof AuthRoute
+    }
+    '/auth/reset-password': {
+      id: '/auth/reset-password'
+      path: '/reset-password'
+      fullPath: '/auth/reset-password'
+      preLoaderRoute: typeof AuthResetPasswordRouteImport
+      parentRoute: typeof AuthRoute
+    }
     '/auth/sign-in': {
       id: '/auth/sign-in'
       path: '/sign-in'
@@ -192,6 +242,13 @@ declare module '@tanstack/react-router' {
       path: '/sign-up'
       fullPath: '/auth/sign-up'
       preLoaderRoute: typeof AuthSignUpRouteImport
+      parentRoute: typeof AuthRoute
+    }
+    '/auth/verify-email': {
+      id: '/auth/verify-email'
+      path: '/verify-email'
+      fullPath: '/auth/verify-email'
+      preLoaderRoute: typeof AuthVerifyEmailRouteImport
       parentRoute: typeof AuthRoute
     }
     '/m/$machineId': {
@@ -226,14 +283,20 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthRouteChildren {
+  AuthForgotPasswordRoute: typeof AuthForgotPasswordRoute
+  AuthResetPasswordRoute: typeof AuthResetPasswordRoute
   AuthSignInRoute: typeof AuthSignInRoute
   AuthSignUpRoute: typeof AuthSignUpRoute
+  AuthVerifyEmailRoute: typeof AuthVerifyEmailRoute
   AuthIndexRoute: typeof AuthIndexRoute
 }
 
 const AuthRouteChildren: AuthRouteChildren = {
+  AuthForgotPasswordRoute: AuthForgotPasswordRoute,
+  AuthResetPasswordRoute: AuthResetPasswordRoute,
   AuthSignInRoute: AuthSignInRoute,
   AuthSignUpRoute: AuthSignUpRoute,
+  AuthVerifyEmailRoute: AuthVerifyEmailRoute,
   AuthIndexRoute: AuthIndexRoute,
 }
 
