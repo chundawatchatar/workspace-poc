@@ -17,3 +17,4 @@ factory/board.json.tmp
 factory/jobs/
 # The live backlog is local; finished sections are copied to factory/archive/ and committed
 factory/backlog.md
+.env

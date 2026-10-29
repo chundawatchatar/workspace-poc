@@ -8,6 +8,8 @@ Instructions for AI coding agents working in this repository. Shared by Claude C
 - `bun run dev` starts both apps: web on 127.0.0.1:3210 (strict port), host on 127.0.0.1:4599. It does not start the client.
 - `bun run dev:client` starts the global app (`apps/client`) on 127.0.0.1:3220 and the cloud server (`apps/server`) on 127.0.0.1:4600, set up to talk to each other. To reach this machine through them, run `bun run dev` in another terminal with `SERVER_URL=ws://127.0.0.1:4600 CLIENT_URL=http://127.0.0.1:3220`.
 - `bun run dev:site` starts the marketing site and docs (`apps/site`, Astro, static) on 127.0.0.1:3230. Its name, links and prices live in `apps/site/src/site.config.ts`; docs pages are Markdown in `apps/site/src/content/docs/`.
+- `bun run db:up` starts the dev Postgres and Mailpit from `compose.yaml` (localhost-only ports; inbox on http://127.0.0.1:8025) and waits until Postgres is healthy. `bun run db:down` stops them and keeps the data. Copy `.env.example` to `.env` first.
+- Server-side settings live in the root `.env` (gitignored; `.env.example` is the committed template). Server-side entry points, such as `apps/server` and a future `drizzle.config.ts`, call `loadRootEnv()` from `@orch/shared/env` before reading `process.env`, since Bun only auto-loads `.env` from the working directory. The shell environment wins over the file. Never load it in browser apps.
 - Verify changes with `bun run typecheck` (runs `tsc` in every workspace) and `bun test`.
 - Tests use Bun's built-in runner and live next to the source as `*.test.ts`. Keep them few and behavior-focused (see the `write-tests` skill). `bun run test:coverage` shows coverage.
 - `bun run lint` / `bun run format` run Biome (`biome.json` at the root) on the whole repo. After editing, format only the files you changed: `bunx biome check --write <files>`.
@@ -21,7 +23,7 @@ Instructions for AI coding agents working in this repository. Shared by Claude C
 
 ## Architecture gotchas
 
-- `packages/shared` holds the layout model, its reducer and the wire protocol (`protocol.ts`). It is consumed as raw TS (`exports: ./src/index.ts`), so it has no build step. Protocol changes must be made on both the host and the web side.
+- `packages/shared` holds the layout model, its reducer and the wire protocol (`protocol.ts`). It is consumed as raw TS (`exports: ./src/index.ts`), so it has no build step. Protocol changes must be made on both the host and the web side. Its one server-only helper, `loadRootEnv()`, is the subpath export `@orch/shared/env` and is never re-exported from `index.ts`, which browser code imports.
 - `packages/ui` holds the shared, presentational UI (components, themes, `styles.css`), consumed as raw TS like `packages/shared`. It is reused by a closed-source app, so components take data and callbacks as props and never import from an app (store, commands, router). `packages/terminal-ui` wraps them to connect its store.
 - `packages/terminal-ui` holds the page inside a machine (sidebar, layout, terminals, palette, shortcuts, overlays, toasts and their store), consumed as raw TS. Its root `<TerminalUI>` takes a `HostTransport` (every request and socket goes through it) and navigation callbacks as props. Like `packages/ui`, it never imports from an app (router, app store); differences between apps come in as props, never as app checks (`isClient`, `isLocal`, …).
 - `apps/web` is a thin shell: the document, the TanStack Router routes and a `<TerminalUI>` with a local transport. Page code goes in `packages/terminal-ui`.
