@@ -1,13 +1,18 @@
 import type { MachineFrame } from '@orch/shared'
 import { Hono } from 'hono'
 import { clientIpReader } from './lib/clientIp'
+import { type ServerRouterOptions, serverErrorResponse } from './lib/createServerRouter'
 import { machineCors, OriginPolicy, securityHeaders } from './lib/security'
 import { type BridgeSocketDeps, createBridgeSocket } from './modules/bridge/bridge.ws'
 import { createForwardRoutes, type ForwardRoutesDeps } from './modules/forward/forward.routes'
 import type { LimitsDeps } from './modules/limits/limits.middleware'
 import { createStaticRoutes, type StaticRoutesDeps } from './modules/static/static.routes'
+import { createSystemRoutes } from './modules/system/system.routes'
 import type { MachineConnection } from './modules/tunnel/tunnel.service'
 import { createTunnelSocket, type TunnelSocketDeps } from './modules/tunnel/tunnel.ws'
+
+/** Builds one module of the server API from the options every API router shares. */
+export type ApiModule = (options: ServerRouterOptions) => Hono
 
 /** Everything the server's modules need, built once in `index.ts`. Add another module's deps with `&`. */
 export type AppDeps = Omit<TunnelSocketDeps, 'onFrame' | 'onClose' | 'clientIp'> &
@@ -18,12 +23,17 @@ export type AppDeps = Omit<TunnelSocketDeps, 'onFrame' | 'onClose' | 'clientIp'>
     allowedOrigins?: readonly string[]
     /** True behind a proxy that sets `X-Forwarded-For`, which then gives the client IP. Defaults to false. */
     trustProxy?: boolean
+    /** What the server API's routers share: the trusted origins and the `authenticate` hook. */
+    api?: ServerRouterOptions
+    /** The accounts modules of the server API. Null or missing means accounts are off, and none is mounted. */
+    accounts?: { modules: readonly ApiModule[] } | null
   }
 
 /**
  * The server's routes. Security headers wrap everything, and the origin check
- * wraps `/m/*`. The tunnel is mounted first, then the relay routes, and the
- * static client last, so the client's `/m/<id>` pages never shadow the relay.
+ * wraps `/m/*`. The tunnel is mounted first, then the relay routes, then the
+ * server API, and the static client last, so the client's `/m/<id>` pages
+ * never shadow the relay and an unknown `/api` path never gets the client page.
  */
 export function createApp(deps: AppDeps): Hono {
   const { forwarder, bridge, limiter } = deps
@@ -65,6 +75,11 @@ export function createApp(deps: AppDeps): Hono {
   )
   app.route('/', createForwardRoutes({ ...deps, ...limits }))
   app.route('/', createBridgeSocket({ ...deps, ...limits }))
+  const api = deps.api ?? {}
+  app.route('/', createSystemRoutes(api))
+  for (const module of deps.accounts?.modules ?? []) app.route('/', module(api))
+  app.all('/api', () => serverErrorResponse(404, 'not_found'))
+  app.all('/api/*', () => serverErrorResponse(404, 'not_found'))
   app.route('/', createStaticRoutes(deps))
   return app
 }
