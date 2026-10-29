@@ -124,6 +124,26 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
 - The session cookie is `Path=/api`, `HttpOnly`, `Secure` and `SameSite=Lax`. Browsers never send it to the relayed
   machines under `/m/*`, and the relay drops `Cookie` there as well. Its name has the `__Secure-` prefix when
   `BETTER_AUTH_URL` is `https://` and none on `http://`.
+- In `apps/client`, `src/lib/auth.ts` is the one place that knows who is signed in. The session is a TanStack Query
+  entry under `['session']` (`sessionQuery`, through Better Auth's client on the page's own origin), holding only the
+  user's `id`, `email` and `name`, never a token; the root layout observes it, so it refetches when the window
+  regains focus, which is how a sign-out in another tab is noticed. Every query that holds account data is keyed
+  `['account', userId, ...]` through `accountKey` or `accountQuery` (signed-in `serverRoutes` endpoints), and
+  `serverQuery` takes only `auth: 'public'` endpoints. An identity watcher on the router's query client acts
+  whenever the user id changes (sign-in, sign-out, another account): it cancels in-flight queries, so a late answer
+  for the old user never lands, removes every query and mutation but the session, clears the pending machine link
+  (`sessionStorage`, `src/lib/pendingLink.ts`) and invalidates the router so the guards run again. A query or
+  mutation that fails with `unauthorized` reads the session again, so a session revoked elsewhere takes the same
+  path. Guarded routes (`/` and `/m/$machineId` with its children) use `requireSession` as `beforeLoad`, which sends
+  a signed-out user to `/sign-in?redirect=<path and search>`. `/sign-in` itself is never guarded, and after signing
+  in it goes to `safeRedirect(redirect)`: the value only when it is a path on this origin (one leading `/`, not `//`
+  or `/\`, no control characters) and not `/sign-in`, else `/`. The prerendered shell never reads the session.
+- Accepted for development, accounts are required by the client: with `DATABASE_URL` unset the server answers 404
+  for `/api/auth/*`, the session reads as signed out, and the user is sent to a sign-in that can't work.
+  `.env.example` sets `DATABASE_URL`.
+- Open question, saved machines: the machines saved in `localStorage` (`orch-machines`, with their access keys)
+  predate accounts and are not per user, so a second user in the same browser still sees them on the home page. The
+  account machine list replaces them.
 - Better Auth checks the `Origin` of non-GET requests against `SERVER_TRUSTED_ORIGINS` plus the origin of
   `BETTER_AUTH_URL`, and rate limits by client IP in memory (per process, reset on restart). The IP comes from the
   `x-orch-client-ip` header the auth routes set from the server's own client IP reader, replacing any value a client
