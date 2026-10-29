@@ -15,7 +15,7 @@ export function MachineList() {
   const onSignOut = async () => {
     try {
       await signOut(queryClient)
-      await navigate({ to: '/sign-in' })
+      await navigate({ to: '/auth/sign-in' })
     } catch {
       setSignOutFailed(true)
     }

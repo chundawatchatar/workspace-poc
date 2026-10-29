@@ -181,7 +181,7 @@ export function watchIdentity(queryClient: QueryClient, onChange: () => void) {
 }
 
 /**
- * A route's `beforeLoad` that sends a signed-out user to `/sign-in`, with the page they asked for in `redirect`.
+ * A route's `beforeLoad` that sends a signed-out user to `/auth/sign-in`, with the page they asked for in `redirect`.
  * The prerendered shell has no session to read, so it lets the prerender through.
  */
 export async function requireSession({
@@ -193,12 +193,13 @@ export async function requireSession({
 }) {
   if (import.meta.env.SSR) return
   const user = await context.queryClient.ensureQueryData({ ...sessionQuery, revalidateIfStale: true })
-  if (!user) throw redirect({ to: '/sign-in', search: { redirect: location.href } })
+  if (!user) throw redirect({ to: '/auth/sign-in', search: { redirect: location.href } })
 }
 
 /**
- * The `beforeLoad` of `/sign-in` and `/sign-up`: a signed-in user goes straight to `safeRedirect(redirect)`. Neither
- * page is ever guarded, or a signed-out user could never reach it.
+ * The `beforeLoad` of `/auth/sign-in` and `/auth/sign-up`: a signed-in user goes straight to `safeRedirect(redirect)`.
+ * Neither page is ever guarded, or a signed-out user could never reach it. The `/auth` layout has none of its own, so
+ * a page there that a signed-in user may need, such as one an emailed link opens, can leave it off.
  */
 export async function leaveIfSignedIn({
   context,
@@ -214,8 +215,8 @@ export async function leaveIfSignedIn({
 }
 
 /**
- * Where to go after signing in: `value` when it is a path on this origin, else `/`. Never `/sign-in` itself, so
- * signing in can't loop.
+ * Where to go after signing in: `value` when it is a path on this origin, else `/`. Never a page under `/auth`, so
+ * signing in can't loop back to a sign-in or into an emailed link's page.
  */
 export function safeRedirect(value: unknown): string {
   if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//') || value.startsWith('/\\')) {
@@ -227,7 +228,14 @@ export function safeRedirect(value: unknown): string {
   const base = 'http://page.invalid'
   const url = new URL(value, base)
   if (url.origin !== base) return '/'
-  // Paths match case-insensitively, and a trailing slash still reaches the same route.
-  if (url.pathname.toLowerCase().replace(/\/+$/, '') === '/sign-in') return '/'
+  // The router decodes the path and matches it case-insensitively, and a trailing slash still reaches the same route.
+  let path: string
+  try {
+    path = decodeURIComponent(url.pathname)
+  } catch {
+    return '/'
+  }
+  path = path.toLowerCase().replace(/\/+$/, '')
+  if (path === '/auth' || path.startsWith('/auth/')) return '/'
   return value
 }

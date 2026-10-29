@@ -1,4 +1,7 @@
+import { formOptions } from '@tanstack/react-form'
+import type { QueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
+import { signInWithEmail, signUpWithEmail } from './auth'
 
 // The rules and helpers the sign-in and sign-up forms share. The server stays the authority; these only catch
 // mistakes before a request is sent.
@@ -56,4 +59,55 @@ export function focusFirstInvalid(
       return
     }
   }
+}
+
+/**
+ * The sign-in form's options. A submit clears the last `setProblem` message as it starts, then reports the server's
+ * refusal through `setProblem`, or calls `onSignedIn`.
+ */
+export function signInFormOptions(
+  queryClient: QueryClient,
+  { setProblem, onSignedIn }: { setProblem: (message: string | null) => void; onSignedIn: () => Promise<unknown> },
+) {
+  return formOptions({
+    defaultValues: { email: '', password: '' },
+    validators: { onChange: signInSchema, onBlur: signInSchema },
+    onSubmit: async ({ value }) => {
+      setProblem(null)
+      const { email, password } = signInSchema.parse(value)
+      const message = await signInWithEmail(queryClient, email, password).catch(() => 'Signing in failed. Try again.')
+      if (message) setProblem(message)
+      else await onSignedIn()
+    },
+  })
+}
+
+/**
+ * The sign-up form's options. A submit clears the last `setProblem` message as it starts, then reports the server's
+ * refusal through `setProblem`, or empties the form, so the password is gone, and calls `onSent` with the address.
+ */
+export function signUpFormOptions({
+  setProblem,
+  onSent,
+}: {
+  setProblem: (message: string | null) => void
+  onSent: (email: string) => void
+}) {
+  return formOptions({
+    defaultValues: { name: '', email: '', password: '' },
+    validators: { onChange: signUpSchema, onBlur: signUpSchema },
+    onSubmit: async ({ value, formApi }) => {
+      setProblem(null)
+      const { name, email, password } = signUpSchema.parse(value)
+      const message = await signUpWithEmail(email, password, name).catch(
+        () => 'Creating the account failed. Try again.',
+      )
+      if (message) {
+        setProblem(message)
+        return
+      }
+      formApi.reset()
+      onSent(email)
+    },
+  })
 }

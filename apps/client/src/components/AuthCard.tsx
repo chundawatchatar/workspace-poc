@@ -1,15 +1,32 @@
-import type { ReactNode } from 'react'
+import { type ReactNode, useEffect, useRef } from 'react'
 
-/** The frame of the sign-in and sign-up pages: one heading, the form, and links to the other pages under it. */
-export function AuthCard({ title, children, footer }: { title: string; children: ReactNode; footer?: ReactNode }) {
+/**
+ * The card of one page under `/auth`: its heading, the only `h1` on the page, then the body and links to the other
+ * pages. With `focusTitle`, focus moves to the heading when the card appears, so a screen reader announces a card
+ * that replaced the form.
+ */
+export function AuthCard({
+  title,
+  children,
+  footer,
+  focusTitle = false,
+}: {
+  title: string
+  children: ReactNode
+  footer?: ReactNode
+  focusTitle?: boolean
+}) {
+  const headingRef = useRef<HTMLHeadingElement>(null)
+  useEffect(() => {
+    if (focusTitle) headingRef.current?.focus()
+  }, [focusTitle])
   return (
-    // The document never scrolls, so the page does, keeping a tall form reachable on a short screen.
-    <main className="flex h-full flex-col overflow-y-auto bg-bg p-6 text-ink">
-      <div className="m-auto flex w-full max-w-sm flex-col gap-5 rounded-lg border border-line bg-panel p-6">
-        <h1 className="text-lg font-semibold">{title}</h1>
-        {children}
-        {footer && <div className="flex flex-col gap-1 text-[13px] text-dim">{footer}</div>}
-      </div>
-    </main>
+    <div className="flex w-full flex-col gap-5 rounded-lg border border-line bg-panel p-6">
+      <h1 ref={headingRef} tabIndex={focusTitle ? -1 : undefined} className="text-lg font-semibold outline-none">
+        {title}
+      </h1>
+      {children}
+      {footer && <div className="flex flex-col gap-1 text-[13px] text-dim">{footer}</div>}
+    </div>
   )
 }

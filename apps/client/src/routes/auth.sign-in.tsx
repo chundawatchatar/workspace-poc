@@ -4,15 +4,15 @@ import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useRef, useState } from 'react'
 import { AuthCard } from '../components/AuthCard'
 import { linkClass } from '../components/Centered'
-import { leaveIfSignedIn, safeRedirect, signInWithEmail } from '../lib/auth'
-import { focusFirstInvalid, shownError, signInSchema, submitOnce } from '../lib/authForms'
+import { leaveIfSignedIn, safeRedirect } from '../lib/auth'
+import { focusFirstInvalid, shownError, signInFormOptions, submitOnce } from '../lib/authForms'
 
-/** The search params of `/sign-in`: where to go once signed in. */
+/** The search params of `/auth/sign-in`: where to go once signed in. */
 interface SignInSearch {
   redirect?: string
 }
 
-export const Route = createFileRoute('/sign-in')({
+export const Route = createFileRoute('/auth/sign-in')({
   validateSearch: (search: Record<string, unknown>): SignInSearch =>
     typeof search.redirect === 'string' ? { redirect: search.redirect } : {},
   beforeLoad: leaveIfSignedIn,
@@ -27,15 +27,11 @@ function SignIn() {
   const [problem, setProblem] = useState<string | null>(null)
 
   const form = useForm({
-    defaultValues: { email: '', password: '' },
-    validators: { onChange: signInSchema, onBlur: signInSchema },
+    ...signInFormOptions(queryClient, {
+      setProblem,
+      onSignedIn: () => navigate({ href: safeRedirect(target), replace: true }),
+    }),
     onSubmitInvalid: ({ formApi }) => focusFirstInvalid(formRef.current, formApi.state.fieldMeta),
-    onSubmit: async ({ value }) => {
-      const { email, password } = signInSchema.parse(value)
-      const message = await signInWithEmail(queryClient, email, password).catch(() => 'Signing in failed. Try again.')
-      setProblem(message)
-      if (!message) await navigate({ href: safeRedirect(target), replace: true })
-    },
   })
 
   return (
@@ -44,7 +40,7 @@ function SignIn() {
       footer={
         <p>
           New here?{' '}
-          <Link to="/sign-up" search={target ? { redirect: target } : {}} className={linkClass}>
+          <Link to="/auth/sign-up" search={target ? { redirect: target } : {}} className={linkClass}>
             Create an account
           </Link>
         </p>
