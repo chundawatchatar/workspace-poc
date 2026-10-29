@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SplatRouteImport } from './routes/$'
 import { Route as SignInRouteImport } from './routes/sign-in'
+import { Route as SignUpRouteImport } from './routes/sign-up'
 import { Route as MMachineIdRouteImport } from './routes/m.$machineId'
 import { Route as MMachineIdIndexRouteImport } from './routes/m.$machineId.index'
 import { Route as MMachineIdSplatRouteImport } from './routes/m.$machineId.$'
@@ -30,6 +31,11 @@ const SplatRoute = SplatRouteImport.update({
 const SignInRoute = SignInRouteImport.update({
   id: '/sign-in',
   path: '/sign-in',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignUpRoute = SignUpRouteImport.update({
+  id: '/sign-up',
+  path: '/sign-up',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MMachineIdRoute = MMachineIdRouteImport.update({
@@ -57,6 +63,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
   '/sign-in': typeof SignInRoute
+  '/sign-up': typeof SignUpRoute
   '/m/$machineId': typeof MMachineIdRouteWithChildren
   '/m/$machineId/$': typeof MMachineIdSplatRoute
   '/m/$machineId/': typeof MMachineIdIndexRoute
@@ -66,6 +73,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
   '/sign-in': typeof SignInRoute
+  '/sign-up': typeof SignUpRoute
   '/m/$machineId/$': typeof MMachineIdSplatRoute
   '/m/$machineId': typeof MMachineIdIndexRoute
   '/m/$machineId/w/$workspaceId': typeof MMachineIdWWorkspaceIdRoute
@@ -75,6 +83,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
   '/sign-in': typeof SignInRoute
+  '/sign-up': typeof SignUpRoute
   '/m/$machineId': typeof MMachineIdRouteWithChildren
   '/m/$machineId/$': typeof MMachineIdSplatRoute
   '/m/$machineId/': typeof MMachineIdIndexRoute
@@ -86,6 +95,7 @@ export interface FileRouteTypes {
     | '/'
     | '/$'
     | '/sign-in'
+    | '/sign-up'
     | '/m/$machineId'
     | '/m/$machineId/$'
     | '/m/$machineId/'
@@ -95,6 +105,7 @@ export interface FileRouteTypes {
     | '/'
     | '/$'
     | '/sign-in'
+    | '/sign-up'
     | '/m/$machineId/$'
     | '/m/$machineId'
     | '/m/$machineId/w/$workspaceId'
@@ -103,6 +114,7 @@ export interface FileRouteTypes {
     | '/'
     | '/$'
     | '/sign-in'
+    | '/sign-up'
     | '/m/$machineId'
     | '/m/$machineId/$'
     | '/m/$machineId/'
@@ -113,6 +125,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   SplatRoute: typeof SplatRoute
   SignInRoute: typeof SignInRoute
+  SignUpRoute: typeof SignUpRoute
   MMachineIdRoute: typeof MMachineIdRouteWithChildren
 }
 
@@ -137,6 +150,13 @@ declare module '@tanstack/react-router' {
       path: '/sign-in'
       fullPath: '/sign-in'
       preLoaderRoute: typeof SignInRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sign-up': {
+      id: '/sign-up'
+      path: '/sign-up'
+      fullPath: '/sign-up'
+      preLoaderRoute: typeof SignUpRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/m/$machineId': {
@@ -190,6 +210,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   SplatRoute: SplatRoute,
   SignInRoute: SignInRoute,
+  SignUpRoute: SignUpRoute,
   MMachineIdRoute: MMachineIdRouteWithChildren,
 }
 export const routeTree = rootRouteImport
