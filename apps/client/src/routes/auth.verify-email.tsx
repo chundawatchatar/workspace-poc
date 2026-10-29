@@ -57,7 +57,7 @@ function VerifyEmail() {
         <p role="status" className="text-[13px] text-dim">
           Your address is verified. You can sign in now.
         </p>
-        <Link to="/auth/sign-in" className={linkClass}>
+        <Link to="/auth/sign-in" className={`self-start ${linkClass}`}>
           Sign in
         </Link>
       </AuthCard>

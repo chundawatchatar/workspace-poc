@@ -1,7 +1,7 @@
 import { QueryClient } from '@tanstack/react-query'
 import { createRouter, type RouterHistory } from '@tanstack/react-router'
 import { watchIdentity } from './lib/auth'
-import { acceptEmailLinkToken } from './lib/emailLink'
+import { acceptEmailLinkToken, listenForEmailLinks } from './lib/emailLink'
 import { acceptConnectLink } from './lib/machines'
 import { ServerError } from './lib/server'
 import { routeTree } from './routeTree.gen'
@@ -22,9 +22,7 @@ export function getRouter(history?: RouterHistory) {
   if (!history && typeof window !== 'undefined') {
     acceptConnectLink()
     acceptEmailLinkToken()
-    // An emailed link opened in a tab already on its page changes only the fragment. This listener is added before
-    // the router's own, so the token leaves the URL before the router reads it.
-    window.addEventListener('popstate', () => acceptEmailLinkToken())
+    listenForEmailLinks()
   }
   const queryClient = new QueryClient({
     defaultOptions: {

@@ -41,6 +41,19 @@ export function acceptEmailLinkToken(win: EmailLinkWindow = window): void {
   for (const listener of listeners) listener()
 }
 
+let listening = false
+
+/**
+ * Also reads the token of a link opened in a tab already on its page, which changes only the fragment. Call it before
+ * the router starts, so this `popstate` listener runs before the router's own. It adds the listener once, however
+ * often it is called.
+ */
+export function listenForEmailLinks() {
+  if (listening) return
+  listening = true
+  window.addEventListener('popstate', () => acceptEmailLinkToken())
+}
+
 /** The token kept for `page`, handed out once; null when there is none, or it was already taken. */
 export function takeEmailLinkToken(page: EmailLinkPage): string | null {
   if (kept?.page !== page) return null

@@ -53,7 +53,7 @@ export function CheckInbox({ email, footer }: { email: string; footer: ReactNode
         </Button>
         {resent && (
           <p role="status" className="text-[13px] text-dim">
-            We sent another link. It can take a minute to arrive.
+            We sent another link. It can take a minute to arrive, and you can ask again after 30 seconds.
           </p>
         )}
       </div>

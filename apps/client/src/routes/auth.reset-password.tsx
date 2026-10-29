@@ -27,7 +27,7 @@ function ResetPassword() {
         <p role="status" className="text-[13px] text-dim">
           Your new password is set, and every device that was signed in has been signed out.
         </p>
-        <Link to="/auth/sign-in" className={linkClass}>
+        <Link to="/auth/sign-in" className={`self-start ${linkClass}`}>
           Sign in with your new password
         </Link>
       </AuthCard>
@@ -45,7 +45,7 @@ function ResetPassword() {
         }
       >
         <FormError message={EXPIRED_LINK} />
-        <Link to="/auth/forgot-password" className={linkClass}>
+        <Link to="/auth/forgot-password" className={`self-start ${linkClass}`}>
           Send a new reset link
         </Link>
       </AuthCard>
