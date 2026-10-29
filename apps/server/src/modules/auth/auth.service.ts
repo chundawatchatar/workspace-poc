@@ -42,8 +42,13 @@ export function createAuth({ domain, mailer, secret, baseUrl, trustedOrigins }: 
       sendOnSignUp: true,
       sendVerificationEmail: ({ user, url }) => mailer.send(user.email, 'verifyEmail', { url }),
     },
-    // Every request reads the session from the database, so a revoked session ends at once.
-    session: { cookieCache: { enabled: false } },
+    session: {
+      // Every request reads the session from the database, so a revoked session ends at once.
+      cookieCache: { enabled: false },
+      // Better Auth's default of one day, in seconds. `list-sessions` answers 403 `SESSION_NOT_FRESH` for a session
+      // older than this, so a page that lists devices must ask for a fresh sign-in first. Revoking needs no freshness.
+      freshAge: 60 * 60 * 24,
+    },
     // Better Auth turns these off when `NODE_ENV` is `test`; set them so tests see what production does.
     rateLimit: { enabled: true, storage: 'memory' },
     advanced: {
