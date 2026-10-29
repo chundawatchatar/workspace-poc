@@ -1,0 +1,25 @@
+{
+  "name": "@orch/domain",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "db:generate": "bun --bun drizzle-kit generate",
+    "db:migrate": "bun src/migrate.ts"
+  },
+  "dependencies": {
+    "@orch/shared": "workspace:*",
+    "drizzle-orm": "^0.45.4"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.13",
+    "auth": "1.7.14",
+    "better-auth": "1.7.14",
+    "drizzle-kit": "^0.31.11"
+  }
+}
