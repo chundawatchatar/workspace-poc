@@ -5,13 +5,18 @@ import {
   accountKey,
   accountQuery,
   authClient,
+  EXPIRED_LINK,
   refetchSession,
+  requestPasswordReset,
+  resendVerificationEmail,
+  resetPassword,
   type SessionUser,
   safeRedirect,
   sessionQuery,
   signInWithEmail,
   signOut,
   signUpWithEmail,
+  verifyEmailToken,
   watchIdentity,
 } from './auth'
 import { readPendingMachineLink, setPendingMachineLink } from './pendingLink'
@@ -57,10 +62,35 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit) {
     if (server.user) return Response.json(server.user)
     return Response.json({ error: { code: 'unauthorized', message: 'Sign in first.' } }, { status: 401 })
   }
+  const emailAnswer = answerEmailLink(path, url, init)
+  if (emailAnswer) return emailAnswer
   if (path === '/api/auth/list-sessions') {
     return Response.json(server.user ? [{ token: `token-${server.user.id}`, userAgent: 'test' }] : [])
   }
   return Response.json({ error: { code: 'not_found', message: 'Not found.' } }, { status: 404 })
+}
+
+/** Answers the endpoints behind emailed links, or null for any other path. */
+function answerEmailLink(path: string, url: string, init?: RequestInit): Response | null {
+  if (path === '/api/auth/send-verification-email' || path === '/api/auth/request-password-reset') {
+    // Like the cloud server: the same answer whether or not the address has an account.
+    const { email } = JSON.parse(String(init?.body))
+    if (email === 'busy@example.com') return Response.json({ code: 'TOO_MANY_REQUESTS' }, { status: 429 })
+    return Response.json({ status: true })
+  }
+  if (path === '/api/auth/verify-email') {
+    const token = new URL(url).searchParams.get('token')
+    if (token === 'good') return Response.json({ status: true, user: null })
+    return Response.json({ code: 'TOKEN_EXPIRED', message: 'Expired' }, { status: 401 })
+  }
+  if (path === '/api/auth/reset-password') {
+    const { token } = JSON.parse(String(init?.body))
+    if (token !== 'good') return Response.json({ code: 'INVALID_TOKEN', message: 'Invalid' }, { status: 400 })
+    // A reset ends every session of the account.
+    server.user = null
+    return Response.json({ status: true })
+  }
+  return null
 }
 
 /** Resolves once `check` holds, or fails after a second. */
@@ -209,6 +239,54 @@ describe('signUpWithEmail', () => {
     expect(await signUpWithEmail('broken@example.com', 'long enough', 'Ada')).toBe(
       'Creating the account failed. Try again.',
     )
+  })
+})
+
+describe('the email link functions', () => {
+  /** The requests to `path`, as method, query and JSON body. */
+  const sentTo = (path: string) =>
+    server.requests
+      .filter((r) => new URL(r.url).pathname === path)
+      .map((r) => ({
+        method: r.init?.method ?? 'GET',
+        search: new URL(r.url).search,
+        body: r.init?.body ? JSON.parse(String(r.init.body)) : null,
+      }))
+
+  test('resend and forgot password post the address, answer alike for any account, and report a rate limit', async () => {
+    for (const [send, path] of [
+      [resendVerificationEmail, '/api/auth/send-verification-email'],
+      [requestPasswordReset, '/api/auth/request-password-reset'],
+    ] as const) {
+      expect(await send('new@example.com')).toBeNull()
+      expect(await send(userA.email)).toBeNull()
+      expect(sentTo(path)).toEqual([
+        { method: 'POST', search: '', body: { email: 'new@example.com' } },
+        { method: 'POST', search: '', body: { email: userA.email } },
+      ])
+      expect(await send('busy@example.com')).toBe('Too many attempts. Wait a minute and try again.')
+    }
+  })
+
+  test('verifying sends the token once in the query and reports any refusal as an expired link', async () => {
+    expect(await verifyEmailToken('good')).toBeNull()
+    expect(sentTo('/api/auth/verify-email')).toEqual([{ method: 'GET', search: '?token=good', body: null }])
+    expect(await verifyEmailToken('old')).toBe(EXPIRED_LINK)
+  })
+
+  test('a reset posts the token and password, then rereads the session, which the reset ended', async () => {
+    const { queryClient, changes } = await setup(userA)
+    expect(await resetPassword(queryClient, 'stale', 'a brand new passphrase')).toBe(EXPIRED_LINK)
+    expect(queryClient.getQueryData(sessionQuery.queryKey)).toEqual(userA)
+
+    expect(await resetPassword(queryClient, 'good', 'a brand new passphrase')).toBeNull()
+    expect(sentTo('/api/auth/reset-password').at(-1)).toEqual({
+      method: 'POST',
+      search: '',
+      body: { token: 'good', newPassword: 'a brand new passphrase' },
+    })
+    expect(queryClient.getQueryData(sessionQuery.queryKey)).toBeNull()
+    expect(changes()).toBe(1)
   })
 })
 

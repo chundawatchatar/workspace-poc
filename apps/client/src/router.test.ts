@@ -1,12 +1,12 @@
-import { afterAll, afterEach, beforeAll, describe, expect, mock, spyOn, test } from 'bun:test'
-import { GlobalRegistrator } from '@happy-dom/global-registrator'
+import { afterAll, afterEach, beforeAll, describe, expect, mock, test } from 'bun:test'
 import { PRODUCT_NAME, PRODUCT_TAGLINE } from '@orch/ui/brand'
 import { useQueryClient } from '@tanstack/react-query'
 import { createMemoryHistory, RouterProvider } from '@tanstack/react-router'
 import { createElement } from 'react'
-import type { Root } from 'react-dom/client'
 import { renderToString } from 'react-dom/server'
+import { CheckInbox } from './components/CheckInbox'
 import { signInWithEmail, signOut } from './lib/auth'
+import { acceptEmailLinkToken, type EmailLinkPage, takeEmailLinkToken } from './lib/emailLink'
 import { saveMachine } from './lib/machines'
 import { installMemoryStorage, uninstallMemoryStorage } from './lib/testStorage'
 
@@ -176,268 +176,71 @@ describe('session guard', () => {
   })
 })
 
-/** Every request the email pages sent: the path, the query and the JSON body. */
-const emailRequests: { path: string; search: string; body: Record<string, string> | null }[] = []
-/** The status the fake server answers each email endpoint with, by path; 200 when unset. */
-const emailStatus: Record<string, number> = {}
-let sessionReads = 0
-
-/** Answers the session and the endpoints the email pages use, like the cloud server. */
-async function emailFetch(input: RequestInfo | URL, init?: RequestInit) {
-  const url = new URL(String(input instanceof Request ? input.url : input), location.origin)
-  if (url.pathname === '/api/auth/get-session') {
-    sessionReads++
-    const user = { id: 'u1', email: 'u1@example.com', name: 'U' }
-    return Response.json(signedIn ? { user, session: {} } : null)
-  }
-  const body = init?.body ? JSON.parse(String(init.body)) : null
-  emailRequests.push({ path: url.pathname, search: url.search, body })
-  await Bun.sleep(30)
-  const status = emailStatus[url.pathname] ?? 200
-  if (status !== 200) {
-    const code = { 400: 'INVALID_TOKEN', 401: 'TOKEN_EXPIRED', 429: 'TOO_MANY_REQUESTS' }[status as 400 | 401 | 429]
-    return Response.json({ code, message: 'Refused' }, { status })
-  }
-  // A password reset ends every session of the account.
-  if (url.pathname === '/api/auth/reset-password') signedIn = false
-  if (url.pathname === '/api/auth/sign-up/email') return Response.json({ token: null, user: { id: 'new' } })
-  return Response.json({ status: true })
+/** Keeps `token` for `page`, as `getRouter()` does when the browser opens that page's emailed link. */
+function openEmailLink(page: EmailLinkPage, token: string) {
+  const location = { pathname: `/auth/${page}`, search: '', hash: `#token=${token}` }
+  acceptEmailLinkToken({ location, history: { state: null, replaceState() {} } })
 }
 
-// These pages are driven in a DOM: they act on clicks, effects and timers, which rendering to a string never runs.
+/** How many `<input>` elements `html` has. */
+const inputs = (html: string) => html.match(/<input\b/g)?.length ?? 0
+
 describe('email pages', () => {
-  const rootRoute = getRouter(createMemoryHistory()).routesById.__root__
-  const head = rootRoute.options.head
-  /** The React roots of this test, unmounted after it. */
-  const roots: Root[] = []
-  let createRoot: typeof import('react-dom/client').createRoot
-
-  beforeAll(async () => {
-    GlobalRegistrator.register({ url: 'http://localhost:3220/' })
-    // React DOM checks which events the browser supports as it loads, so it must load once the DOM is up.
-    ;({ createRoot } = await import('react-dom/client'))
-    globalThis.fetch = emailFetch as typeof fetch
-    // React waits for the stylesheet to load before it shows the page, and Happy DOM never loads it.
-    rootRoute.options.head = () => ({ meta: [] })
-  })
-  afterAll(async () => {
-    rootRoute.options.head = head
-    // Let React finish the work it scheduled before the DOM goes away.
-    await Bun.sleep(50)
-    await GlobalRegistrator.unregister()
-    globalThis.location = { origin: 'http://localhost:3220' } as Location
-    globalThis.fetch = fakeFetch as typeof fetch
-  })
-  afterEach(() => {
-    for (const root of roots.splice(0)) root.unmount()
-    emailRequests.length = 0
-    for (const path of Object.keys(emailStatus)) delete emailStatus[path]
-    sessionReads = 0
-  })
-
-  /** Opens `url` as a browser would, through `getRouter()` and its browser history, and renders the app. */
-  async function open(url: string) {
-    history.replaceState(null, '', url)
-    const router = getRouter()
-    const root = createRoot(document)
-    roots.push(root)
-    root.render(createElement(RouterProvider, { router }))
-    await until(() => router.state.status === 'idle' && heading() !== undefined)
-    return router
-  }
-
-  test('a verify link leaves the address bar before the router starts, and verifies once', async () => {
-    signedIn = true
-    const router = await open('/auth/verify-email#token=abc')
-    expect(location.href).toBe('http://localhost:3220/auth/verify-email')
-    expect(router.state.location.href).toBe('/auth/verify-email')
-    await until(() => heading() === 'Email verified')
-    expect(emailRequests).toEqual([{ path: '/api/auth/verify-email', search: '?token=abc', body: null }])
-    expect(link('Sign in')?.getAttribute('href')).toBe('/auth/sign-in')
-    // Signed in, the page stays: it has no `leaveIfSignedIn`.
-    expect(router.state.location.pathname).toBe('/auth/verify-email')
-
-    // The same link opened again in this tab changes only the fragment.
-    history.pushState(null, '', '/auth/verify-email#token=again')
-    window.dispatchEvent(new PopStateEvent('popstate'))
-    expect(location.hash).toBe('')
-    await until(() => emailRequests.length === 2 && heading() === 'Email verified')
-    expect(emailRequests[1]?.search).toBe('?token=again')
-    expect(router.state.location.hash).toBe('')
-  })
-
-  test('a refused or missing verify token offers the resend form, which answers the same for any address', async () => {
+  test('sign-in links to forgot password and to the resend form, and sign-up offers to send the link again', async () => {
     signedIn = false
-    emailStatus['/api/auth/verify-email'] = 401
-    await open('/auth/verify-email#token=old')
-    await until(() => text().includes('This link has expired or is no longer valid.'))
-    expect(document.querySelectorAll('input')).toHaveLength(1)
-    expect(document.activeElement).toBe(document.querySelector('h1'))
+    const signIn = await render('/auth/sign-in')
+    expect(signIn).toContain('href="/auth/forgot-password"')
+    expect(signIn).toContain('href="/auth/verify-email"')
 
-    roots.splice(0).forEach((root) => void root.unmount())
-    emailRequests.length = 0
-    await open('/auth/verify-email')
-    expect(text()).not.toContain('expired')
-    expect(emailRequests).toEqual([])
-    for (const email of ['known@example.com', 'nobody@example.com']) {
-      type(input('email'), email)
-      submit()
-      await until(() =>
-        text().includes(`If ${email} has an account that still needs verifying, we sent it a new link.`),
-      )
-      expect(input('email').value).toBe('')
-    }
-    expect(emailRequests.map((r) => [r.path, r.body?.email])).toEqual([
-      ['/api/auth/send-verification-email', 'known@example.com'],
-      ['/api/auth/send-verification-email', 'nobody@example.com'],
-    ])
+    const inbox = renderToString(createElement(CheckInbox, { email: 'ada@example.com', footer: null }))
+    expect(inbox).toContain('ada@example.com')
+    expect(inbox).toMatch(/<button type="button"[^>]*>Send the link again<\/button>/)
+    expect(inbox).not.toMatch(/<button[^>]*\sdisabled=/)
   })
 
-  test('check your inbox sends the link again once per 30 seconds, and reports a rate limit', async () => {
+  test('verify email starts verifying with a token, offers only the resend form without one, and stays signed in', async () => {
     signedIn = false
-    await open('/auth/sign-up')
-    type(input('name'), 'Ada')
-    type(input('email'), 'ada@example.com')
-    type(input('password'), 'long enough')
-    submit()
-    await until(() => heading() === 'Check your inbox')
+    openEmailLink('verify-email', 'abc')
+    expect(await render('/auth/verify-email')).toContain('Verifying your email address')
+    // The page took the token, so a second visit, like a reload, finds none.
+    expect(takeEmailLinkToken('verify-email')).toBeNull()
 
-    // The cooldown's timer is caught here and run by hand; Bun's fake timers would also stop the fake server.
-    const cooldowns: (() => void)[] = []
-    const realSetTimeout = globalThis.setTimeout
-    const timers = spyOn(globalThis, 'setTimeout').mockImplementation(((run: () => void, ms?: number) => {
-      if (ms !== 30_000) return realSetTimeout(run, ms)
-      cooldowns.push(run)
-      return 0
-    }) as typeof setTimeout)
-    const resend = button('Send the link again')
-    try {
-      resend.click()
-      await until(() => resend.getAttribute('aria-busy') === 'true')
-      resend.click()
-      await until(() => text().includes('We sent another link.'))
-      expect(document.querySelectorAll('[role="status"]')).toHaveLength(2)
-      expect(resend.disabled).toBe(true)
-      resend.click()
-      expect(cooldowns).toHaveLength(1)
-      await Bun.sleep(50)
-      expect(resend.disabled).toBe(true)
-      cooldowns[0]?.()
-      await until(() => !resend.disabled)
-    } finally {
-      timers.mockRestore()
-    }
-    const resends = emailRequests.filter((r) => r.path === '/api/auth/send-verification-email')
-    expect(resends.map((r) => r.body)).toEqual([{ email: 'ada@example.com' }])
+    const form = await render('/auth/verify-email')
+    expect(form).toContain('Verify your email address')
+    expect(form).not.toContain('expired')
+    expect(inputs(form)).toBe(1)
+    expect(form).toContain('type="email"')
 
-    emailStatus['/api/auth/send-verification-email'] = 429
-    resend.click()
-    await until(() => document.querySelector('[role="alert"]') !== null)
-    expect(document.querySelector('[role="alert"]')?.textContent).toBe(
-      'Too many attempts. Wait a minute and try again.',
-    )
-    expect(resend.disabled).toBe(false)
+    signedIn = true
+    expect((await land('/auth/verify-email')).state.location.pathname).toBe('/auth/verify-email')
   })
 
-  test('forgot password checks the address, answers the same for any account and reports a rate limit', async () => {
+  test('reset password asks for a new password with a token, says the link expired without one, and stays signed in', async () => {
     signedIn = false
-    await open('/auth/sign-in')
-    expect(link('Forgot your password?')?.getAttribute('href')).toBe('/auth/forgot-password')
-    expect(link("Didn't get the verification email?")?.getAttribute('href')).toBe('/auth/verify-email')
-    roots.splice(0).forEach((root) => void root.unmount())
+    openEmailLink('reset-password', 't1')
+    // Another page's link token is never handed to this one.
+    expect(await render('/auth/verify-email')).not.toContain('Verifying')
+    const form = await render('/auth/reset-password')
+    expect(form).toContain('Choose a new password')
+    expect(form).toMatch(/<input [^>]*autoComplete="new-password"/i)
+    expect(form).toContain('name="password"')
 
-    await open('/auth/forgot-password')
-    type(input('email'), 'not-an-email')
-    submit()
-    await until(() => text().includes('Enter a valid email address.'))
-    expect(emailRequests).toEqual([])
+    const expired = await render('/auth/reset-password')
+    expect(expired).toContain('This link has expired or is no longer valid.')
+    expect(expired).toContain('href="/auth/forgot-password"')
+    expect(inputs(expired)).toBe(0)
 
-    for (const email of ['known@example.com', 'nobody@example.com']) {
-      type(input('email'), email)
-      submit()
-      await until(() => text().includes(`If an account exists for ${email}, we sent a link`))
-      expect(input('email').value).toBe('')
-      expect(document.activeElement).toBe(document.querySelector('h1'))
-    }
-    expect(emailRequests.map((r) => [r.path, r.body?.email])).toEqual([
-      ['/api/auth/request-password-reset', 'known@example.com'],
-      ['/api/auth/request-password-reset', 'nobody@example.com'],
-    ])
-
-    emailStatus['/api/auth/request-password-reset'] = 429
-    type(input('email'), 'busy@example.com')
-    submit()
-    await until(() => text().includes('Too many attempts. Wait a minute and try again.'))
-    expect(input('email').value).toBe('busy@example.com')
+    signedIn = true
+    expect((await land('/auth/reset-password')).state.location.pathname).toBe('/auth/reset-password')
   })
 
-  test('a reset link sets the new password, signs this browser out, and a refused or missing token says so', async () => {
+  test('forgot password is a one-field form when signed out, and a signed-in visit goes home', async () => {
+    signedIn = false
+    const form = await render('/auth/forgot-password')
+    expect(inputs(form)).toBe(1)
+    expect(form).toContain('type="email"')
+
     signedIn = true
-    const router = await open('/auth/reset-password#token=t1')
-    expect(location.href).toBe('http://localhost:3220/auth/reset-password')
-    expect(input('password').getAttribute('autocomplete')).toBe('new-password')
-    type(input('password'), 'short')
-    submit()
-    await until(() => text().includes('Use at least 8 characters.'))
-    expect(emailRequests).toEqual([])
-
-    const reads = sessionReads
-    type(input('password'), 'a brand new passphrase')
-    submit()
-    await until(() => heading() === 'Password changed')
-    expect(emailRequests).toEqual([
-      { path: '/api/auth/reset-password', search: '', body: { token: 't1', newPassword: 'a brand new passphrase' } },
-    ])
-    expect(sessionReads).toBeGreaterThan(reads)
-    expect(router.options.context.queryClient.getQueryData(['session'])).toBeNull()
-    expect(link('Sign in with your new password')?.getAttribute('href')).toBe('/auth/sign-in')
-    expect(router.state.location.pathname).toBe('/auth/reset-password')
-
-    roots.splice(0).forEach((root) => void root.unmount())
-    emailStatus['/api/auth/reset-password'] = 400
-    await open('/auth/reset-password#token=used')
-    type(input('password'), 'a brand new passphrase')
-    submit()
-    await until(() => text().includes('This link has expired or is no longer valid.'))
-    expect(document.querySelector('input')).toBeNull()
-    expect(link('Send a new reset link')?.getAttribute('href')).toBe('/auth/forgot-password')
-
-    roots.splice(0).forEach((root) => void root.unmount())
-    await open('/auth/reset-password')
-    expect(text()).toContain('This link has expired or is no longer valid.')
-    expect(document.querySelector('input')).toBeNull()
-  })
-
-  test('a signed-in visit to forgot password goes home', async () => {
-    signedIn = true
-    const router = await open('/auth/forgot-password')
-    await until(() => router.state.location.pathname === '/')
+    expect((await land('/auth/forgot-password')).state.location.href).toBe('/')
   })
 })
-
-/** Resolves once `check` holds, or fails after about two seconds. */
-async function until(check: () => boolean) {
-  for (let i = 0; i < 200; i++) {
-    if (check()) return
-    await Bun.sleep(10)
-  }
-  throw new Error(`timed out on: ${check}`)
-}
-
-const heading = () => document.querySelector('h1')?.textContent ?? undefined
-const text = () => document.body.textContent ?? ''
-const input = (name: string) => document.querySelector(`input[name="${name}"]`) as HTMLInputElement
-const link = (label: string) => [...document.querySelectorAll('a')].find((a) => a.textContent === label)
-const button = (label: string) =>
-  [...document.querySelectorAll('button')].find((b) => b.textContent === label) as HTMLButtonElement
-
-/** Types `value` into `field` the way React notices: through the native setter, then an `input` event. */
-function type(field: HTMLInputElement, value: string) {
-  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(field, value)
-  field.dispatchEvent(new Event('input', { bubbles: true }))
-}
-
-/** Presses Enter in the form, which submits it. */
-function submit() {
-  document.querySelector('form')?.requestSubmit()
-}

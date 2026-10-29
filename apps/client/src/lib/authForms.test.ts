@@ -3,6 +3,8 @@ import { FormApi } from '@tanstack/react-form'
 import { QueryClient } from '@tanstack/react-query'
 import {
   emailSchema,
+  forgotPasswordFormOptions,
+  resetPasswordFormOptions,
   resetPasswordSchema,
   shownError,
   signInFormOptions,
@@ -83,12 +85,15 @@ describe('the sign-in and sign-up forms', () => {
         signInRequests++
         return Response.json({ message: 'Invalid email or password' }, { status: 401 })
       }
+      const body = JSON.parse(String(init?.body ?? '{}'))
+      if (body.email === 'busy@example.com') return Response.json({ message: 'Too many requests' }, { status: 429 })
       if (path === '/api/auth/sign-up/email') {
-        const { email } = JSON.parse(String(init?.body))
-        if (email === 'busy@example.com') return Response.json({ message: 'Too many requests' }, { status: 429 })
-        return Response.json({ token: null, user: { id: 'new', email, name: 'Ada' } })
+        return Response.json({ token: null, user: { id: 'new', email: body.email, name: 'Ada' } })
       }
-      return Response.json(null)
+      if (path === '/api/auth/reset-password' && body.token !== 'good') {
+        return Response.json({ code: 'INVALID_TOKEN' }, { status: 400 })
+      }
+      return Response.json({ status: true })
     }) as typeof fetch
   })
 
@@ -154,5 +159,39 @@ describe('the sign-in and sign-up forms', () => {
     expect(problem as string | null).toBeNull()
     expect(sentTo as string | null).toBe('ada@example.com')
     expect(form.state.values).toEqual({ name: '', email: '', password: '' })
+  })
+
+  test('a forgot-password submit empties the form and reports the address, or keeps it on a rate limit', async () => {
+    problem = null
+    const sent: string[] = []
+    const form = new FormApi(forgotPasswordFormOptions({ setProblem, onSent: (email) => sent.push(email) }))
+    form.mount()
+    form.setFieldValue('email', 'busy@example.com')
+    await submitAndWait(form)
+    expect(problem as string | null).toBe('Too many attempts. Wait a minute and try again.')
+    expect(form.state.values.email).toBe('busy@example.com')
+
+    form.setFieldValue('email', ' ada@example.com ')
+    await submitAndWait(form)
+    expect(problem as string | null).toBeNull()
+    expect(sent).toEqual(['ada@example.com'])
+    expect(form.state.values.email).toBe('')
+  })
+
+  test('a reset submit with a refused token says the link expired, and a valid one empties the form', async () => {
+    const outcomes: string[] = []
+    const callbacks = {
+      setProblem,
+      onExpired: () => outcomes.push('expired'),
+      onChanged: () => outcomes.push('changed'),
+    }
+    for (const token of ['used', 'good']) {
+      const form = new FormApi(resetPasswordFormOptions(new QueryClient(), token, callbacks))
+      form.mount()
+      form.setFieldValue('password', 'a brand new passphrase')
+      await submitAndWait(form)
+      expect(form.state.values.password).toBe(token === 'good' ? '' : 'a brand new passphrase')
+    }
+    expect(outcomes).toEqual(['expired', 'changed'])
   })
 })
