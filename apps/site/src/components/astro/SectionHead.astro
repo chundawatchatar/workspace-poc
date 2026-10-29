@@ -1,0 +1,18 @@
+---
+// A section's heading, introduced by the path of the "workspace" it is in the sidebar.
+interface Props {
+  path: string
+  title: string
+  lead?: string
+  tone?: 'accent' | 'zoom'
+}
+const { path, title, lead, tone = 'accent' } = Astro.props
+---
+
+<div class="mb-10 max-w-3xl">
+  <p class={`mb-3 font-mono text-[12px] ${tone === 'zoom' ? 'text-zoom' : 'text-accent'}`}>
+    <span class="text-faint">~/</span>{path}
+  </p>
+  <h2 class="text-3xl font-bold tracking-tight text-balance text-ink sm:text-[2.5rem] sm:leading-[1.1]">{title}</h2>
+  {lead && <p class="mt-4 text-[17px] leading-relaxed text-pretty text-dim">{lead}</p>}
+</div>

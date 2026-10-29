@@ -1,0 +1,220 @@
+@import 'tailwindcss';
+@import '@orch/ui/styles.css';
+
+/* The site is drawn as an Orchestrator window: colours, fonts, motion, the attention ring and kbd come from @orch/ui. */
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 88px;
+}
+
+/* Docs pages have the header only, without the tab bar. */
+html[data-area='docs'] {
+  scroll-padding-top: 56px;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+/* Inputs draw their own focus, like the palette's search field. */
+:where(a, button, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* A faint dot grid behind the main area, like an empty canvas waiting for panes. */
+.canvas-grid {
+  background-image: radial-gradient(color-mix(in srgb, var(--color-line) 70%, transparent) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+/* The blinking block cursor of the scripted terminals. */
+@keyframes caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+.caret {
+  display: inline-block;
+  width: 0.55em;
+  height: 1.1em;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  background: var(--color-ink);
+  animation: caret-blink 1s steps(1) infinite;
+}
+
+/* Sections slide in as they reach the viewport (see Shell.astro). Without JS they are simply visible. */
+.js [data-reveal] {
+  opacity: 0;
+  transform: translateY(12px);
+  transition:
+    opacity 420ms ease,
+    transform 420ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.js [data-reveal].revealed {
+  opacity: 1;
+  transform: none;
+}
+
+#sidebar,
+#main {
+  transition:
+    translate 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    padding-left 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+/* Sidebar: a drawer below 1024px, hidden on wide screens by ⌘B or Ctrl+B then B (Tailwind v4 moves with `translate`). */
+.drawer-open #sidebar {
+  translate: 0 0;
+}
+@media (min-width: 1024px) {
+  [data-sidebar-hidden] #sidebar {
+    translate: -100% 0;
+  }
+  [data-sidebar-hidden] #main {
+    padding-left: 0;
+  }
+}
+
+/* While the leader key waits for its second key, the sidebar footer says so, as in the app. */
+.leader-chip,
+[data-leader] .footer-buttons {
+  display: none;
+}
+[data-leader] .leader-chip {
+  display: inline-flex;
+}
+
+/* Icons that depend on the appearance, so they are right before any script runs. */
+[data-theme='light'] .when-dark,
+:root:not([data-theme='light']) .when-light {
+  display: none;
+}
+
+/* The sidebar row the reader is on (scroll spy), styled like the app's active workspace. */
+.section-link[aria-current='true'] {
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+}
+.section-link[aria-current='true'] .row-sub {
+  color: color-mix(in srgb, var(--color-on-accent) 75%, transparent);
+}
+
+/* Docs prose, in the app's colours. */
+.prose {
+  max-width: 72ch;
+  font-size: 15px;
+}
+.prose h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  margin: 0 0 0.75rem;
+}
+.prose h2 {
+  font-size: 1.3rem;
+  font-weight: 650;
+  margin: 2.25rem 0 0.6rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--color-line);
+}
+.prose h3 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin: 1.5rem 0 0.4rem;
+}
+.prose p,
+.prose ul,
+.prose ol,
+.prose table,
+.prose pre {
+  margin: 0 0 1rem;
+}
+.prose ul,
+.prose ol {
+  padding-left: 1.3rem;
+}
+.prose ul {
+  list-style: disc;
+}
+.prose ol {
+  list-style: decimal;
+}
+.prose li {
+  margin: 0.25rem 0;
+}
+.prose li::marker {
+  color: var(--color-faint);
+}
+.prose a {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+.prose strong {
+  font-weight: 600;
+}
+.prose :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: var(--color-raised);
+  border: 1px solid var(--color-line);
+}
+.prose pre {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.55;
+  padding: 0.9rem 1rem;
+  border-radius: 6px;
+  border: 1px solid var(--color-line);
+  background: var(--color-panel);
+  overflow-x: auto;
+}
+.prose table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  display: block;
+  overflow-x: auto;
+}
+.prose th,
+.prose td {
+  text-align: left;
+  padding: 0.45rem 0.75rem 0.45rem 0;
+  border-bottom: 1px solid var(--color-line);
+  vertical-align: top;
+}
+.prose th {
+  color: var(--color-dim);
+  font-weight: 500;
+  font-size: 13px;
+}
+.prose blockquote {
+  margin: 0 0 1rem;
+  padding: 0.6rem 1rem;
+  border-left: 3px solid var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+  border-radius: 0 6px 6px 0;
+  color: var(--color-dim);
+}
+.prose blockquote p:last-child {
+  margin: 0;
+}

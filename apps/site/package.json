@@ -1,0 +1,28 @@
+{
+  "name": "@orch/site",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:site": "astro dev --host 127.0.0.1 --port 3230",
+    "build": "astro build",
+    "preview": "astro preview --host 127.0.0.1 --port 3230",
+    "typecheck": "astro check"
+  },
+  "dependencies": {
+    "@astrojs/mdx": "^8.1.2",
+    "@astrojs/react": "^7.1.2",
+    "@orch/terminal-ui": "workspace:*",
+    "@orch/ui": "workspace:*",
+    "@tailwindcss/vite": "^4.3.3",
+    "astro": "^7.4.4",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "tailwindcss": "^4.3.3"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.12",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0"
+  }
+}

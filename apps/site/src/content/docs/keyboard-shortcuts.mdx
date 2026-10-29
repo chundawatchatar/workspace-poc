@@ -1,0 +1,24 @@
+---
+title: Keyboard shortcuts
+description: Every action has a key, and none of them fight your browser or your shell.
+group: Use
+order: 5
+---
+
+import ShortcutTable from '../../components/astro/ShortcutTable.astro'
+
+## The leader key
+
+Browsers keep a few keys for themselves (`Ctrl/Cmd+W`, `T`, `N` and tab switching), so every command has a **leader sequence** that works everywhere: press `Ctrl+B`, release, then the key. While the leader waits, the sidebar footer shows `Ctrl+B …`.
+
+Most commands also have a direct `Ctrl+Shift` combination, and on macOS the familiar `⌘D`, `⌘B` and `⌘P` work too.
+
+## All shortcuts
+
+<ShortcutTable />
+
+The same list is in the app: press `Ctrl+B` then `?`.
+
+## Your shell keeps its keys
+
+`Ctrl+C`, `Ctrl+P`, `Ctrl+R` and the rest always reach the terminal. The one exception is `Ctrl+B`, the leader. Press it twice, `Ctrl+B Ctrl+B`, to send it to readline, vim or tmux, as you would in tmux itself.

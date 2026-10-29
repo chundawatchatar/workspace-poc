@@ -1,0 +1,36 @@
+---
+// A pane as the app draws it: a tab bar on top, the body below. The first tab is the active one.
+interface Props {
+  tabs: string[]
+  class?: string
+  bodyClass?: string
+  /** Draws the attention ring around the pane. */
+  ring?: boolean
+  /** Draws the violet full-screen frame instead. */
+  zoom?: boolean
+}
+const { tabs, class: className = '', bodyClass = 'p-5', ring = false, zoom = false } = Astro.props
+---
+
+<section class={`relative flex flex-col overflow-hidden rounded-lg border border-line bg-panel ${className}`}>
+  <div class="flex h-8 shrink-0 items-stretch border-b border-line bg-sidebar">
+    {
+      tabs.map((tab, i) => (
+        <span
+          class={`flex max-w-56 min-w-0 items-center gap-1.5 border-r border-line px-3 font-mono text-[11px] ${
+            i === 0 ? 'bg-panel text-ink' : 'text-faint'
+          }`}
+        >
+          <span class={`h-1.5 w-1.5 shrink-0 rounded-full ${i === 0 ? (zoom ? 'bg-zoom' : 'bg-accent') : 'bg-line'}`} />
+          <span class="truncate">{tab}</span>
+        </span>
+      ))
+    }
+    <slot name="actions" />
+  </div>
+  <div class={`min-h-0 flex-1 ${bodyClass}`}>
+    <slot />
+  </div>
+  {ring && <div class="attention-ring pointer-events-none absolute inset-0 rounded-lg" />}
+  {zoom && <div class="zoom-frame pointer-events-none absolute inset-0 rounded-lg" />}
+</section>

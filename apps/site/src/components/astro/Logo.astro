@@ -1,0 +1,11 @@
+---
+// The shared mark from @orch/ui, in the active theme's accent colour.
+import { markSvg } from '@orch/ui/brand'
+
+interface Props {
+  size?: number
+}
+const { size = 20 } = Astro.props
+---
+
+<span class="inline-flex shrink-0" set:html={markSvg({ color: 'var(--color-accent)', size })} />

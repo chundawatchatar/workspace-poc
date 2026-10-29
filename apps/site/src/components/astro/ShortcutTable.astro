@@ -1,0 +1,25 @@
+---
+// The app's own shortcut list, so these docs can never disagree with the in-app sheet.
+import { LEADER_LABEL, SHORTCUT_ROWS } from '@orch/terminal-ui/shortcut-rows'
+---
+
+<table>
+  <thead>
+    <tr>
+      <th>Action</th>
+      <th>After {LEADER_LABEL}</th>
+      <th>Direct</th>
+    </tr>
+  </thead>
+  <tbody>
+    {
+      SHORTCUT_ROWS.map((row) => (
+        <tr>
+          <td>{row.label}</td>
+          <td>{row.leader && <kbd>{row.leader}</kbd>}</td>
+          <td class="text-dim">{row.direct}</td>
+        </tr>
+      ))
+    }
+  </tbody>
+</table>

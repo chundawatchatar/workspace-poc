@@ -1,0 +1,36 @@
+---
+// The docs, grouped, styled like the app's sidebar: the open page is the active workspace.
+import { FileText } from '@orch/ui/icons'
+import { DOC_GROUPS } from '../../content.config'
+import { sortedDocs } from '../../lib/docs'
+
+interface Props {
+  current?: string
+}
+const { current } = Astro.props
+const docs = await sortedDocs()
+---
+
+{
+  DOC_GROUPS.map((group) => (
+    <section class="mb-3">
+      <div class="flex h-8 items-center px-1.5 text-[11px] font-semibold tracking-wider text-faint uppercase">{group}</div>
+      <div class="space-y-px">
+        {docs
+          .filter((doc) => doc.data.group === group)
+          .map((doc) => (
+            <a
+              href={`/docs/${doc.id}`}
+              aria-current={doc.id === current ? 'page' : undefined}
+              class={`flex items-center gap-2 rounded-md px-2.5 py-1.5 ${
+                doc.id === current ? 'bg-accent text-on-accent' : 'text-ink hover:bg-raised'
+              }`}
+            >
+              <FileText size={13} className={doc.id === current ? 'text-on-accent/80' : 'text-faint'} />
+              <span class="truncate">{doc.data.title}</span>
+            </a>
+          ))}
+      </div>
+    </section>
+  ))
+}

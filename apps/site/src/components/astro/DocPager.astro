@@ -1,0 +1,33 @@
+---
+// One end of the docs' previous / next pair. At the first or last page it stays in place, disabled.
+import { ArrowLeft, ArrowRight } from '@orch/ui/icons'
+import type { Doc } from '../../lib/docs'
+
+interface Props {
+  direction: 'previous' | 'next'
+  doc?: Doc
+}
+const { direction, doc } = Astro.props
+const next = direction === 'next'
+const box = `rounded-md border border-line px-4 py-3 ${next ? 'text-right' : ''}`
+---
+
+{
+  doc ? (
+    <a href={`/docs/${doc.id}`} class={`${box} hover:border-accent/60 hover:bg-raised/50`}>
+      <span class={`flex items-center gap-1 text-xs text-faint ${next ? 'justify-end' : ''}`}>
+        {next ? 'Next' : <ArrowLeft size={12} />}
+        {next ? <ArrowRight size={12} /> : 'Previous'}
+      </span>
+      <span class="text-sm font-medium">{doc.data.title}</span>
+    </a>
+  ) : (
+    <span aria-disabled="true" class={`${box} cursor-not-allowed opacity-45 select-none`}>
+      <span class={`flex items-center gap-1 text-xs text-faint ${next ? 'justify-end' : ''}`}>
+        {next ? 'Next' : <ArrowLeft size={12} />}
+        {next ? <ArrowRight size={12} /> : 'Previous'}
+      </span>
+      <span class="text-sm text-dim">{next ? 'End of the docs' : 'Start of the docs'}</span>
+    </span>
+  )
+}

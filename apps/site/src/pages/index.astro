@@ -1,0 +1,360 @@
+---
+import {
+  ArrowRight,
+  Bell,
+  BookOpen,
+  Bot,
+  Columns2,
+  Globe,
+  Keyboard,
+  Laptop,
+  LockKeyhole,
+  Palette,
+  PanelLeft,
+  Plug,
+  ShieldCheck,
+  SquareTerminal,
+  Workflow,
+  Zap,
+} from '@orch/ui/icons'
+import ArchitectureDiagram from '../components/astro/ArchitectureDiagram.astro'
+import Faq from '../components/astro/Faq.astro'
+import GithubMark from '../components/astro/GithubMark.astro'
+import PaneFrame from '../components/astro/PaneFrame.astro'
+import Pricing from '../components/astro/Pricing.astro'
+import SectionHead from '../components/astro/SectionHead.astro'
+import { CopyCommand } from '../components/CopyCommand'
+import { HeroDemo } from '../components/HeroDemo'
+import Shell from '../layouts/Shell.astro'
+import { SITE } from '../site.config'
+
+const problems = [
+  {
+    before:
+      'Five agents across three terminal apps and a tmux session. One has waited for permission for twenty minutes.',
+    after: 'The pane that needs you glows, its tab gets a dot and its workspace a count.',
+  },
+  {
+    before: 'Close the tab, let the laptop sleep, lose the SSH connection: the agent stops mid-task.',
+    after: 'Shells live in a daemon on your machine. Reload, close the browser, come back: still running.',
+  },
+  {
+    before: 'Cloud IDEs and hosted agents want your repository on their servers.',
+    after: 'Everything runs on your machine or VM. Nothing leaves it unless you choose.',
+  },
+  {
+    before: 'Another desktop app to install, update and configure on every machine.',
+    after: 'Open a browser tab. The same interface on this machine and, through the relay, anywhere.',
+  },
+]
+
+const principles = [
+  { icon: LockKeyhole, title: 'Local first', text: 'Code, terminals and output stay on your machine.' },
+  { icon: Globe, title: 'Browser only', text: 'Nothing to install on the device in front of you.' },
+  { icon: Zap, title: 'Free locally', text: 'Every local feature is free and MIT licensed.' },
+  { icon: Bot, title: 'Bring your own agent', text: 'Any CLI agent. We ship none of our own.' },
+  { icon: SquareTerminal, title: 'Sessions outlive the tab', text: 'Closing the browser never ends a shell.' },
+  { icon: Keyboard, title: 'Keyboard first', text: 'Every action has a key that the browser leaves alone.' },
+]
+
+const features = [
+  {
+    icon: Columns2,
+    tab: 'split.ts',
+    title: 'Split to any depth',
+    text: 'Right or down, drag the dividers, full-screen any pane with Ctrl+B Z.',
+  },
+  {
+    icon: PanelLeft,
+    tab: 'workspaces',
+    title: 'Workspaces per folder',
+    text: 'Each shows its git branch and changed files, with its own bookmarkable URL.',
+  },
+  {
+    icon: Bell,
+    tab: 'notify',
+    title: 'Know who needs you',
+    text: 'A bell or OSC 9 marks the pane, the tab and the workspace until you look.',
+  },
+  {
+    icon: SquareTerminal,
+    tab: 'zsh',
+    title: 'Real shells',
+    text: 'Your own shell and config. vim, Claude Code and Codex fill the pane and resize with it.',
+  },
+  {
+    icon: Workflow,
+    tab: 'sync',
+    title: 'Every window in step',
+    text: 'The host owns the layout, so two browser windows always show the same thing.',
+  },
+  {
+    icon: Palette,
+    tab: 'themes',
+    title: 'Eight themes',
+    text: 'Five dark, three light, covering the interface and the terminal. Try Ctrl+B T here.',
+  },
+]
+
+const agents = ['claude', 'codex', 'opencode', 'cursor-agent', 'aider', 'gemini', './your-agent.sh']
+---
+
+<Shell tab="overview" path="~/orchestrator">
+  <!-- Hero -->
+  <section id="top" class="canvas-grid relative overflow-hidden border-b border-line">
+    <div class="mx-auto max-w-6xl px-4 pt-14 pb-16 sm:px-8 sm:pt-20">
+      <p class="mb-5 inline-flex items-center gap-2 rounded-full border border-line bg-panel px-3 py-1 text-xs text-dim">
+        <span class="h-1.5 w-1.5 rounded-full bg-good"></span>
+        Free and open source · macOS and Linux · any browser
+      </p>
+      <h1 class="max-w-4xl text-[2.6rem] leading-[1.05] font-bold tracking-tight text-balance sm:text-6xl">
+        Run every agent at once. <span class="text-accent">Know which one needs you.</span>
+      </h1>
+      <p class="mt-6 max-w-2xl text-lg leading-relaxed text-pretty text-dim">
+        {SITE.name} is a workspace for terminals and coding agents. Split panes, tabs and real shells run on your own
+        machine and live in your browser. When an agent finishes or asks a question, the pane tells you.
+      </p>
+      <div class="mt-8 flex max-w-2xl flex-col gap-3">
+        <CopyCommand client:visible command={SITE.installCommand} />
+        <div class="flex flex-wrap gap-2.5">
+          <a href="/docs/getting-started" class="flex h-10 items-center gap-2 rounded-md bg-accent px-4 text-sm font-medium text-on-accent hover:opacity-90">
+            Get started <ArrowRight size={15} />
+          </a>
+          <a href={SITE.githubUrl} class="flex h-10 items-center gap-2 rounded-md border border-line bg-panel px-4 text-sm text-ink hover:bg-raised">
+            <GithubMark size={15} /> Star on GitHub
+          </a>
+          <button type="button" data-open="palette" class="hidden h-10 items-center gap-2 rounded-md px-3 text-sm text-dim hover:text-ink sm:flex">
+            or press <kbd>⌘P</kbd>
+          </button>
+        </div>
+      </div>
+
+      <div class="mt-14">
+        <HeroDemo client:load />
+        <p class="mt-3 text-center text-xs text-faint">
+          A scripted session. The agent finishes while you watch the dev server: click its pane to clear the ring.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Problem -->
+  <section id="problem" class="border-b border-line">
+    <div class="mx-auto max-w-6xl px-4 py-20 sm:px-8 sm:py-24" data-reveal>
+      <SectionHead
+        path="problem"
+        title="Agents got fast. Keeping track of them didn't."
+        lead="You run three, five, ten agents in parallel now. They live in tabs you forget, on sessions that die, on machines you can't reach. The work is fast; the babysitting isn't."
+      />
+      <div class="grid gap-4 md:grid-cols-2">
+        {
+          problems.map((p) => (
+            <PaneFrame tabs={['before', 'with orch']} bodyClass="p-0">
+              <p class="border-b border-line px-5 py-4 font-mono text-[13px] leading-relaxed text-dim">
+                <span class="text-bad">✗ </span>
+                {p.before}
+              </p>
+              <p class="px-5 py-4 text-[15px] leading-relaxed">
+                <span class="text-good">✓ </span>
+                {p.after}
+              </p>
+            </PaneFrame>
+          ))
+        }
+      </div>
+
+      <h3 class="mt-16 mb-5 font-mono text-[12px] tracking-wider text-faint uppercase">Six principles we don't bend</h3>
+      <div class="grid gap-px overflow-hidden rounded-lg border border-line bg-line sm:grid-cols-2 lg:grid-cols-3">
+        {
+          principles.map((p) => (
+            <div class="bg-panel p-5">
+              <p.icon size={18} className="text-accent" />
+              <h4 class="mt-3 font-semibold">{p.title}</h4>
+              <p class="mt-1 text-sm text-dim">{p.text}</p>
+            </div>
+          ))
+        }
+      </div>
+    </div>
+  </section>
+
+  <!-- How it works -->
+  <section id="how" class="border-b border-line bg-sidebar/40">
+    <div class="mx-auto max-w-6xl px-4 py-20 sm:px-8 sm:py-24" data-reveal>
+      <SectionHead
+        path="how-it-works"
+        title="One host on your machine. Any browser in front of it."
+        lead="A small host service owns the layout and talks to a terminal daemon that owns your shells. The browser is only a window onto them, which is why closing it changes nothing."
+      />
+      <ArchitectureDiagram />
+      <ol class="mt-10 grid gap-4 md:grid-cols-3">
+        {
+          [
+            ['Run the host', 'Clone, bun install, bun run dev. It binds to 127.0.0.1 only.'],
+            ['Open the workspace', `Visit ${SITE.localUrl}. Add a workspace for any folder.`],
+            ['Split and start agents', 'Ctrl+B D splits right. Start claude, codex or a dev server in each pane.'],
+          ].map(([title, text], i) => (
+            <li class="flex gap-4 rounded-lg border border-line bg-panel p-5">
+              <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent font-mono text-sm font-semibold text-on-accent">
+                {i + 1}
+              </span>
+              <span>
+                <b class="block font-semibold">{title}</b>
+                <span class="text-sm text-dim">{text}</span>
+              </span>
+            </li>
+          ))
+        }
+      </ol>
+
+      <div class="mt-16 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {
+          features.map((f) => (
+            <PaneFrame tabs={[f.tab]}>
+              <f.icon size={18} className="text-accent" />
+              <h3 class="mt-3 font-semibold">{f.title}</h3>
+              <p class="mt-1 text-sm text-dim">{f.text}</p>
+            </PaneFrame>
+          ))
+        }
+      </div>
+    </div>
+  </section>
+
+  <!-- Agents -->
+  <section id="agents" class="border-b border-line">
+    <div class="mx-auto grid max-w-6xl gap-12 px-4 py-20 sm:px-8 sm:py-24 lg:grid-cols-[1fr_1.1fr]" data-reveal>
+      <div>
+        <SectionHead
+          path="agents"
+          title="Bring your own agent."
+          lead="Orchestrator builds no agent of its own. If it runs in a terminal, it runs here, next to your shell, your editor and your dev server, each in the pane you put it in."
+        />
+        <div class="flex flex-wrap gap-2">
+          {
+            agents.map((agent) => (
+              <span class="flex items-center gap-1.5 rounded-md border border-line bg-panel px-2.5 py-1 font-mono text-xs">
+                <Bot size={12} className="text-accent" />
+                {agent}
+              </span>
+            ))
+          }
+        </div>
+      </div>
+
+      <PaneFrame tabs={['roadmap.md']} bodyClass="p-0">
+        <ul class="divide-y divide-line text-sm">
+          {
+            [
+              ['Now', 'good', 'Bell and notification escape sequences ring the pane, the tab and the workspace.'],
+              ['Next', 'accent', 'Each tab shows whether its agent is working, waiting for you or idle.'],
+              ['Next', 'accent', 'Per-workspace counts of agents in each state, and a notification when one finishes or asks.'],
+              ['Next', 'accent', 'Works without editing your agent settings, and asks once where an agent needs trust.'],
+              ['Later', 'faint', 'Events, like a pull request opening or a check failing, start your agent in a new pane.'],
+              ['Later', 'faint', 'Local git hosting, issues and workflows, so code never has to leave your machine.'],
+            ].map(([when, tone, text]) => (
+              <li class="flex gap-4 px-5 py-3.5">
+                <span
+                  class={`w-12 shrink-0 font-mono text-[11px] font-semibold uppercase ${
+                    tone === 'good' ? 'text-good' : tone === 'accent' ? 'text-accent' : 'text-faint'
+                  }`}
+                >
+                  {when}
+                </span>
+                <span class={tone === 'faint' ? 'text-dim' : ''}>{text}</span>
+              </li>
+            ))
+          }
+        </ul>
+      </PaneFrame>
+    </div>
+  </section>
+
+  <!-- Remote -->
+  <section id="remote" class="border-b border-line bg-sidebar/40">
+    <div class="mx-auto grid max-w-6xl items-center gap-12 px-4 py-20 sm:px-8 sm:py-24 lg:grid-cols-2" data-reveal>
+      <div>
+        <SectionHead
+          path="remote"
+          tone="zoom"
+          title="Your machine, from any browser."
+          lead="Turn on remote access and the host opens one outbound tunnel to a relay. Open the connect link anywhere and you are in the same workspace, terminals and all. No ports to open, no VPN."
+        />
+        <ul class="space-y-3 text-[15px]">
+          {
+            [
+              { icon: ShieldCheck, text: 'Every request carries an access key. The host keeps only its hash.' },
+              { icon: Plug, text: 'Rotate the key in one click to cut every remote session at once.' },
+              { icon: Laptop, text: 'Self-host the relay for free, or let Orchestrator run it for you.' },
+            ].map((point) => (
+              <li class="flex gap-3">
+                <point.icon size={17} className="mt-0.5 shrink-0 text-zoom" />
+                <span class="text-dim">{point.text}</span>
+              </li>
+            ))
+          }
+        </ul>
+        <a href="/docs/remote-access" class="mt-7 inline-flex items-center gap-1.5 text-sm text-zoom hover:underline">
+          <BookOpen size={14} /> How remote access works
+        </a>
+      </div>
+
+      <PaneFrame tabs={['Remote access']} zoom bodyClass="space-y-3 p-5 text-[13px]">
+        <div class="flex items-center gap-2">
+          <span class="h-2 w-2 rounded-full bg-good"></span>
+          Connected
+          <span class="ml-1 truncate font-mono text-[11px] text-faint">m_7f3a9c21</span>
+          <span class="ml-auto rounded-full bg-zoom px-2 py-0.5 text-[11px] font-medium text-on-accent">On</span>
+        </div>
+        <label class="block">
+          <span class="mb-1 block text-xs text-dim">Server address</span>
+          <span class="block truncate rounded-md border border-line bg-bg px-2.5 py-1.5 font-mono">wss://relay.{SITE.domain}</span>
+        </label>
+        <label class="block">
+          <span class="mb-1 block text-xs text-dim">Connect link · shown once</span>
+          <span class="block truncate rounded-md border border-zoom/60 bg-bg px-2.5 py-1.5 font-mono text-zoom">
+            https://app.{SITE.domain}/#machine=m_7f3a9c21&key=k_••••••••••••
+          </span>
+        </label>
+        <div class="flex justify-end gap-2 pt-1">
+          <span class="rounded-md border border-line px-3 py-1.5 text-xs text-dim">New connect link</span>
+          <span class="rounded-md bg-accent px-3 py-1.5 text-xs text-on-accent">Copy</span>
+        </div>
+      </PaneFrame>
+    </div>
+  </section>
+
+  <!-- Pricing -->
+  <section id="pricing" class="border-b border-line">
+    <div class="mx-auto max-w-6xl px-4 py-20 sm:px-8 sm:py-24" data-reveal>
+      <SectionHead
+        path="pricing"
+        title="Free on your machine. Paid only for the relay."
+        lead="Everything that runs locally is free, forever. Pay only if you want us to run the relay that reaches your machines from anywhere."
+      />
+      <Pricing />
+      <p class="mt-6 text-sm text-dim">
+        <a href="/pricing" class="text-accent hover:underline">Compare plans in detail →</a>
+      </p>
+    </div>
+  </section>
+
+  <!-- FAQ -->
+  <section id="faq">
+    <div class="mx-auto max-w-4xl px-4 py-20 sm:px-8 sm:py-24" data-reveal>
+      <SectionHead path="faq" title="Questions, answered." />
+      <Faq />
+    </div>
+  </section>
+
+  <!-- Final call to action -->
+  <section class="canvas-grid border-t border-line">
+    <div class="mx-auto flex max-w-3xl flex-col items-center px-4 py-20 text-center sm:px-8">
+      <h2 class="text-3xl font-bold tracking-tight text-balance sm:text-4xl">Open a tab. Start orchestrating.</h2>
+      <p class="mt-3 text-dim">Two minutes from clone to your first split pane.</p>
+      <div class="mt-7 w-full max-w-2xl">
+        <CopyCommand client:visible command={SITE.installCommand} />
+      </div>
+    </div>
+  </section>
+</Shell>

@@ -1,0 +1,78 @@
+---
+import { render } from 'astro:content'
+import { Pencil } from '@orch/ui/icons'
+import DocPager from '../../components/astro/DocPager.astro'
+import Shell from '../../layouts/Shell.astro'
+import { type Doc, sortedDocs } from '../../lib/docs'
+import { SITE } from '../../site.config'
+
+export async function getStaticPaths() {
+  const docs = await sortedDocs()
+  return docs.map((doc, i) => ({ params: { slug: doc.id }, props: { doc, prev: docs[i - 1], next: docs[i + 1] } }))
+}
+
+interface Props {
+  doc: Doc
+  prev?: Doc
+  next?: Doc
+}
+
+const { doc, prev, next } = Astro.props
+const { Content, headings } = await render(doc)
+const toc = headings.filter((heading) => heading.depth === 2)
+const slugify = (text: string) => text.toLowerCase().replaceAll(' ', '-')
+// The source file, `.md` or `.mdx`, relative to apps/site.
+const source = doc.filePath ?? `src/content/docs/${doc.id}.md`
+const fileName = source.split('/').pop()
+---
+
+<Shell
+  tab="docs"
+  doc={doc.id}
+  path={`~/docs/${slugify(doc.data.group)}/${fileName}`}
+  title={doc.data.title}
+  description={doc.data.description}
+>
+  <div class="mx-auto grid max-w-6xl gap-10 px-4 py-10 sm:px-8 sm:py-12 xl:grid-cols-[1fr_200px]">
+    <div class="min-w-0">
+      <p class="mb-3 text-[12px] font-semibold tracking-wider text-accent uppercase">{doc.data.group}</p>
+      <article class="prose">
+        <h1>{doc.data.title}</h1>
+        <p class="text-[17px] text-dim">{doc.data.description}</p>
+        <Content />
+      </article>
+
+      <nav class="mt-14 grid max-w-[72ch] gap-3 border-t border-line pt-6 sm:grid-cols-2" aria-label="Previous and next">
+        <DocPager direction="previous" doc={prev} />
+        <DocPager direction="next" doc={next} />
+      </nav>
+    </div>
+
+    <aside class="hidden xl:block">
+      <div class="sticky top-16 text-[13px]">
+        {
+          toc.length > 0 && (
+            <>
+              <p class="mb-2 text-[11px] font-semibold tracking-wider text-faint uppercase">On this page</p>
+              <ul class="space-y-1.5 border-l border-line">
+                {toc.map((heading) => (
+                  <li>
+                    <a href={`#${heading.slug}`} class="-ml-px block border-l border-transparent pl-3 text-dim hover:border-accent hover:text-ink">
+                      {heading.text}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )
+        }
+        <a
+          href={`${SITE.githubUrl}/edit/main/apps/site/${source}`}
+          class="mt-6 flex items-center gap-1.5 text-xs text-faint hover:text-ink"
+        >
+          <Pencil size={12} /> Edit this page
+        </a>
+      </div>
+    </aside>
+  </div>
+</Shell>

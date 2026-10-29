@@ -1,0 +1,43 @@
+---
+// The site's sections, listed like workspaces in the app's sidebar. Shell.astro's scroll spy marks the current one.
+import { ChevronRight, GitBranch } from '@orch/ui/icons'
+import { SECTIONS } from '../../site.config'
+
+interface Props {
+  /** A section to mark as current without scroll spy, such as `pricing` on the pricing page. */
+  current?: string
+}
+const { current } = Astro.props
+---
+
+<div class="flex h-8 items-center px-1.5 text-[11px] font-semibold tracking-wider text-faint uppercase">Workspaces</div>
+<div class="space-y-1">
+  {
+    SECTIONS.map((section, i) => (
+      <a
+        href={`/#${section.id}`}
+        data-section-link={section.id}
+        aria-current={section.id === current ? 'true' : undefined}
+        class="section-link group block rounded-md px-2.5 py-1.5 text-ink hover:bg-raised"
+      >
+        <span class="flex items-center gap-1.5">
+          <ChevronRight size={12} className="-ml-1 opacity-60" />
+          <span class="min-w-0 flex-1 truncate font-semibold">{section.name}</span>
+          {section.id === 'top' && (
+            <span
+              data-demo-badge
+              hidden
+              class="flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold text-on-accent"
+            />
+          )}
+          <span class="row-sub text-[10px] text-faint">{i + 1}</span>
+        </span>
+        <span class="row-sub mt-0.5 flex items-center gap-1 text-[11px] text-dim">
+          <GitBranch size={11} />
+          <span class="truncate">{section.branch}</span>
+          {section.changes > 0 && <span class="ml-auto">+{section.changes}</span>}
+        </span>
+      </a>
+    ))
+  }
+</div>

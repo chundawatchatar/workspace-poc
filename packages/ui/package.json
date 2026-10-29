@@ -6,7 +6,12 @@
   "exports": {
     ".": "./src/index.ts",
     "./icons": "./src/icons.ts",
-    "./styles.css": "./src/styles.css"
+    "./styles.css": "./src/styles.css",
+    "./themes": "./src/themes.ts",
+    "./brand": "./src/brand.ts",
+    "./Modal": "./src/Modal.tsx",
+    "./ThemePicker": "./src/ThemePicker.tsx",
+    "./Toast": "./src/Toast.tsx"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"
