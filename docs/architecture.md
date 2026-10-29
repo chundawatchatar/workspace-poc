@@ -72,13 +72,15 @@ difference appears, it becomes another prop, never an `if (isClient)` check insi
 
 ```
 apps/web, apps/client ─► packages/terminal-ui ─► packages/ui ─► packages/shared
-apps/server ─► packages/shared
+apps/server ─► packages/domain ─► packages/shared
 apps/host ─► packages/terminal, packages/connectors (future) ─► packages/shared
 ```
 
 - `packages/*` never import from `apps/*`, and `apps/web` and `apps/client` never import from each other.
 - Code that might be closed later (accounts, billing, hosted flows, paid connectors) lives in its own app or package
   and uses only the public exports of the others. Nothing else imports it.
+- Only `apps/server` imports `packages/domain` (the database schemas, migrations and client), so no browser app or
+  the host ever pulls in database code.
 - `packages/shared/src/contracts` is the boundary. Any two parts talk only through a contract defined there.
 - Server-side config comes from the root `.env` through `loadRootEnv()` (`@orch/shared/env`, Node-only, kept out of
   the browser entry), which never overrides variables already set.
