@@ -4,15 +4,15 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { useRef, useState } from 'react'
 import { AuthCard } from '../components/AuthCard'
 import { linkClass } from '../components/Centered'
-import { leaveIfSignedIn, signUpWithEmail } from '../lib/auth'
-import { focusFirstInvalid, shownError, signUpSchema, submitOnce } from '../lib/authForms'
+import { leaveIfSignedIn } from '../lib/auth'
+import { focusFirstInvalid, shownError, signUpFormOptions, submitOnce } from '../lib/authForms'
 
-/** The search params of `/sign-up`: where to go once signed in, passed on to `/sign-in`. */
+/** The search params of `/auth/sign-up`: where to go once signed in, passed on to `/auth/sign-in`. */
 interface SignUpSearch {
   redirect?: string
 }
 
-export const Route = createFileRoute('/sign-up')({
+export const Route = createFileRoute('/auth/sign-up')({
   validateSearch: (search: Record<string, unknown>): SignUpSearch =>
     typeof search.redirect === 'string' ? { redirect: search.redirect } : {},
   beforeLoad: leaveIfSignedIn,
@@ -28,25 +28,17 @@ function SignUp() {
   const signInSearch = target ? { redirect: target } : {}
 
   const form = useForm({
-    defaultValues: { name: '', email: '', password: '' },
-    validators: { onChange: signUpSchema, onBlur: signUpSchema },
+    ...signUpFormOptions({ setProblem, onSent: setSentTo }),
     onSubmitInvalid: ({ formApi }) => focusFirstInvalid(formRef.current, formApi.state.fieldMeta),
-    onSubmit: async ({ value }) => {
-      const { name, email, password } = signUpSchema.parse(value)
-      const message = await signUpWithEmail(email, password, name).catch(
-        () => 'Creating the account failed. Try again.',
-      )
-      setProblem(message)
-      if (!message) setSentTo(email)
-    },
   })
 
   if (sentTo) {
     return (
       <AuthCard
         title="Check your inbox"
+        focusTitle
         footer={
-          <Link to="/sign-in" search={signInSearch} className={linkClass}>
+          <Link to="/auth/sign-in" search={signInSearch} className={linkClass}>
             Back to sign in
           </Link>
         }
@@ -65,7 +57,7 @@ function SignUp() {
       footer={
         <p>
           Already have an account?{' '}
-          <Link to="/sign-in" search={signInSearch} className={linkClass}>
+          <Link to="/auth/sign-in" search={signInSearch} className={linkClass}>
             Sign in instead
           </Link>
         </p>

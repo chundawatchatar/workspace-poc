@@ -1,8 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { FormApi } from '@tanstack/react-form'
 import { QueryClient } from '@tanstack/react-query'
-import { signInWithEmail } from './auth'
-import { shownError, signInSchema, signUpSchema, submitOnce } from './authForms'
+import { shownError, signInFormOptions, signInSchema, signUpFormOptions, signUpSchema, submitOnce } from './authForms'
 
 /** The message for each field that fails, keyed by field name. */
 function problems(result: { success: boolean; error?: { issues: { path: PropertyKey[]; message: string }[] } }) {
@@ -44,19 +43,33 @@ describe('shownError', () => {
   })
 })
 
-describe('the sign-in form', () => {
+describe('the sign-in and sign-up forms', () => {
   const realFetch = globalThis.fetch
   const realLocation = globalThis.location
   let signInRequests = 0
+  /** The form-level message as the page shows it, and what it was when the last request went out. */
+  let problem: string | null = null
+  let problemDuringRequest: string | null = null
+  const setProblem = (message: string | null) => {
+    problem = message
+  }
 
   beforeAll(() => {
     globalThis.location = { origin: 'http://localhost:3220' } as Location
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = new URL(String(input instanceof Request ? input.url : input), location.origin).pathname
-      if (path !== '/api/auth/sign-in/email') return Response.json(null)
-      signInRequests++
+      problemDuringRequest = problem
       await Bun.sleep(20)
-      return Response.json({ message: 'Invalid email or password' }, { status: 401 })
+      if (path === '/api/auth/sign-in/email') {
+        signInRequests++
+        return Response.json({ message: 'Invalid email or password' }, { status: 401 })
+      }
+      if (path === '/api/auth/sign-up/email') {
+        const { email } = JSON.parse(String(init?.body))
+        if (email === 'busy@example.com') return Response.json({ message: 'Too many requests' }, { status: 429 })
+        return Response.json({ token: null, user: { id: 'new', email, name: 'Ada' } })
+      }
+      return Response.json(null)
     }) as typeof fetch
   })
 
@@ -65,29 +78,50 @@ describe('the sign-in form', () => {
     globalThis.fetch = realFetch
   })
 
-  test('a second submit while one is in flight sends nothing, and a refusal keeps the values', async () => {
-    const queryClient = new QueryClient()
-    let problem: string | null = null
-    // Set up like the `/sign-in` page's form.
-    const form = new FormApi({
-      defaultValues: { email: '', password: '' },
-      validators: { onChange: signInSchema, onBlur: signInSchema },
-      onSubmit: async ({ value }) => {
-        const { email, password } = signInSchema.parse(value)
-        problem = await signInWithEmail(queryClient, email, password)
-      },
-    })
+  /** Submits `form` unless a submit is in flight, and resolves once none is. */
+  async function submitAndWait(form: Parameters<typeof submitOnce>[0]) {
+    submitOnce(form)
+    for (let i = 0; i < 100 && form.state.isSubmitting; i++) await Bun.sleep(10)
+  }
+
+  test('a second sign-in submit sends nothing while one is in flight, and a refusal keeps the values', async () => {
+    const form = new FormApi(signInFormOptions(new QueryClient(), { setProblem, onSignedIn: async () => {} }))
     form.mount()
     form.setFieldValue('email', 'a@example.com')
     form.setFieldValue('password', 'wrong password')
 
     submitOnce(form)
     expect(form.state.isSubmitting).toBe(true)
-    submitOnce(form)
-    for (let i = 0; i < 100 && form.state.isSubmitting; i++) await Bun.sleep(10)
+    // This second submit lands while the first is in flight.
+    await submitAndWait(form)
 
     expect(signInRequests).toBe(1)
     expect(problem as string | null).toBe('Wrong email or password.')
     expect(form.state.values).toEqual({ email: 'a@example.com', password: 'wrong password' })
+
+    // The old message is gone while the next request is on its way.
+    await submitAndWait(form)
+    expect(problemDuringRequest).toBeNull()
+    expect(problem as string | null).toBe('Wrong email or password.')
+  })
+
+  test('sign-up clears the last refusal as it submits, and empties the form once the email is sent', async () => {
+    problem = null
+    let sentTo: string | null = null
+    const form = new FormApi(signUpFormOptions({ setProblem, onSent: (email) => (sentTo = email) }))
+    form.mount()
+    form.setFieldValue('name', 'Ada')
+    form.setFieldValue('email', 'busy@example.com')
+    form.setFieldValue('password', 'long enough')
+    await submitAndWait(form)
+    expect(problem as string | null).toBe('Too many attempts. Wait a minute and try again.')
+    expect(form.state.values.password).toBe('long enough')
+
+    form.setFieldValue('email', 'ada@example.com')
+    await submitAndWait(form)
+    expect(problemDuringRequest).toBeNull()
+    expect(problem as string | null).toBeNull()
+    expect(sentTo as string | null).toBe('ada@example.com')
+    expect(form.state.values).toEqual({ name: '', email: '', password: '' })
   })
 })

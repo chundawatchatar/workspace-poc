@@ -1,5 +1,5 @@
 import { SIDEBAR_BOOT_SCRIPT } from '@orch/terminal-ui'
-import { FAVICON_HREF, THEME_BOOT_SCRIPT } from '@orch/ui'
+import { FAVICON_HREF, PRODUCT_NAME, THEME_BOOT_SCRIPT } from '@orch/ui'
 import { QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { createRootRouteWithContext, HeadContent, Outlet, Scripts, useNavigate } from '@tanstack/react-router'
 import { type ReactNode, useEffect } from 'react'
@@ -14,7 +14,7 @@ export const Route = createRootRouteWithContext<RouterContext>()({
     meta: [
       { charSet: 'utf-8' },
       { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-      { title: 'Orchestrator' },
+      { title: PRODUCT_NAME },
     ],
     links: [
       { rel: 'stylesheet', href: appCss },

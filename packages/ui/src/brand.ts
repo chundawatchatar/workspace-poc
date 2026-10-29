@@ -1,4 +1,11 @@
-// The product's mark, defined once: the favicon of every app and the logo on the site are drawn from it.
+// The product's name, subtitle and mark, defined once: the favicon of every app, the logo on the site and the frame of
+// the client's auth pages are drawn from them.
+
+/** The product's name, as every app and the site show it. */
+export const PRODUCT_NAME = 'Orchestrator'
+
+/** The one-line subtitle under the product's name. */
+export const PRODUCT_TAGLINE = 'Your agents, your machine, any browser.'
 
 /**
  * The mark as SVG markup: a window split into three panes, one of them ringing for attention. `color` may be a
@@ -18,5 +25,5 @@ export function markSvg(options: { color: string; fill?: string; size?: number; 
 
 /** The favicon, in the default dark theme's colours, as a data URL every app can put in `<link rel="icon">`. */
 export const FAVICON_HREF = `data:image/svg+xml,${encodeURIComponent(
-  markSvg({ color: '#3b82f6', fill: '#0c0d10', size: 32, title: 'Orchestrator' }),
+  markSvg({ color: '#3b82f6', fill: '#0c0d10', size: 32, title: PRODUCT_NAME }),
 )}`

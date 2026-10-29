@@ -135,19 +135,31 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   (`sessionStorage`, `src/lib/pendingLink.ts`) and invalidates the router so the guards run again. A query or
   mutation that fails with `unauthorized` reads the session again, so a session revoked elsewhere takes the same
   path. Guarded routes (`/` and `/m/$machineId` with its children) use `requireSession` as `beforeLoad`, which sends
-  a signed-out user to `/sign-in?redirect=<path and search>`. `/sign-in` itself is never guarded, and after signing
-  in it goes to `safeRedirect(redirect)`: the value only when it is a path on this origin (one leading `/`, not `//`
-  or `/\`, no control characters) and not `/sign-in`, else `/`. The prerendered shell never reads the session.
-- The client's `/sign-in` and `/sign-up` pages are never guarded; a signed-in visit to either goes straight to
-  `safeRedirect(redirect)` (`leaveIfSignedIn`), and each links to the other carrying `redirect` along. Their forms
+  a signed-out user to `/auth/sign-in?redirect=<path and search>`. `/auth/sign-in` itself is never guarded, and
+  after signing in it goes to `safeRedirect(redirect)`: the value only when it is a path on this origin (one leading
+  `/`, not `//` or `/\`, no control characters) and not a page under `/auth`, else `/`. The `/auth` check runs on the
+  decoded, lowercased path with trailing slashes removed (dot segments already resolved), so `/AUTH/`, `/./auth` and
+  `/%61uth/sign-in` are refused too, a path that fails to decode goes home, and `/authors` is still allowed. The
+  prerendered shell never reads the session.
+- The client's auth pages live under the `/auth` layout route (`src/routes/auth.tsx`): it draws the product's mark,
+  name and subtitle (`BrandMark`, `PRODUCT_NAME` and `PRODUCT_TAGLINE` from `@orch/ui`, which the site and the
+  favicon share) above the page's `AuthCard`, whose title is the page's only `h1`, using theme tokens only, so it
+  reads in every light and dark theme. `/auth` itself opens `/auth/sign-in`, keeping `redirect`. The layout is
+  neither guarded nor left when signed in; each page decides with its own `beforeLoad`.
+- The client's `/auth/sign-in` and `/auth/sign-up` pages are never guarded; a signed-in visit to either goes straight
+  to `safeRedirect(redirect)` (`leaveIfSignedIn`), and each links to the other carrying `redirect` along. Their forms
   use TanStack Form with the Zod schemas in `src/lib/authForms.ts` (Zod 4 is a Standard Schema, so no adapter) and
   the presentational `TextField`, `PasswordField`, `Button` and `FormError` from `@orch/ui`, which take plain values
   and callbacks so other apps can drive them with any form library. A field shows its error only once it has been
   left or the form submitted, a failed submit focuses the first invalid field, and a second submit while one is in
   flight sends nothing. The schemas only catch mistakes early (the password's 8 to 128 characters mirror Better
-  Auth's defaults); the server stays the authority. Neither page keeps the email or password outside the form
-  state, logs them or puts them in the URL.
-- Handoff to the email pages job: sign-up success is an in-page "Check your inbox" state naming the address, not a
+  Auth's defaults); the server stays the authority. A new submit clears the last form-level error before its request
+  goes out, and a successful sign-up empties the form before showing "Check your inbox", whose heading then takes
+  focus. Neither page keeps the email or password outside the form state, logs them or puts them in the URL.
+- Handoff to the email pages job: its pages (check your inbox, verify email, forgot and reset password) go under the
+  `/auth` layout, and the server's email links point at `/auth/*`. Any of them a signed-in user may open, such as a
+  verification link, leaves `leaveIfSignedIn` off. `safeRedirect` already refuses every `/auth` path, so signing in
+  never lands back on one. Sign-up success is still an in-page "Check your inbox" state naming the address, not a
   route, and the 403 (email not verified) sign-in message only points at the inbox, with no resend button. That job
   can swap both for links to its own pages, and add the verification `callbackURL`.
 - Accepted for development, accounts are required by the client: with `DATABASE_URL` unset the server answers 404

@@ -11,8 +11,10 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SplatRouteImport } from './routes/$'
-import { Route as SignInRouteImport } from './routes/sign-in'
-import { Route as SignUpRouteImport } from './routes/sign-up'
+import { Route as AuthRouteImport } from './routes/auth'
+import { Route as AuthIndexRouteImport } from './routes/auth.index'
+import { Route as AuthSignInRouteImport } from './routes/auth.sign-in'
+import { Route as AuthSignUpRouteImport } from './routes/auth.sign-up'
 import { Route as MMachineIdRouteImport } from './routes/m.$machineId'
 import { Route as MMachineIdIndexRouteImport } from './routes/m.$machineId.index'
 import { Route as MMachineIdSplatRouteImport } from './routes/m.$machineId.$'
@@ -28,15 +30,25 @@ const SplatRoute = SplatRouteImport.update({
   path: '/$',
   getParentRoute: () => rootRouteImport,
 } as any)
-const SignInRoute = SignInRouteImport.update({
-  id: '/sign-in',
-  path: '/sign-in',
+const AuthRoute = AuthRouteImport.update({
+  id: '/auth',
+  path: '/auth',
   getParentRoute: () => rootRouteImport,
 } as any)
-const SignUpRoute = SignUpRouteImport.update({
+const AuthIndexRoute = AuthIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AuthRoute,
+} as any)
+const AuthSignInRoute = AuthSignInRouteImport.update({
+  id: '/sign-in',
+  path: '/sign-in',
+  getParentRoute: () => AuthRoute,
+} as any)
+const AuthSignUpRoute = AuthSignUpRouteImport.update({
   id: '/sign-up',
   path: '/sign-up',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AuthRoute,
 } as any)
 const MMachineIdRoute = MMachineIdRouteImport.update({
   id: '/m/$machineId',
@@ -62,9 +74,11 @@ const MMachineIdWWorkspaceIdRoute = MMachineIdWWorkspaceIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
-  '/sign-in': typeof SignInRoute
-  '/sign-up': typeof SignUpRoute
+  '/auth': typeof AuthRouteWithChildren
+  '/auth/sign-in': typeof AuthSignInRoute
+  '/auth/sign-up': typeof AuthSignUpRoute
   '/m/$machineId': typeof MMachineIdRouteWithChildren
+  '/auth/': typeof AuthIndexRoute
   '/m/$machineId/$': typeof MMachineIdSplatRoute
   '/m/$machineId/': typeof MMachineIdIndexRoute
   '/m/$machineId/w/$workspaceId': typeof MMachineIdWWorkspaceIdRoute
@@ -72,8 +86,9 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
-  '/sign-in': typeof SignInRoute
-  '/sign-up': typeof SignUpRoute
+  '/auth/sign-in': typeof AuthSignInRoute
+  '/auth/sign-up': typeof AuthSignUpRoute
+  '/auth': typeof AuthIndexRoute
   '/m/$machineId/$': typeof MMachineIdSplatRoute
   '/m/$machineId': typeof MMachineIdIndexRoute
   '/m/$machineId/w/$workspaceId': typeof MMachineIdWWorkspaceIdRoute
@@ -82,9 +97,11 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
-  '/sign-in': typeof SignInRoute
-  '/sign-up': typeof SignUpRoute
+  '/auth': typeof AuthRouteWithChildren
+  '/auth/sign-in': typeof AuthSignInRoute
+  '/auth/sign-up': typeof AuthSignUpRoute
   '/m/$machineId': typeof MMachineIdRouteWithChildren
+  '/auth/': typeof AuthIndexRoute
   '/m/$machineId/$': typeof MMachineIdSplatRoute
   '/m/$machineId/': typeof MMachineIdIndexRoute
   '/m/$machineId/w/$workspaceId': typeof MMachineIdWWorkspaceIdRoute
@@ -94,9 +111,11 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/$'
-    | '/sign-in'
-    | '/sign-up'
+    | '/auth'
+    | '/auth/sign-in'
+    | '/auth/sign-up'
     | '/m/$machineId'
+    | '/auth/'
     | '/m/$machineId/$'
     | '/m/$machineId/'
     | '/m/$machineId/w/$workspaceId'
@@ -104,8 +123,9 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/$'
-    | '/sign-in'
-    | '/sign-up'
+    | '/auth/sign-in'
+    | '/auth/sign-up'
+    | '/auth'
     | '/m/$machineId/$'
     | '/m/$machineId'
     | '/m/$machineId/w/$workspaceId'
@@ -113,9 +133,11 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/$'
-    | '/sign-in'
-    | '/sign-up'
+    | '/auth'
+    | '/auth/sign-in'
+    | '/auth/sign-up'
     | '/m/$machineId'
+    | '/auth/'
     | '/m/$machineId/$'
     | '/m/$machineId/'
     | '/m/$machineId/w/$workspaceId'
@@ -124,8 +146,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   SplatRoute: typeof SplatRoute
-  SignInRoute: typeof SignInRoute
-  SignUpRoute: typeof SignUpRoute
+  AuthRoute: typeof AuthRouteWithChildren
   MMachineIdRoute: typeof MMachineIdRouteWithChildren
 }
 
@@ -145,19 +166,33 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SplatRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/sign-in': {
-      id: '/sign-in'
-      path: '/sign-in'
-      fullPath: '/sign-in'
-      preLoaderRoute: typeof SignInRouteImport
+    '/auth': {
+      id: '/auth'
+      path: '/auth'
+      fullPath: '/auth'
+      preLoaderRoute: typeof AuthRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/sign-up': {
-      id: '/sign-up'
+    '/auth/': {
+      id: '/auth/'
+      path: '/'
+      fullPath: '/auth/'
+      preLoaderRoute: typeof AuthIndexRouteImport
+      parentRoute: typeof AuthRoute
+    }
+    '/auth/sign-in': {
+      id: '/auth/sign-in'
+      path: '/sign-in'
+      fullPath: '/auth/sign-in'
+      preLoaderRoute: typeof AuthSignInRouteImport
+      parentRoute: typeof AuthRoute
+    }
+    '/auth/sign-up': {
+      id: '/auth/sign-up'
       path: '/sign-up'
-      fullPath: '/sign-up'
-      preLoaderRoute: typeof SignUpRouteImport
-      parentRoute: typeof rootRouteImport
+      fullPath: '/auth/sign-up'
+      preLoaderRoute: typeof AuthSignUpRouteImport
+      parentRoute: typeof AuthRoute
     }
     '/m/$machineId': {
       id: '/m/$machineId'
@@ -190,6 +225,20 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface AuthRouteChildren {
+  AuthSignInRoute: typeof AuthSignInRoute
+  AuthSignUpRoute: typeof AuthSignUpRoute
+  AuthIndexRoute: typeof AuthIndexRoute
+}
+
+const AuthRouteChildren: AuthRouteChildren = {
+  AuthSignInRoute: AuthSignInRoute,
+  AuthSignUpRoute: AuthSignUpRoute,
+  AuthIndexRoute: AuthIndexRoute,
+}
+
+const AuthRouteWithChildren = AuthRoute._addFileChildren(AuthRouteChildren)
+
 interface MMachineIdRouteChildren {
   MMachineIdSplatRoute: typeof MMachineIdSplatRoute
   MMachineIdIndexRoute: typeof MMachineIdIndexRoute
@@ -209,8 +258,7 @@ const MMachineIdRouteWithChildren = MMachineIdRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   SplatRoute: SplatRoute,
-  SignInRoute: SignInRoute,
-  SignUpRoute: SignUpRoute,
+  AuthRoute: AuthRouteWithChildren,
   MMachineIdRoute: MMachineIdRouteWithChildren,
 }
 export const routeTree = rootRouteImport

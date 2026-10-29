@@ -42,6 +42,7 @@ async function fakeFetch(input: RequestInfo | URL, init?: RequestInit) {
   }
   if (path === '/api/auth/sign-in/email') {
     const { email } = JSON.parse(String(init?.body))
+    if (email === 'unverified@example.com') return Response.json({ code: 'EMAIL_NOT_VERIFIED' }, { status: 403 })
     server.user = [userA, userB].find((u) => u.email === email) ?? null
     return server.user ? Response.json({ token: 't', user: server.user }) : Response.json({}, { status: 401 })
   }
@@ -180,6 +181,16 @@ describe('watchIdentity', () => {
   })
 })
 
+describe('signInWithEmail', () => {
+  test('an unverified address is told to open the link in its inbox, and stays signed out', async () => {
+    const { queryClient } = await setup(null)
+    expect(await signInWithEmail(queryClient, 'unverified@example.com', 'pw')).toBe(
+      'Verify your email address first: open the link we sent to your inbox.',
+    )
+    expect(queryClient.getQueryData(sessionQuery.queryKey)).toBeNull()
+  })
+})
+
 describe('signUpWithEmail', () => {
   test('posts the name, email and password and stays signed out, alike for a taken address', async () => {
     const { queryClient } = await setup(null)
@@ -203,19 +214,32 @@ describe('signUpWithEmail', () => {
 
 describe('safeRedirect', () => {
   test('keeps same-origin paths and sends everything else home', () => {
-    expect(safeRedirect('/m/x?tab=2#top')).toBe('/m/x?tab=2#top')
+    for (const safe of ['/m/x?tab=2#top', '/authors', '/m/auth']) expect(safeRedirect(safe)).toBe(safe)
     for (const unsafe of [
       'https://evil.example',
       '//evil.example',
       '/\\evil.example',
       '/\t/evil.example',
       'evil.example',
-      '/sign-in?redirect=/m/x',
-      '/SIGN-IN/',
       undefined,
       '',
     ]) {
       expect(safeRedirect(unsafe)).toBe('/')
+    }
+  })
+
+  test('never goes back to a page under /auth, however the path is spelled', () => {
+    for (const auth of [
+      '/auth',
+      '/auth/',
+      '/auth/sign-in?redirect=/m/x',
+      '/AUTH/Sign-Up',
+      '/./auth/sign-in',
+      '/m/../auth/sign-up',
+      '/%61uth/sign-in',
+      '/%E0%A4%A',
+    ]) {
+      expect(safeRedirect(auth)).toBe('/')
     }
   })
 })
