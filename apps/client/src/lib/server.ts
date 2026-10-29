@@ -66,8 +66,14 @@ export function serverKey<E extends ServerEndpoint>(endpoint: E, input?: ServerE
   return input === undefined ? (['server', endpoint.path] as const) : (['server', endpoint.path, input] as const)
 }
 
-/** Query options for a GET server endpoint: `useQuery(serverQuery(serverRoutes.system.health, {}))`. */
-export function serverQuery<E extends ServerReadEndpoint>(endpoint: E, input: ServerEndpointInput<E>) {
+/**
+ * Query options for a public GET server endpoint: `useQuery(serverQuery(serverRoutes.system.health, {}))`. Signed-in
+ * endpoints use `accountQuery` from `./auth`, which keys their data by user.
+ */
+export function serverQuery<E extends ServerReadEndpoint & { auth: 'public' }>(
+  endpoint: E,
+  input: ServerEndpointInput<E>,
+) {
   return queryOptions<ServerEndpointOutput<E>, ServerError<ServerErrorCode<E>>>({
     queryKey: serverKey(endpoint, input),
     queryFn: ({ signal }) => callServer(endpoint, input, signal),

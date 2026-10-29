@@ -1,9 +1,10 @@
 import { SIDEBAR_BOOT_SCRIPT } from '@orch/terminal-ui'
 import { FAVICON_HREF, THEME_BOOT_SCRIPT } from '@orch/ui'
-import { QueryClientProvider } from '@tanstack/react-query'
+import { QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { createRootRouteWithContext, HeadContent, Outlet, Scripts, useNavigate } from '@tanstack/react-router'
 import { type ReactNode, useEffect } from 'react'
 import { PageNotFound } from '../components/PageNotFound'
+import { sessionQuery } from '../lib/auth'
 import { acceptConnectLink } from '../lib/machines'
 import type { RouterContext } from '../router'
 import appCss from '../styles.css?url'
@@ -47,6 +48,8 @@ function RootDocument({ children }: { children: ReactNode }) {
 
 function RootLayout() {
   const navigate = useNavigate()
+  // Keeps the session observed on every page, so it refetches on focus and a sign-out elsewhere is noticed.
+  useQuery(sessionQuery)
   // A connect link opened on a page that is already open only changes the hash.
   useEffect(() => {
     const onHashChange = () => {
