@@ -92,6 +92,11 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   trusted `Origin` and a JSON `Content-Type`. `/api/auth/*` is Better Auth's and is never in `serverRoutes`. The
   accounts modules are mounted only when `DATABASE_URL` is set, and the server refuses to start against an
   unreachable or unmigrated database.
+- The server sends email only through the mailer (`apps/server/src/modules/mailer/`), one template file per email,
+  as plain text plus HTML over SMTP (Mailpit in development). Tests read emails from the capturing transport in
+  `mailer.testing.ts` instead of a network. Emails carry single-use links, so the link, tokens, the recipient, the
+  subject and `SMTP_URL` are never logged: a send logs only its template name and outcome, and a failure keeps only
+  the SMTP error code.
 - Server-side config comes from the root `.env` through `loadRootEnv()` (`@orch/shared/env`, Node-only, kept out of
   the browser entry), which never overrides variables already set.
 
