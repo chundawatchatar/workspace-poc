@@ -1,7 +1,13 @@
 import { describe, expect, mock, test } from 'bun:test'
 import { defineServerContract } from '@orch/shared'
 import { z } from 'zod'
-import { type Authenticate, createServerRouter, type ServerRouterOptions } from './createServerRouter'
+import {
+  type Authenticate,
+  createServerRouter,
+  type ForUser,
+  type ServerRouterOptions,
+  type UserData,
+} from './createServerRouter'
 import { SECURITY_HEADERS } from './security'
 
 const contract = defineServerContract({
@@ -23,9 +29,12 @@ const contract = defineServerContract({
   },
 })
 
-const signedIn: Authenticate = () => ({ userId: 'u1' })
+const signedIn: Authenticate = () => ({ userId: 'u1', email: 'u1@test.example', name: 'U1' })
+// `scopedTables` is empty today, so a user's repositories are an empty object; identity shows where it came from.
+const userData: UserData = {}
+const forUser: ForUser = () => userData
 
-function setup(options: ServerRouterOptions = { authenticate: signedIn }) {
+function setup(options: ServerRouterOptions = { authenticate: signedIn, forUser }) {
   const rename = mock(async (input: { id: string; name: string }, ctx: { principal: { userId: string } }) => {
     return { ...input, by: ctx.principal.userId }
   })
@@ -55,7 +64,7 @@ describe('createServerRouter', () => {
   })
 
   test('refuses a non-GET request without a same-site or trusted Origin, before checking the content type', async () => {
-    const { router, rename } = setup({ authenticate: signedIn, trustedOrigins: ['https://app.test'] })
+    const { router, rename } = setup({ authenticate: signedIn, forUser, trustedOrigins: ['https://app.test'] })
     const plain = { host: 'srv.test', 'content-type': 'text/plain' }
     for (const origin of [undefined, 'null', 'https://evil.test', 'http://srv.test.evil.test']) {
       const headers = origin === undefined ? plain : { ...plain, origin }
@@ -91,6 +100,48 @@ describe('createServerRouter', () => {
     }
   })
 
+  test('gives a user handler only the principal, its scoped data, `fail` and `c`, and a public one no data', async () => {
+    const seen: Record<string, Record<string, unknown>> = {}
+    const opened = mock(forUser)
+    const router = createServerRouter(
+      contract,
+      {
+        read: async ({ id }, ctx) => {
+          seen.read = { ...ctx }
+          return { id }
+        },
+        rename: async (input, ctx) => {
+          seen.rename = { ...ctx }
+          return { ...input, by: ctx.principal.userId }
+        },
+      },
+      { authenticate: signedIn, forUser: opened, onError: () => {} },
+    )
+    expect((await router.request('/api/items/a1')).status).toBe(200)
+    expect(seen.read).toMatchObject({ principal: null, data: null })
+    expect(opened).not.toHaveBeenCalled()
+
+    expect((await post(router, sameSite)).status).toBe(200)
+    expect(Object.keys(seen.rename ?? {}).sort()).toEqual(['c', 'data', 'fail', 'principal'])
+    expect(seen.rename?.principal).toEqual({ userId: 'u1', email: 'u1@test.example', name: 'U1' })
+    expect(seen.rename?.data).toBe(userData)
+    expect(opened).toHaveBeenCalledTimes(1)
+    expect(opened.mock.calls[0]?.[0]).toBe(seen.rename?.principal as never)
+  })
+
+  test('fails closed with 500 when a user endpoint has a principal but no `forUser`, or authenticating throws', async () => {
+    const failing: Authenticate = () => {
+      throw new Error('database is down')
+    }
+    for (const options of [{ authenticate: signedIn }, { authenticate: failing, forUser }]) {
+      const errors: unknown[] = []
+      const { router, rename } = setup({ ...options, onError: (_endpoint, error) => errors.push(error) })
+      expect(await errorOf(await post(router, sameSite))).toEqual({ status: 500, code: 'internal' })
+      expect(rename).not.toHaveBeenCalled()
+      expect(errors).toHaveLength(1)
+    }
+  })
+
   test('turns a declared error into its status and any other error into a generic 500', async () => {
     const router = createServerRouter(
       contract,
@@ -100,7 +151,7 @@ describe('createServerRouter', () => {
         },
         rename: async (_input, { fail }) => fail('name_taken', 'That name is taken.'),
       },
-      { authenticate: signedIn, onError: () => {} },
+      { authenticate: signedIn, forUser, onError: () => {} },
     )
     const taken = await post(router, sameSite)
     expect(taken.status).toBe(409)

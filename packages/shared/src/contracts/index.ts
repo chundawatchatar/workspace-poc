@@ -3,6 +3,7 @@ import { eventsSocket } from './events'
 import { fsContract } from './fs'
 import { gitContract } from './git'
 import { remoteAccessContract } from './remoteAccess'
+import { serverAccountContract } from './serverAccount'
 import { serverSystemContract } from './serverSystem'
 import { systemContract } from './system'
 import { terminalSocket } from './terminals'
@@ -42,6 +43,7 @@ export {
   updateRemoteAccessBody,
 } from './remoteAccess'
 export * from './server'
+export { type ServerMe, serverMeResponse } from './serverAccount'
 export { serverHealthResponse } from './serverSystem'
 export { type DaemonReport, daemonResponse, healthResponse } from './system'
 export {
@@ -98,4 +100,5 @@ export const routes = {
  */
 export const serverRoutes = {
   system: serverSystemContract,
+  account: serverAccountContract,
 }

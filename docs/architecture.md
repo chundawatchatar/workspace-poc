@@ -92,6 +92,15 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   trusted `Origin` and a JSON `Content-Type`. `/api/auth/*` is Better Auth's and is never in `serverRoutes`. The
   accounts modules are mounted only when `DATABASE_URL` is set, and the server refuses to start against an
   unreachable or unmigrated database.
+- An `auth: 'user'` endpoint reads its session only through Better Auth's `auth.api.getSession`
+  (`apps/server/src/modules/auth/auth.middleware.ts`), never by reading the cookie, after the origin and content-type
+  checks, so a cross-site request costs no database read. No valid session means 401 `unauthorized`, and a failed
+  lookup (a database outage) means 500 `internal`, never a pass; the reported error keeps only the cause's name and
+  code, since a database error quotes the session token. The handler gets `principal` (`userId`, `email`, `name`)
+  and `data`, the principal's scoped repositories from `forUser`, and never the `Domain`, `forAuthLibrary()` or
+  `skipAuthorization`: the router is given `forUser` as a closure, not the domain. The lookup passes
+  `disableRefresh`, so it never extends a session; Better Auth's own `/api/auth/get-session` extends the session and
+  its cookie together.
 - Better Auth (pinned at 1.7.14, the version `packages/domain` generates its tables with) owns `/api/auth/*`, in
   `apps/server/src/modules/auth/`. It gives email-and-password sign-up with required email verification, sign-in,
   sign-out and password reset, and sends its emails through the mailer. It reaches the database only through
