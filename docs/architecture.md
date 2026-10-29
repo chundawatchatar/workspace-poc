@@ -169,7 +169,9 @@ That only stays easy if every remote access job keeps these rules:
   limit), 502 (machine offline) and 504 (timeout), plus its own answers to CORS preflights, which never reach the
   machine. Origin checks, CORS and rate limits read only the outer request: its `Origin` and `Host` headers, the
   socket address and the machine id in the URL. Dropping the machine's `Access-Control-*` headers is a filter on
-  header names, like the hop-by-hop list.
+  header names, like the hop-by-hop list. So is dropping `Cookie` from every relayed request and socket upgrade, and
+  `Set-Cookie` from every machine response: machines share the server's origin, where the account session cookie
+  lives, so they never see or set account cookies. Cookie values are never read.
 - **Only the host checks access.** The access key travels in a header and the first socket message, and the server
   never checks it.
 - **The host reports problems the server must react to as control frames.** Rate-limiting bad access keys must not
