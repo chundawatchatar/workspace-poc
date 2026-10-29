@@ -1,14 +1,42 @@
 import { Monitor } from '@orch/ui/icons'
-import { Link } from '@tanstack/react-router'
+import { useQueryClient } from '@tanstack/react-query'
+import { Link, useNavigate } from '@tanstack/react-router'
+import { useState } from 'react'
+import { signOut } from '../lib/auth'
 import { forgetMachine, useMachines } from '../lib/machines'
 import { focusClass, linkClass } from './Centered'
 
 /** The home page: the machines linked in this browser. */
 export function MachineList() {
   const machines = useMachines()
+  const queryClient = useQueryClient()
+  const navigate = useNavigate()
+  const [signOutFailed, setSignOutFailed] = useState(false)
+  const onSignOut = async () => {
+    try {
+      await signOut(queryClient)
+      await navigate({ to: '/sign-in' })
+    } catch {
+      setSignOutFailed(true)
+    }
+  }
   return (
     <div className="mx-auto flex h-full max-w-xl flex-col gap-4 overflow-y-auto p-8">
-      <h1 className="text-base font-semibold text-ink">Your machines</h1>
+      <div className="flex items-center gap-3">
+        <h1 className="flex-1 text-base font-semibold text-ink">Your machines</h1>
+        <button
+          type="button"
+          className={`px-1.5 py-0.5 text-xs text-dim hover:bg-raised hover:text-ink active:bg-line ${focusClass}`}
+          onClick={() => void onSignOut()}
+        >
+          Sign out
+        </button>
+      </div>
+      {signOutFailed && (
+        <p role="alert" className="text-xs text-dim">
+          Signing out failed. Try again.
+        </p>
+      )}
       {machines.length === 0 ? (
         <p className="text-dim">No machines are linked in this browser yet.</p>
       ) : (
