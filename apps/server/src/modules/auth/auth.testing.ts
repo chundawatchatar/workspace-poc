@@ -43,6 +43,13 @@ export function sessionSetCookie(response: Response): string | undefined {
   return response.headers.getSetCookie().find((line) => line.startsWith(`${SESSION_COOKIE}=`))
 }
 
+/** The token in an email link's `#token=` fragment, as the client page reads it. */
+export function linkToken(link: URL): string {
+  const token = new URLSearchParams(link.hash.slice(1)).get('token')
+  if (!token) throw new Error('the link has no token in its fragment')
+  return token
+}
+
 /** The `name=value` pair a browser would send back for a `Set-Cookie` line. */
 export const cookiePair = (setCookie: string) => setCookie.split(';')[0] as string
 
@@ -90,11 +97,12 @@ export function authTestClient({
     return new URL(url)
   }
 
-  /** Signs up and follows the verification link, leaving a verified user with no session. */
+  /** Signs up and verifies with the link's token as the client page does, leaving a verified user with no session. */
   async function register(email: string, ip: string, name = 'Test'): Promise<void> {
     await call('POST', '/api/auth/sign-up/email', { ip, body: { email, password: TEST_PASSWORD, name } })
-    const link = linkTo(email, 'verifyEmail')
-    await call('GET', `${link.pathname}${link.search}`, { ip })
+    const token = linkToken(linkTo(email, 'verifyEmail'))
+    const verify = await call('GET', `/api/auth/verify-email?token=${encodeURIComponent(token)}`, { ip })
+    if (verify.status !== 200) throw new Error(`verify-email answered ${verify.status}`)
   }
 
   /** Signs up, follows the verification link and signs in, returning the session cookie line. */

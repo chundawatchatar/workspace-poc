@@ -13,7 +13,7 @@ import { type CaptureTransport, createCaptureTransport } from '../mailer/mailer.
 import { MachineRegistry } from '../tunnel/tunnel.service'
 import { createAuthModule } from './auth.routes'
 import { createAuth } from './auth.service'
-import { authTestClient, cookiePair, sessionSetCookie, TEST_PASSWORD } from './auth.testing'
+import { authTestClient, cookiePair, linkToken, sessionSetCookie, TEST_PASSWORD } from './auth.testing'
 
 const BASE = 'http://orch.example'
 const TRUSTED = 'https://app.example'
@@ -84,9 +84,13 @@ describe('auth module', () => {
     expect(early.status).toBe(403)
 
     const link = client.linkTo(email, 'verifyEmail')
-    expect(link.pathname).toBe('/api/auth/verify-email')
-    const verify = await client.call('GET', `${link.pathname}${link.search}`, { ip })
-    expect(verify.status).toBeLessThan(400)
+    expect(link.origin).toBe(BASE)
+    expect(link.pathname).toBe('/auth/verify-email')
+    expect(link.search).toBe('')
+    const token = linkToken(link)
+    expect(link.hash).toBe(`#token=${encodeURIComponent(token)}`)
+    const verify = await client.call('GET', `/api/auth/verify-email?token=${encodeURIComponent(token)}`, { ip })
+    expect(verify.status).toBe(200)
 
     const signIn = await client.call('POST', '/api/auth/sign-in/email', {
       ip,
@@ -136,8 +140,11 @@ describe('auth module', () => {
     const resets = mail.sent.filter((m) => m.to === email && m.subject === 'Reset your password')
     expect(resets).toHaveLength(1)
     const link = client.linkTo(email, 'resetPassword')
-    const token = link.pathname.split('/').at(-1)
-    expect(link.pathname).toBe(`/api/auth/reset-password/${token}`)
+    expect(link.origin).toBe(BASE)
+    expect(link.pathname).toBe('/auth/reset-password')
+    expect(link.search).toBe('')
+    const token = linkToken(link)
+    expect(link.hash).toBe(`#token=${encodeURIComponent(token)}`)
 
     const newPassword = 'a brand new passphrase'
     const reset = await client.call('POST', '/api/auth/reset-password', { ip, body: { token, newPassword } })
@@ -210,9 +217,8 @@ describe('auth module', () => {
       secrets.add(message.to)
       const url = new URL(message.text.match(/https?:\/\/\S+/)?.[0] as string)
       secrets.add(url.href)
-      secrets.add(`${url.pathname}${url.search}`)
-      const token = url.searchParams.get('token') ?? url.pathname.split('/').at(-1)
-      if (token) secrets.add(token)
+      secrets.add(url.hash)
+      secrets.add(linkToken(url))
     }
     expect(secrets.size).toBeGreaterThan(0)
     for (const line of logLines) {

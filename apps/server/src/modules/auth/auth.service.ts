@@ -13,7 +13,7 @@ export interface AuthDeps {
   mailer: Mailer
   /** `BETTER_AUTH_SECRET`, at least 32 bytes. Never log it. */
   secret: string
-  /** `BETTER_AUTH_URL`, the server's public URL. Its origin is trusted, and email links start with it. */
+  /** `BETTER_AUTH_URL`, the server's public URL. Its origin is trusted, and email links go to client pages on it. */
   baseUrl: string
   /** Exact origins, besides the server's own, that may send non-GET requests (`SERVER_TRUSTED_ORIGINS`). */
   trustedOrigins: readonly string[]
@@ -36,11 +36,13 @@ export function createAuth({ domain, mailer, secret, baseUrl, trustedOrigins }: 
       enabled: true,
       requireEmailVerification: true,
       revokeSessionsOnPasswordReset: true,
-      sendResetPassword: ({ user, url }) => mailer.send(user.email, 'resetPassword', { url }),
+      sendResetPassword: ({ user, token }) =>
+        mailer.send(user.email, 'resetPassword', { url: emailLinkUrl(baseUrl, 'reset-password', token) }),
     },
     emailVerification: {
       sendOnSignUp: true,
-      sendVerificationEmail: ({ user, url }) => mailer.send(user.email, 'verifyEmail', { url }),
+      sendVerificationEmail: ({ user, token }) =>
+        mailer.send(user.email, 'verifyEmail', { url: emailLinkUrl(baseUrl, 'verify-email', token) }),
     },
     session: {
       // Every request reads the session from the database, so a revoked session ends at once.
@@ -59,6 +61,16 @@ export function createAuth({ domain, mailer, secret, baseUrl, trustedOrigins }: 
     telemetry: { enabled: false },
     logger: { level: 'warn', log: logAuthLine },
   })
+}
+
+/**
+ * The link an email carries to the client's `/auth/<page>` on the origin of
+ * `baseUrl`, with the token in the fragment: browsers never send a fragment to
+ * a server, so the token stays out of access logs and `Referer`. The client
+ * reads it and removes it from the address bar before its router starts.
+ */
+export function emailLinkUrl(baseUrl: string, page: 'verify-email' | 'reset-password', token: string): string {
+  return `${new URL(baseUrl).origin}/auth/${page}#token=${encodeURIComponent(token)}`
 }
 
 /** A Better Auth instance from `createAuth`. */

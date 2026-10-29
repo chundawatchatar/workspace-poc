@@ -1,5 +1,6 @@
 import '../src/env'
 import { loadServerConfig, ServerConfigError } from '../src/lib/config'
+import { emailLinkUrl } from '../src/modules/auth/auth.service'
 import { createMailer, MailSendError } from '../src/modules/mailer/mailer.service'
 import { createSmtpTransport } from '../src/modules/mailer/mailer.transport'
 
@@ -31,7 +32,7 @@ const mailer = createMailer({
 })
 try {
   await mailer.send(to, 'verifyEmail', {
-    url: new URL('/verify-email?token=test-only', config.accounts.betterAuthUrl).href,
+    url: emailLinkUrl(config.accounts.betterAuthUrl, 'verify-email', 'test-only'),
   })
 } catch (error) {
   if (!(error instanceof MailSendError)) throw error
