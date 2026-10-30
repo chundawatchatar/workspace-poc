@@ -36,12 +36,6 @@ body {
   outline-offset: 2px;
 }
 
-/* A faint dot grid behind the main area, like an empty canvas waiting for panes. */
-.canvas-grid {
-  background-image: radial-gradient(color-mix(in srgb, var(--color-line) 70%, transparent) 1px, transparent 1px);
-  background-size: 22px 22px;
-}
-
 /* The blinking block cursor of the scripted terminals. */
 @keyframes caret-blink {
   50% {

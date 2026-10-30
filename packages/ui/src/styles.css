@@ -98,7 +98,46 @@ a {
   ::view-transition-old(*),
   ::view-transition-new(*) {
     animation-duration: 1ms !important;
+    /* Without this, an endless animation such as a spinner would repeat every 1ms and flicker. */
+    animation-iteration-count: 1 !important;
     transition-duration: 1ms !important;
+  }
+}
+
+/* A faint dot grid behind the main area, like an empty canvas waiting for panes. */
+.canvas-grid {
+  background-image: radial-gradient(color-mix(in srgb, var(--color-line) 70%, transparent) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+/* The mark drawing itself (`markSvg` with `intro`): the window's frame, then the split, then the waiting pane's dot. */
+@keyframes mark-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+}
+@keyframes mark-dot {
+  from {
+    opacity: 0;
+    transform: scale(0);
+  }
+}
+.mark-intro .mark-frame,
+.mark-intro .mark-split {
+  stroke-dasharray: 1;
+  animation: mark-draw 560ms cubic-bezier(0.65, 0, 0.35, 1) backwards;
+}
+.mark-intro .mark-split {
+  animation-delay: 420ms;
+}
+.mark-intro .mark-dot {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: mark-dot 380ms cubic-bezier(0.34, 1.56, 0.64, 1) 900ms backwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mark-intro * {
+    animation: none !important;
   }
 }
 

@@ -1,4 +1,5 @@
 ---
+import { PRODUCT_FACTS, PRODUCT_HEADLINE } from '@orch/ui/brand'
 import {
   ArrowRight,
   Bell,
@@ -107,10 +108,10 @@ const agents = ['claude', 'codex', 'opencode', 'cursor-agent', 'aider', 'gemini'
     <div class="mx-auto max-w-6xl px-4 pt-14 pb-16 sm:px-8 sm:pt-20">
       <p class="mb-5 inline-flex items-center gap-2 rounded-full border border-line bg-panel px-3 py-1 text-xs text-dim">
         <span class="h-1.5 w-1.5 rounded-full bg-good"></span>
-        Free and open source · macOS and Linux · any browser
+        {PRODUCT_FACTS}
       </p>
       <h1 class="max-w-4xl text-[2.6rem] leading-[1.05] font-bold tracking-tight text-balance sm:text-6xl">
-        Run every agent at once. <span class="text-accent">Know which one needs you.</span>
+        {PRODUCT_HEADLINE.lead} <span class="text-accent">{PRODUCT_HEADLINE.accent}</span>
       </h1>
       <p class="mt-6 max-w-2xl text-lg leading-relaxed text-pretty text-dim">
         {SITE.name} is a workspace for terminals and coding agents. Split panes, tabs and real shells run on your own
