@@ -1,9 +1,10 @@
 import { SIDEBAR_BOOT_SCRIPT } from '@orch/terminal-ui'
 import { FAVICON_HREF, PRODUCT_NAME, THEME_BOOT_SCRIPT } from '@orch/ui'
-import { QueryClientProvider, useQuery } from '@tanstack/react-query'
+import { QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createRootRouteWithContext, HeadContent, Outlet, Scripts, useNavigate } from '@tanstack/react-router'
 import { type ReactNode, useEffect } from 'react'
 import { PageNotFound } from '../components/PageNotFound'
+import { sendPendingMachineLink } from '../lib/accountMachines'
 import { sessionQuery } from '../lib/auth'
 import { acceptConnectLink } from '../lib/machines'
 import type { RouterContext } from '../router'
@@ -48,16 +49,24 @@ function RootDocument({ children }: { children: ReactNode }) {
 
 function RootLayout() {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   // Keeps the session observed on every page, so it refetches on focus and a sign-out elsewhere is noticed.
-  useQuery(sessionQuery)
+  const userId = useQuery(sessionQuery).data?.id
+  // Whenever a user is signed in, the connect link that was waiting for it is linked to their account. The identity
+  // watcher has already cleared a link left by another user by the time this runs.
+  useEffect(() => {
+    if (userId) void sendPendingMachineLink(queryClient)
+  }, [userId, queryClient])
   // A connect link opened on a page that is already open only changes the hash.
   useEffect(() => {
     const onHashChange = () => {
       const machineId = acceptConnectLink()
-      if (machineId) void navigate({ to: '/m/$machineId', params: { machineId }, replace: true })
+      if (!machineId) return
+      void sendPendingMachineLink(queryClient)
+      void navigate({ to: '/m/$machineId', params: { machineId }, replace: true })
     }
     window.addEventListener('hashchange', onHashChange)
     return () => window.removeEventListener('hashchange', onHashChange)
-  }, [navigate])
+  }, [navigate, queryClient])
   return <Outlet />
 }
