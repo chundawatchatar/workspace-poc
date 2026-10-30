@@ -132,7 +132,8 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   `serverQuery` takes only `auth: 'public'` endpoints. An identity watcher on the router's query client acts
   whenever the user id changes (sign-in, sign-out, another account): it cancels in-flight queries, so a late answer
   for the old user never lands, removes every query and mutation but the session, clears the pending machine link
-  (`sessionStorage`, `src/lib/pendingLink.ts`) and invalidates the router so the guards run again. A query or
+  (`src/lib/pendingLink.ts`) on a sign-out or an account switch but keeps it when a signed-out session signs in, and
+  invalidates the router so the guards run again. A query or
   mutation that fails with `unauthorized` reads the session again, so a session revoked elsewhere takes the same
   path. Guarded routes (`/` and `/m/$machineId` with its children) use `requireSession` as `beforeLoad`, which sends
   a signed-out user to `/auth/sign-in?redirect=<path and search>`. `/auth/sign-in` itself is never guarded, and
@@ -180,9 +181,30 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
 - Accepted for development, accounts are required by the client: with `DATABASE_URL` unset the server answers 404
   for `/api/auth/*`, the session reads as signed out, and the user is sent to a sign-in that can't work.
   `.env.example` sets `DATABASE_URL`.
-- Open question, saved machines: the machines saved in `localStorage` (`orch-machines`, with their access keys)
-  predate accounts and are not per user, so a second user in the same browser still sees them on the home page. The
-  account machine list replaces them.
+- The client's home page lists the signed-in account's machines (`src/lib/accountMachines.ts`, `machinesQuery`:
+  `accountQuery` on `serverRoutes.machines.list`, so its key is `accountKey(userId, ...)`), in the server's order,
+  each marked Online or Offline. It refetches every 10 seconds while the page is open, since `online` changes without
+  any client action. `online` reflects only the relay's tunnel registry, so Offline can also mean a host that is up
+  with remote access off. Rename (an inline TanStack Form with `machineNameSchema`) and unlink invalidate the list;
+  unlink also forgets the machine's local key, since the list no longer shows local-only machines and a key left
+  behind could never be seen or removed. Open question: whether unlink should ask for confirmation.
+- Resolved, saved machines: the access keys saved in `localStorage` (`orch-machines`) are still per browser, not
+  per user, but they no longer decide what the home page lists. They only decide whether a listed machine has an
+  Open link; a machine without a key here says "Open the connect link on this device", as its `/m/<id>` page does.
+  A machine saved locally that the account doesn't have is not listed (linking those is not done). The keys stay in
+  `localStorage`, readable by any script on this origin, and the host still checks the key on every request.
+- A connect link opened in the client saves the key locally and records a pending link in `localStorage`
+  (`orch-pending-machine-link`, `src/lib/pendingLink.ts`): `{ machineId, name, savedAt }` with the default name and
+  never the key. It is in `localStorage` rather than `sessionStorage` because the verification email opens a new tab,
+  which must see it after the user signs in there. Reading it ignores and removes a corrupt entry, one with a `key`
+  field and one older than 24 hours. The root layout calls `sendPendingMachineLink` whenever the session holds a user
+  (loading a page while signed in, signing in, and a connect link opened on an open page), after the identity watcher
+  has decided whether to clear it, so a link left while user A was signed in is never sent for user B. It posts
+  `{ machineId, name }` to `serverRoutes.machines.link`, one send at a time, and clears the link on success (then
+  invalidates the list) or on a 4xx, such as a malformed id; a network error or 5xx keeps it for the next session
+  read. Linking is idempotent and keeps an existing name, so a duplicate send never overwrites a rename. Accepted
+  risk: a link opened while signed out and never followed by a sign-in can be picked up by the next user to sign in
+  in this browser within 24 hours; it holds only an id, and the key check still guards the machine.
 - The machines module (`apps/server/src/modules/machines/`, `serverRoutes.machines`) lists, links, renames and
   unlinks the signed-in user's machines in the `machines` table (one row per user and machine id), only through
   `data.machines`. The accounts API stores and returns only machine ids and names, never access keys: no schema has a
