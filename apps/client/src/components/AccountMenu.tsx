@@ -79,7 +79,11 @@ export function AccountMenu({ className = '' }: { className?: string }) {
         aria-controls={open ? menuId : undefined}
         title={user.email}
         className={`flex max-w-full items-center gap-1.5 px-1.5 py-0.5 text-xs text-dim hover:bg-raised hover:text-ink active:bg-line ${focusClass}`}
-        onClick={() => setOpen((was) => !was)}
+        onClick={() => {
+          // The error panel sits where the menu opens, so it would cover the menu's items.
+          setSignOutFailed(false)
+          setOpen((was) => !was)
+        }}
       >
         <CircleUser size={13} className="shrink-0" />
         <span className="min-w-0 truncate">{user.email}</span>
