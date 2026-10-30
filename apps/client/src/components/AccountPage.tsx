@@ -2,7 +2,7 @@ import { Button, FormError } from '@orch/ui'
 import { ArrowLeft } from '@orch/ui/icons'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { type ReactNode, useState } from 'react'
+import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { signOutEverywhere } from '../lib/accountSessions'
 import { sessionQuery } from '../lib/auth'
 import { AccountMenu } from './AccountMenu'
@@ -57,6 +57,21 @@ function SignOutEverywhere() {
   const [confirming, setConfirming] = useState(false)
   const [pending, setPending] = useState(false)
   const [failed, setFailed] = useState(false)
+  const root = useRef<HTMLDivElement>(null)
+  // True once the user has opened or cancelled the confirmation, so opening the page never moves focus.
+  const toggled = useRef(false)
+
+  // Confirm/Cancel replace the button that had focus, so focus follows the swap instead of falling to the page.
+  // `Button`'s props have no `ref`, so the button is found by its `data-focus` mark.
+  useEffect(() => {
+    if (!toggled.current) return
+    root.current?.querySelector<HTMLElement>(`[data-focus="${confirming ? 'confirm' : 'start'}"]`)?.focus()
+  }, [confirming])
+
+  const setConfirmingByUser = (value: boolean) => {
+    toggled.current = true
+    setConfirming(value)
+  }
   const confirm = async () => {
     setPending(true)
     setFailed(false)
@@ -69,19 +84,19 @@ function SignOutEverywhere() {
     }
   }
   return (
-    <div className="flex flex-col items-start gap-2">
+    <div ref={root} className="flex flex-col items-start gap-2">
       {confirming ? (
         <div className="flex flex-wrap items-center gap-2">
           <p className="text-dim">Sign out on every device, this one included?</p>
-          <Button pending={pending} onClick={() => void confirm()}>
+          <Button data-focus="confirm" pending={pending} onClick={() => void confirm()}>
             Confirm
           </Button>
-          <Button variant="secondary" disabled={pending} onClick={() => setConfirming(false)}>
+          <Button variant="secondary" disabled={pending} onClick={() => setConfirmingByUser(false)}>
             Cancel
           </Button>
         </div>
       ) : (
-        <Button variant="secondary" onClick={() => setConfirming(true)}>
+        <Button data-focus="start" variant="secondary" onClick={() => setConfirmingByUser(true)}>
           Sign out from all devices
         </Button>
       )}

@@ -60,11 +60,11 @@ export function ChangePasswordForm() {
         }
       </form.Subscribe>
       <FormError message={problem} />
-      {changed && (
-        <p role="status" className="text-[13px] text-good">
-          Your password has changed, and every other device has been signed out.
-        </p>
-      )}
+      {/* Mounted empty from the start, so screen readers already watch it when the message arrives. It stays
+      displayed, since a hidden live region may go unannounced; the negative margin cancels the form's gap. */}
+      <p role="status" className="text-[13px] text-good empty:-mt-4">
+        {changed ? 'Your password has changed, and every other device has been signed out.' : null}
+      </p>
       <form.Subscribe selector={(state) => state.isSubmitting}>
         {(submitting) => (
           <Button type="submit" pending={submitting} className="self-start">
