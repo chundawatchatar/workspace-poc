@@ -118,11 +118,16 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   `bun run --filter @orch/server sessions:revoke-user <email>` (or `bun apps/server/scripts/revoke-user-sessions.ts
   <email>`), which deletes the user's `session` rows through `skipAuthorization` and prints only the count.
 - Accepted risk, freshness: `list-sessions` refuses a session older than `session.freshAge` (one day, set in
-  `createAuth`) with 403 `SESSION_NOT_FRESH`, while the revoke endpoints only need a valid session. A page that lists
-  devices must ask for a fresh sign-in first.
-- Open question, tokens: Better Auth's `list-sessions` answers each session's `token`, which `revoke-session` takes.
-  That hands the secrets of the user's other sessions to page JavaScript and weakens `HttpOnly`. We keep the stock
-  behaviour for now; dropping the tokens means our own revoke-by-id endpoint in `serverRoutes`.
+  `createAuth`) with 403 `SESSION_NOT_FRESH`, while the revoke endpoints only need a valid session. The client's
+  `/account` page then says a recent sign-in is needed to see devices, and its "Sign in again" button signs out and
+  opens `/auth/sign-in?redirect=%2Faccount`. Changing the password and signing out from all devices still work there.
+  Revoking one session needs a fresh session too, since it lists the sessions again to find the token, but the table
+  only shows once a list succeeded.
+- Resolved for now, tokens: Better Auth's `list-sessions` answers each session's `token`, which `revoke-session`
+  takes. The client keeps them out of the query cache: `sessionsQuery` (`src/lib/accountSessions.ts`) returns rows
+  without the token, and `revokeSession` lists the sessions again at revoke time and keeps the token only in that
+  call. The tokens still reach page JavaScript briefly in those responses, which weakens `HttpOnly`; removing them
+  means our own revoke-by-id endpoint in `serverRoutes`.
 - The session cookie is `Path=/api`, `HttpOnly`, `Secure` and `SameSite=Lax`. Browsers never send it to the relayed
   machines under `/m/*`, and the relay drops `Cookie` there as well. Its name has the `__Secure-` prefix when
   `BETTER_AUTH_URL` is `https://` and none on `http://`.
@@ -137,7 +142,7 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   (`src/lib/pendingLink.ts`) on a sign-out or an account switch but keeps it when a signed-out session signs in, and
   invalidates the router so the guards run again. A query or
   mutation that fails with `unauthorized` reads the session again, so a session revoked elsewhere takes the same
-  path. Guarded routes (`/` and `/m/$machineId` with its children) use `requireSession` as `beforeLoad`, which sends
+  path. Guarded routes (`/`, `/account` and `/m/$machineId` with its children) use `requireSession` as `beforeLoad`, which sends
   a signed-out user to `/auth/sign-in?redirect=<path and search>`. `/auth/sign-in` itself is never guarded, and
   after signing in it goes to `safeRedirect(redirect)`: the value only when it is a path on this origin (one leading
   `/`, not `//` or `/\`, no control characters) and not a page under `/auth`, else `/`. The `/auth` check runs on the
@@ -190,6 +195,18 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   with remote access off. Rename (an inline TanStack Form with `machineNameSchema`) and unlink invalidate the list;
   unlink also forgets the machine's local key, since the list no longer shows local-only machines and a key left
   behind could never be seen or removed. Open question: whether unlink should ask for confirmation.
+- The client's `/account` page is reached from the account menu (`src/components/AccountMenu.tsx`: the user's email
+  as a button opening "Account" and "Sign out"), shown in the home page's title row and in the machine page's sidebar
+  `header`. It changes the password with Better Auth's `change-password` and `revokeOtherSessions: true`: Better Auth
+  1.7.14 deletes every session of the user and starts a new one for this browser, so the user stays signed in under a
+  new session id (the user id is unchanged, so the identity watcher does nothing), and the token it answers is
+  dropped. Its sessions table (TanStack Table) shows each session's device (parsed from the user agent), IP address
+  (from `x-orch-client-ip`, so a proxy's address without `SERVER_TRUST_PROXY`), created and last active times, and
+  marks the one whose id matches `get-session` as "This device". "Last active" is Better Auth's `updatedAt`, which
+  moves only when the session is renewed (`updateAge`, a day), so it is approximate. Every other row can be revoked;
+  "Sign out from all devices" asks for confirmation, then calls `revoke-sessions` (this session included) and marks
+  the session as signed out. A 401 from any of these calls reads the session again, so a session revoked elsewhere
+  lands on sign-in.
 - Resolved, saved machines: the access keys saved in `localStorage` (`orch-machines`) are still per browser, not
   per user, but they no longer decide what the home page lists. They only decide whether a listed machine has an
   Open link; a machine without a key here says "Open the connect link on this device", as its `/m/<id>` page does.

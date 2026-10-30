@@ -1,6 +1,7 @@
 import { formOptions } from '@tanstack/react-form'
 import type { QueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
+import { changePassword } from './accountSessions'
 import {
   EXPIRED_LINK,
   requestPasswordReset,
@@ -36,6 +37,26 @@ export const emailSchema = z.object({ email })
 
 /** What the reset-password form checks: the new password, with the same limits as sign-up. */
 export const resetPasswordSchema = z.object({ password: newPassword })
+
+/**
+ * What the change-password form checks: the current password, a new one with the same limits as sign-up, and a
+ * confirmation that must match it.
+ */
+export const changePasswordSchema = z
+  .object({
+    currentPassword: z.string().min(1, 'Enter your current password.'),
+    newPassword,
+    confirmPassword: z.string(),
+  })
+  .refine((value) => value.confirmPassword === value.newPassword, {
+    message: 'The passwords do not match.',
+    path: ['confirmPassword'],
+    // Zod skips an object's refinements while any field fails; this one only needs the two passwords.
+    when: ({ value }) => {
+      const { newPassword, confirmPassword } = (value ?? {}) as Record<string, unknown>
+      return typeof newPassword === 'string' && typeof confirmPassword === 'string'
+    },
+  })
 
 /** What a form field reports about itself, as TanStack Form keeps it. */
 interface FieldMeta {
@@ -198,6 +219,33 @@ export function resetPasswordFormOptions(
         onExpired()
         return
       }
+      if (message) {
+        setProblem(message)
+        return
+      }
+      formApi.reset()
+      onChanged()
+    },
+  })
+}
+
+/**
+ * The change-password form's options. A submit clears the last `setProblem` message as it starts, then reports a
+ * refusal through `setProblem`, or empties the form, so no password is left in it, and calls `onChanged`.
+ */
+export function changePasswordFormOptions(
+  queryClient: QueryClient,
+  { setProblem, onChanged }: { setProblem: (message: string | null) => void; onChanged: () => void },
+) {
+  return formOptions({
+    defaultValues: { currentPassword: '', newPassword: '', confirmPassword: '' },
+    validators: { onChange: changePasswordSchema, onBlur: changePasswordSchema },
+    onSubmit: async ({ value, formApi }) => {
+      setProblem(null)
+      const { currentPassword, newPassword } = changePasswordSchema.parse(value)
+      const message = await changePassword(queryClient, currentPassword, newPassword).catch(
+        () => 'Changing the password failed. Try again.',
+      )
       if (message) {
         setProblem(message)
         return

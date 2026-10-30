@@ -3,6 +3,7 @@ import { ArrowLeft } from '@orch/ui/icons'
 import { Link, Outlet, useNavigate, useParams } from '@tanstack/react-router'
 import { useCallback, useMemo } from 'react'
 import { machinePath, type SavedMachine, useMachines } from '../lib/machines'
+import { AccountMenu } from './AccountMenu'
 import { Centered, linkClass } from './Centered'
 import { NO_KEY_HINT } from './MachineRow'
 
@@ -65,13 +66,16 @@ function MachineTerminalUI({ machine }: { machine: SavedMachine }) {
   )
   const header = useMemo(
     () => (
-      <Link
-        to="/"
-        className="flex h-9 shrink-0 items-center gap-1.5 border-b border-line px-3 text-xs text-dim outline-none hover:text-ink focus-visible:bg-raised focus-visible:text-ink"
-      >
-        <ArrowLeft size={13} />
-        All machines
-      </Link>
+      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-line pr-2">
+        <Link
+          to="/"
+          className="flex h-full shrink-0 items-center gap-1.5 px-3 text-xs text-dim outline-none hover:text-ink focus-visible:bg-raised focus-visible:text-ink"
+        >
+          <ArrowLeft size={13} />
+          All machines
+        </Link>
+        <AccountMenu className="ml-auto min-w-0" />
+      </div>
     ),
     [],
   )
