@@ -84,9 +84,7 @@ function StatusIcon({ status }: { status: Status }) {
 
 function Pane(props: { tab: string; status: Status; children: ReactNode }) {
   return (
-    <div
-      className={`relative flex min-h-0 min-w-0 flex-col bg-panel ${props.status === 'waiting' ? 'attention-ring' : ''}`}
-    >
+    <div className="relative flex min-h-0 min-w-0 flex-col bg-panel">
       <div className="flex h-7 shrink-0 items-center gap-2 border-b border-line bg-sidebar px-2.5 text-[11px]">
         <span className="truncate text-ink">{props.tab}</span>
         <span className="ml-auto flex shrink-0 items-center text-dim">
@@ -96,6 +94,8 @@ function Pane(props: { tab: string; status: Status; children: ReactNode }) {
       <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-hidden px-2.5 py-2 font-mono text-[10.5px] leading-relaxed text-dim">
         {props.children}
       </div>
+      {/* Over the pane, as the app draws it, so the tab bar does not hide its top edge. */}
+      {props.status === 'waiting' && <div className="attention-ring pointer-events-none absolute inset-0 z-10" />}
     </div>
   )
 }
@@ -135,24 +135,48 @@ function Workspace(props: { name: string; terminals: number; waiting?: number; a
   )
 }
 
-/** Steps through `SCENES`, unless the reader asked for reduced motion. */
-function useScene() {
-  const [scene, setScene] = useState(0)
+/** How many times the scenes play before the preview settles on the first one, so it does not move forever. */
+const LOOPS = 3
+
+/**
+ * Steps through `SCENES` while `playing`, and stops on the first scene after `LOOPS` rounds. It never starts with
+ * reduced motion, and waits while the tab is hidden.
+ */
+function useScene(playing: boolean) {
+  const [step, setStep] = useState(0)
+  const [still, setStill] = useState(true)
   useEffect(() => {
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
-    const timer = window.setInterval(() => setScene((current) => (current + 1) % SCENES.length), SCENE_MS)
-    return () => window.clearInterval(timer)
+    const query = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const update = () => setStill(query.matches)
+    update()
+    query.addEventListener('change', update)
+    return () => query.removeEventListener('change', update)
   }, [])
-  return SCENES[scene]
+  const finished = step >= LOOPS * SCENES.length
+  useEffect(() => {
+    if (still || finished || !playing) return
+    const timer = window.setInterval(() => {
+      if (!document.hidden) setStep((current) => current + 1)
+    }, SCENE_MS)
+    return () => window.clearInterval(timer)
+  }, [still, finished, playing])
+  return SCENES[still || finished ? 0 : step % SCENES.length]
 }
 
 /** The app with three agents at work in one workspace, taking turns to need you. */
 export function AuthWorkspacePreview() {
-  const { panes, note } = useScene()
+  // Pointing at the preview holds the current scene, so it can be read.
+  const [hovered, setHovered] = useState(false)
+  const { panes, note } = useScene(!hovered)
   const waiting = panes.filter((pane) => pane.status === 'waiting').length
 
   return (
-    <div aria-hidden="true" className="flex flex-col gap-3 select-none">
+    <div
+      aria-hidden="true"
+      className="flex flex-col gap-3 select-none"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
       <div className="grid h-[260px] grid-cols-[112px_1fr] overflow-hidden rounded-lg border border-line bg-bg shadow-md shadow-black/5">
         <div className="flex min-h-0 flex-col border-r border-line bg-sidebar">
           <div className="flex h-8 items-center px-2.5 text-[9px] font-semibold tracking-wider text-faint uppercase">

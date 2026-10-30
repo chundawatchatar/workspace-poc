@@ -15,3 +15,29 @@ body,
   font-size: 13px;
   -webkit-font-smoothing: antialiased;
 }
+
+/* The background of the pages under `/auth`: soft glows in the theme's accent, on a layer that stays put. */
+.auth-backdrop {
+  background:
+    radial-gradient(ellipse 52% 48% at 8% 18%, color-mix(in srgb, var(--color-accent) 8%, transparent), transparent 75%),
+    radial-gradient(
+      ellipse 46% 44% at 86% 12%,
+      color-mix(in srgb, var(--color-accent) 6%, transparent),
+      transparent 75%
+    ),
+    radial-gradient(
+      ellipse 48% 52% at 52% 52%,
+      color-mix(in srgb, var(--color-accent) 4%, transparent),
+      transparent 75%
+    ),
+    radial-gradient(
+      ellipse 50% 46% at 18% 92%,
+      color-mix(in srgb, var(--color-accent) 6%, transparent),
+      transparent 75%
+    ),
+    radial-gradient(
+      ellipse 48% 50% at 94% 82%,
+      color-mix(in srgb, var(--color-accent) 8%, transparent),
+      transparent 75%
+    );
+}
