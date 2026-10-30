@@ -20,6 +20,8 @@ export interface TextFieldProps {
   error?: string | null
   /** Controls inside the input's box after the text, such as a show/hide toggle. They come after it in Tab order. */
   trailing?: ReactNode
+  /** `lg` is a roomier field for standalone forms such as sign-in. Its text is 16px on phones so iOS does not zoom. */
+  size?: 'md' | 'lg'
   ref?: Ref<HTMLInputElement>
   className?: string
 }
@@ -38,6 +40,7 @@ export function TextField({
   hint,
   error,
   trailing,
+  size = 'md',
   ref,
   className,
 }: TextFieldProps) {
@@ -71,7 +74,10 @@ export function TextField({
           required={required}
           aria-invalid={error ? true : undefined}
           aria-describedby={describedBy}
-          className="min-w-0 flex-1 bg-transparent px-2.5 py-1.5 text-[13px] text-ink outline-none placeholder:text-faint"
+          className={cn(
+            'min-w-0 flex-1 bg-transparent text-ink outline-none placeholder:text-faint',
+            size === 'lg' ? 'px-3 py-2.5 text-base sm:text-sm' : 'px-2.5 py-1.5 text-[13px]',
+          )}
         />
         {trailing}
       </div>

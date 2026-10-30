@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Eye, EyeOff } from './icons'
+import { cn } from './lib/utils'
 import { TextField, type TextFieldProps } from './TextField'
 
 /** What a password field takes: a text field's props, and optionally who decides whether the password shows. */
@@ -25,7 +26,10 @@ export function PasswordField({ revealed, onRevealedChange, ...props }: Password
         setOwnRevealed(!shown)
         onRevealedChange?.(!shown)
       }}
-      className="mr-1 rounded p-1 text-dim outline-none hover:text-ink focus-visible:ring-2 focus-visible:ring-accent/60"
+      className={cn(
+        'mr-1 rounded text-dim outline-none hover:text-ink focus-visible:ring-2 focus-visible:ring-accent/60',
+        props.size === 'lg' ? 'p-1.5' : 'p-1',
+      )}
     >
       <Glyph className="size-4" aria-hidden />
     </button>
