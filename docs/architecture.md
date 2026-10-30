@@ -371,6 +371,12 @@ terminals. An idle socket costs one TCP connection and a small ping, and one sma
 - Peer-to-peer WebRTC or WireGuard, with the server only for signalling and as a fallback, if its bandwidth or
   latency becomes a cost.
 
+### Agent status
+
+Tabs show whether their Claude Code or Codex agent is working, waiting for the user or idle, with per-workspace
+counts and notifications (AG-1 to AG-5). The design, including the per-session hook shim and the daemon's local
+reporting channel, is in [agents](agents.md).
+
 ### Code editor
 
 - Extend the host `fs` module with read, write, stat and watch. Every path resolves (realpath) inside an open
