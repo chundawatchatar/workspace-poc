@@ -183,6 +183,20 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
 - Open question, saved machines: the machines saved in `localStorage` (`orch-machines`, with their access keys)
   predate accounts and are not per user, so a second user in the same browser still sees them on the home page. The
   account machine list replaces them.
+- The machines module (`apps/server/src/modules/machines/`, `serverRoutes.machines`) lists, links, renames and
+  unlinks the signed-in user's machines in the `machines` table (one row per user and machine id), only through
+  `data.machines`. The accounts API stores and returns only machine ids and names, never access keys: no schema has a
+  key field and every input is strict, so a body carrying `key` gets 400, and the module never reads request headers
+  or logs input. Linking a machine again keeps its name and refreshes `lastOpenedAt`, which is when its connect link
+  was last opened; a link that loses a race to the unique index returns the winning row. Each listed machine is
+  `online` when the in-memory `MachineRegistry` holds its tunnel, so `index.ts` builds the registry before the
+  accounts modules and hands the same one to both; with more than one server instance this would be wrong (see
+  "More than one server instance" below).
+- Accepted risk, linking: the server can't prove that a user holds a machine's key, so anyone who knows a machine id
+  can link it. That reveals only whether the machine is online. Ids are SHA-256 hashes of 32-byte secrets, so they
+  can't be guessed, but they do appear in `/m/<id>` URLs and connect links. The host's access-key check still guards
+  every request to the machine, and the account list never replaces it. Open question: a cap on linked machines per
+  user would limit probing; there is none yet.
 - Better Auth checks the `Origin` of non-GET requests against `SERVER_TRUSTED_ORIGINS` plus the origin of
   `BETTER_AUTH_URL`, and rate limits by client IP in memory (per process, reset on restart). The IP comes from the
   `x-orch-client-ip` header the auth routes set from the server's own client IP reader, replacing any value a client
