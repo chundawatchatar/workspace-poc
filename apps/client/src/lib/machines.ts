@@ -1,11 +1,12 @@
 import { parseConnectFragment } from '@orch/shared'
 import { useSyncExternalStore } from 'react'
+import { setPendingMachineLink } from './pendingLink'
 
-// The machines this browser has been linked to, with their access keys, kept in
-// `localStorage`. Any script on this origin can read them; accounts will replace
-// raw keys later.
+// The access keys this browser holds, from the connect links opened in it, kept in
+// `localStorage`. Any script on this origin can read them. The account's machine
+// list comes from the server; this only says which of them this browser can open.
 
-/** A machine linked in this browser. */
+/** A machine whose access key this browser holds. */
 export interface SavedMachine {
   id: string
   name: string
@@ -80,8 +81,9 @@ export interface ConnectWindow {
 
 /**
  * Saves the machine from a connect link's fragment (`#machine=<id>&key=<key>`) and replaces the URL with the
- * machine's page, so the key leaves the address bar and history. Returns the machine id, or null when the fragment
- * isn't a complete connect link. An incomplete one that still carries a `key` is removed from the URL, unsaved.
+ * machine's page, so the key leaves the address bar and history. It also records the machine, without its key, as
+ * the pending link to send to the account. Returns the machine id, or null when the fragment isn't a complete connect
+ * link. An incomplete one that still carries a `key` is removed from the URL, unsaved.
  */
 export function acceptConnectLink(win: ConnectWindow = window): string | null {
   const target = parseConnectFragment(win.location.hash)
@@ -92,7 +94,9 @@ export function acceptConnectLink(win: ConnectWindow = window): string | null {
     }
     return null
   }
-  saveMachine({ id: target.machineId, name: defaultMachineName(target.machineId), key: target.key })
+  const name = defaultMachineName(target.machineId)
+  saveMachine({ id: target.machineId, name, key: target.key })
+  setPendingMachineLink({ machineId: target.machineId, name })
   win.history.replaceState(null, '', machinePath(target.machineId))
   return target.machineId
 }

@@ -120,13 +120,13 @@ function cacheDump(queryClient: QueryClient) {
 }
 
 beforeAll(() => {
-  installMemoryStorage('sessionStorage')
+  installMemoryStorage()
   globalThis.location = { origin: 'http://localhost:3220' } as Location
   globalThis.fetch = fakeFetch as typeof fetch
 })
 
 afterAll(() => {
-  uninstallMemoryStorage('sessionStorage')
+  uninstallMemoryStorage()
   globalThis.location = realLocation
   globalThis.fetch = realFetch
 })
@@ -172,7 +172,7 @@ describe('watchIdentity', () => {
         queryFn: () => new Promise<string[]>((resolve) => (answerLate = resolve)),
       })
       .catch(() => undefined)
-    setPendingMachineLink({ machineId: 'm1', key: 'machine-key' })
+    setPendingMachineLink({ machineId: 'm1', name: 'Machine m1' })
     expect(cacheDump(queryClient)).toContain('token-user-a')
 
     await signOut(queryClient)
@@ -192,9 +192,17 @@ describe('watchIdentity', () => {
     expect(changes()).toBe(2)
   })
 
+  test('signing in from signed out keeps the pending link for the new user', async () => {
+    const { queryClient, changes } = await setup(null)
+    setPendingMachineLink({ machineId: 'm1', name: 'Machine m1' })
+    expect(await signInWithEmail(queryClient, userA.email, 'pw')).toBeNull()
+    expect(readPendingMachineLink()).toMatchObject({ machineId: 'm1', name: 'Machine m1' })
+    expect(changes()).toBe(1)
+  })
+
   test('an unauthorized answer rereads the session and clears the cache when it ended', async () => {
     const { queryClient, changes } = await setup(userA)
-    setPendingMachineLink({ machineId: 'm1', key: 'machine-key' })
+    setPendingMachineLink({ machineId: 'm1', name: 'Machine m1' })
     // The session was revoked elsewhere, so the server now refuses it.
     server.user = null
     await queryClient.fetchQuery(accountQuery(userA.id, serverRoutes.account.me, {})).catch(() => {})

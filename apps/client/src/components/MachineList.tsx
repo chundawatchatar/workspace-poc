@@ -1,16 +1,18 @@
-import { Monitor } from '@orch/ui/icons'
-import { useQueryClient } from '@tanstack/react-query'
-import { Link, useNavigate } from '@tanstack/react-router'
+import { Button, FormError } from '@orch/ui'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
-import { signOut } from '../lib/auth'
-import { forgetMachine, useMachines } from '../lib/machines'
-import { focusClass, linkClass } from './Centered'
+import { machinesQuery } from '../lib/accountMachines'
+import { sessionQuery, signOut } from '../lib/auth'
+import { useMachines } from '../lib/machines'
+import { focusClass } from './Centered'
+import { MachineRow } from './MachineRow'
 
-/** The home page: the machines linked in this browser. */
+/** The home page: the machines linked to the signed-in account. */
 export function MachineList() {
-  const machines = useMachines()
   const queryClient = useQueryClient()
   const navigate = useNavigate()
+  const user = useQuery(sessionQuery).data
   const [signOutFailed, setSignOutFailed] = useState(false)
   const onSignOut = async () => {
     try {
@@ -21,7 +23,7 @@ export function MachineList() {
     }
   }
   return (
-    <div className="mx-auto flex h-full max-w-xl flex-col gap-4 overflow-y-auto p-8">
+    <div className="mx-auto flex h-full max-w-2xl flex-col gap-4 overflow-y-auto p-8">
       <div className="flex items-center gap-3">
         <h1 className="flex-1 text-base font-semibold text-ink">Your machines</h1>
         <button
@@ -37,40 +39,56 @@ export function MachineList() {
           Signing out failed. Try again.
         </p>
       )}
-      {machines.length === 0 ? (
-        <p className="text-dim">No machines are linked in this browser yet.</p>
-      ) : (
-        <ul className="divide-y divide-line rounded-md border border-line">
-          {machines.map((machine) => (
-            <li key={machine.id} className="flex items-center gap-3 px-3 py-2">
-              <Monitor size={15} className="shrink-0 text-faint" />
-              <span className="min-w-0 flex-1 truncate" title={machine.id}>
-                {machine.name}
-              </span>
-              <Link
-                to="/m/$machineId"
-                params={{ machineId: machine.id }}
-                aria-label={`Open ${machine.name}`}
-                className={`text-xs ${linkClass}`}
-              >
-                Open
-              </Link>
-              <button
-                type="button"
-                aria-label={`Forget ${machine.name}`}
-                className={`px-1.5 py-0.5 text-xs text-dim hover:bg-raised hover:text-ink active:bg-line ${focusClass}`}
-                onClick={() => forgetMachine(machine.id)}
-              >
-                Forget
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      <p className="text-xs text-faint">
-        To link a machine, open the connect link it printed when it joined. The link saves the machine and its key in
-        this browser.
-      </p>
+      {user ? <AccountMachines userId={user.id} /> : <Loading />}
     </div>
+  )
+}
+
+function Loading() {
+  return (
+    <p role="status" className="text-dim">
+      Loading your machines…
+    </p>
+  )
+}
+
+function AccountMachines({ userId }: { userId: string }) {
+  const list = useQuery(machinesQuery(userId))
+  const saved = useMachines()
+
+  if (list.isPending) return <Loading />
+  if (list.isError) {
+    return (
+      <div className="flex flex-col items-start gap-2">
+        <FormError message="Loading your machines failed." />
+        <Button variant="secondary" pending={list.isFetching} onClick={() => void list.refetch()}>
+          Retry
+        </Button>
+      </div>
+    )
+  }
+  const { machines } = list.data
+  if (machines.length === 0) {
+    return (
+      <div className="flex flex-col gap-2 text-dim">
+        <p>No machines are linked to your account yet.</p>
+        <p className="text-xs">
+          To connect one, run its host with remote access on, then open the connect link the machine printed while
+          signed in on this device.
+        </p>
+      </div>
+    )
+  }
+  return (
+    <ul className="divide-y divide-line rounded-md border border-line">
+      {machines.map((machine) => (
+        <MachineRow
+          key={machine.machineId}
+          machine={machine}
+          userId={userId}
+          hasKey={saved.some((m) => m.id === machine.machineId)}
+        />
+      ))}
+    </ul>
   )
 }

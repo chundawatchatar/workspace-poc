@@ -86,14 +86,14 @@ describe('client routes', () => {
 
   test('known paths render their page, not the not-found view', async () => {
     const home = await render('/')
-    expect(home).toContain('Laptop')
+    expect(home).toContain('Your machines')
     expect(home).not.toContain('Page not found.')
 
     const workspace = await render('/m/saved-machine/w/ws1')
     expect(workspace).toContain('Connecting to the host')
     expect(workspace).not.toContain('Page not found.')
 
-    expect(await render('/m/other-machine')).toContain('linked in this browser.')
+    expect(await render('/m/other-machine')).toContain('Open the connect link on this device')
   })
 
   test('pages share the root query client', async () => {
