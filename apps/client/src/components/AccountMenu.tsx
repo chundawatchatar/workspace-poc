@@ -1,4 +1,4 @@
-import { ChevronDown, CircleUser } from '@orch/ui/icons'
+import { ChevronDown, CircleUser, X } from '@orch/ui/icons'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { type KeyboardEvent, useEffect, useId, useRef, useState } from 'react'
@@ -104,9 +104,24 @@ export function AccountMenu({ className = '' }: { className?: string }) {
         </div>
       )}
       {signOutFailed && (
-        <p role="alert" className="absolute right-0 top-full z-50 mt-1 whitespace-nowrap text-xs text-bad">
-          Signing out failed. Try again.
-        </p>
+        // Capped below the narrowest sidebar (180px), which clips what overflows it, and opaque, since it floats
+        // over whatever is below the button.
+        <div className="absolute right-0 top-full z-50 mt-1 flex w-max max-w-40 items-start gap-1 rounded-md border border-line bg-panel py-1 pl-2 pr-1 text-xs text-bad shadow-lg">
+          <p role="alert" className="min-w-0 flex-1 py-0.5">
+            Signing out failed. Try again.
+          </p>
+          <button
+            type="button"
+            aria-label="Dismiss"
+            className={`shrink-0 p-0.5 text-dim hover:bg-raised hover:text-ink ${focusClass}`}
+            onClick={() => {
+              setSignOutFailed(false)
+              button.current?.focus()
+            }}
+          >
+            <X size={12} />
+          </button>
+        </div>
       )}
     </div>
   )
