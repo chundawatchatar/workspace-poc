@@ -1,3 +1,4 @@
+import { machines } from './schemas/machines'
 import type { ScopedTable } from './scoped'
 
 /**
@@ -5,7 +6,7 @@ import type { ScopedTable } from './scoped'
  * `domain.forUser(principal)` gets one scoped repository per entry. Register a
  * new table here, or the coverage test in `scoped-tables.test.ts` fails.
  */
-export const scopedTables = {} satisfies Record<string, ScopedTable>
+export const scopedTables = { machines } satisfies Record<string, ScopedTable>
 
 /** The registered tables' type, which names the repositories `forUser` returns. */
 export type ScopedTables = typeof scopedTables
