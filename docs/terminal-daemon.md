@@ -50,7 +50,8 @@ credential in each terminal's record under `.data/terminal-daemons/`:
   its prompt.
 
 Agents are recognised by program name in `packages/terminal/src/agents.ts`,
-which also knows where each one keeps its conversations:
+which also knows where each one keeps its conversations (how their working, waiting and idle
+states are tracked on top of this is in [agents.md](agents.md)):
 
 | Agent | Program | Conversation id from | Resume |
 | --- | --- | --- | --- |
