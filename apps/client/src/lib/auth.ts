@@ -83,7 +83,8 @@ export function accountQuery<E extends ServerReadEndpoint & { auth: 'user' }>(
   })
 }
 
-const TOO_MANY_ATTEMPTS = 'Too many attempts. Wait a minute and try again.'
+/** What a form says when the server's rate limit refuses it. */
+export const TOO_MANY_ATTEMPTS = 'Too many attempts. Wait a minute and try again.'
 
 /**
  * Signs in with an email and password, then reads the session, which hands the cache to the new user. Returns a

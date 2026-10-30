@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { FormApi } from '@tanstack/react-form'
 import { QueryClient } from '@tanstack/react-query'
 import {
+  changePasswordSchema,
   emailSchema,
   forgotPasswordFormOptions,
   resetPasswordFormOptions,
@@ -51,6 +52,18 @@ describe('the auth schemas', () => {
       password: 'Use at most 128 characters.',
     })
     expect(resetPasswordSchema.safeParse({ password: 'x'.repeat(8) }).success).toBe(true)
+  })
+
+  test('changing the password needs the current one, a valid new one and a matching confirmation', () => {
+    expect(
+      problems(changePasswordSchema.safeParse({ currentPassword: '', newPassword: 'short', confirmPassword: 'other' })),
+    ).toEqual({
+      currentPassword: 'Enter your current password.',
+      newPassword: 'Use at least 8 characters.',
+      confirmPassword: 'The passwords do not match.',
+    })
+    const value = { currentPassword: 'old', newPassword: 'x'.repeat(8), confirmPassword: 'x'.repeat(8) }
+    expect(changePasswordSchema.safeParse(value).success).toBe(true)
   })
 })
 
