@@ -45,6 +45,31 @@ export interface AgentRef {
   cwd: string
 }
 
+export type AgentStateName = 'working' | 'waiting' | 'idle'
+
+/** Why the agent is in its state. The first group comes from hooks, the second from terminal signals. */
+export type AgentReason =
+  | 'started'
+  | 'prompt'
+  | 'tool'
+  | 'permission'
+  | 'question'
+  | 'finished'
+  | 'progress'
+  | 'attention'
+  | 'error'
+  | 'interrupted'
+  | 'detected'
+
+export interface AgentState {
+  state: AgentStateName
+  reason: AgentReason
+  /** Whether the agent's own hooks or the terminal's signals decided the state. */
+  source: 'hooks' | 'signals'
+  /** When the agent entered this state, in epoch milliseconds. */
+  since: number
+}
+
 export interface SessionInfo {
   id: string
   title: string
@@ -65,6 +90,8 @@ export interface SessionInfo {
    */
   /** `command` is what Resume runs: the agent on its conversation, or fresh when it had not started one. */
   interrupted: { agent: AgentRef; cwd: string; command: string } | null
+  /** What the agent in the foreground is doing. Null with no agent or the session interrupted or not alive. */
+  agentState: AgentState | null
 }
 
 /** Host to client, on the events socket. */

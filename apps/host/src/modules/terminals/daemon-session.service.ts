@@ -9,6 +9,7 @@ import {
   daemonMessage,
   type daemonStatus,
   deliver,
+  deriveAgentState,
   encodeControlFrame,
   type Foreground,
   resumeCommand,
@@ -49,6 +50,8 @@ export class DaemonSession implements TerminalSession {
   private size: { cols: number; rows: number }
   /** The latest view theme, resent on every connection so a new daemon answers colour queries with it. */
   private palette: TermColors | null = null
+  /** The last derived agent state, so its `since` stays put while the state doesn't change. */
+  private agentState: SessionInfo['agentState'] = null
 
   constructor(
     readonly id: string,
@@ -69,16 +72,23 @@ export class DaemonSession implements TerminalSession {
   }
 
   info(): SessionInfo {
+    const { status, agent, interrupted } = this
+    const signals = {
+      agent,
+      interrupted,
+      alive: status?.alive ?? false,
+      attention: status?.attention ?? null,
+      progress: status?.progress ?? null,
+    }
+    this.agentState = deriveAgentState(signals, this.agentState, Date.now())
+    const cwd = interrupted?.cwd ?? this.workingDir ?? this.record.cwd ?? this.cwd
     return {
+      ...signals,
       id: this.id,
-      alive: this.status?.alive ?? false,
-      title: this.status?.title || 'Terminal',
-      attention: this.status?.attention ?? null,
-      progress: this.status?.progress ?? null,
+      title: status?.title || 'Terminal',
       process: this.process,
-      cwd: this.interrupted?.cwd ?? this.workingDir ?? this.record.cwd ?? this.cwd,
-      agent: this.agent,
-      interrupted: this.interrupted,
+      cwd,
+      agentState: this.agentState,
     }
   }
 
