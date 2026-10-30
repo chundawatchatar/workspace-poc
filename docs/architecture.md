@@ -81,6 +81,8 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   and uses only the public exports of the others. Nothing else imports it.
 - Only `apps/server` imports `packages/domain` (the database schemas, migrations and client), so no browser app or
   the host ever pulls in database code.
+- How to run and change accounts (database, migrations, Better Auth, sessions, emails, machine keys) is in
+  [accounts](accounts.md); the rules below are what it must keep.
 - App code reaches the database only through `domain.forUser(principal)`, whose repositories add
   `userId = principal.userId` to every query, so a handler can't forget it. `forAuthLibrary()` is for Better Auth's
   adapter only; `skipAuthorization(reason)` needs a real reason and is logged on every call. Every new table with a
@@ -297,6 +299,8 @@ user's approval (AG-7).
 encryption (REM-2) comes later, by adding a sealed frame type: its payload is an inner frame encrypted between the
 browser and the host, with keys from a handshake the server passes along but can't read. Only the browser and the
 host change; the server keeps routing the same way.
+
+Accounts (sign-in, sessions, emails and the account's machine list) are described in [accounts](accounts.md).
 
 That only stays easy if every remote access job keeps these rules:
 
