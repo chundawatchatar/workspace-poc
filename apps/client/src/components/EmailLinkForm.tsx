@@ -34,7 +34,7 @@ export function EmailLinkForm({
     <form
       ref={formRef}
       noValidate
-      className="flex flex-col gap-3"
+      className="flex flex-col gap-4"
       onSubmit={(event) => {
         event.preventDefault()
         submitOnce(form)
@@ -45,6 +45,7 @@ export function EmailLinkForm({
           <form.Field name="email">
             {(field) => (
               <TextField
+                size="lg"
                 label="Email"
                 name={field.name}
                 type="email"
@@ -62,7 +63,7 @@ export function EmailLinkForm({
       <FormError message={problem} />
       <form.Subscribe selector={(state) => state.isSubmitting}>
         {(submitting) => (
-          <Button type="submit" pending={submitting}>
+          <Button size="lg" type="submit" pending={submitting}>
             {submitLabel}
           </Button>
         )}

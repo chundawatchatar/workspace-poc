@@ -48,7 +48,7 @@ export function CheckInbox({ email, footer }: { email: string; footer: ReactNode
       </p>
       <div className="flex flex-col gap-3">
         <FormError message={problem} />
-        <Button variant="secondary" pending={pending} disabled={coolingDown} onClick={() => void resend()}>
+        <Button size="lg" variant="secondary" pending={pending} disabled={coolingDown} onClick={() => void resend()}>
           Send the link again
         </Button>
         {resent && (

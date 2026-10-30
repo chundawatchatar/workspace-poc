@@ -49,6 +49,7 @@ function SignUp() {
   return (
     <AuthCard
       title="Create an account"
+      description="One account for every machine you connect."
       footer={
         <p>
           Already have an account?{' '}
@@ -61,7 +62,7 @@ function SignUp() {
       <form
         ref={formRef}
         noValidate
-        className="flex flex-col gap-3"
+        className="flex flex-col gap-4"
         onSubmit={(event) => {
           event.preventDefault()
           submitOnce(form)
@@ -73,6 +74,7 @@ function SignUp() {
               <form.Field name="name">
                 {(field) => (
                   <TextField
+                    size="lg"
                     label="Name"
                     name={field.name}
                     autoComplete="name"
@@ -87,6 +89,7 @@ function SignUp() {
               <form.Field name="email">
                 {(field) => (
                   <TextField
+                    size="lg"
                     label="Email"
                     name={field.name}
                     type="email"
@@ -102,6 +105,7 @@ function SignUp() {
               <form.Field name="password">
                 {(field) => (
                   <PasswordField
+                    size="lg"
                     label="Password"
                     name={field.name}
                     autoComplete="new-password"
@@ -120,7 +124,7 @@ function SignUp() {
         <FormError message={problem} />
         <form.Subscribe selector={(state) => state.isSubmitting}>
           {(submitting) => (
-            <Button type="submit" pending={submitting}>
+            <Button size="lg" type="submit" pending={submitting}>
               Create account
             </Button>
           )}

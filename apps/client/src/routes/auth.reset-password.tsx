@@ -86,7 +86,7 @@ function NewPasswordForm({
       <form
         ref={formRef}
         noValidate
-        className="flex flex-col gap-3"
+        className="flex flex-col gap-4"
         onSubmit={(event) => {
           event.preventDefault()
           submitOnce(form)
@@ -97,6 +97,7 @@ function NewPasswordForm({
             <form.Field name="password">
               {(field) => (
                 <PasswordField
+                  size="lg"
                   label="New password"
                   name={field.name}
                   autoComplete="new-password"
@@ -114,7 +115,7 @@ function NewPasswordForm({
         <FormError message={problem} />
         <form.Subscribe selector={(state) => state.isSubmitting}>
           {(submitting) => (
-            <Button type="submit" pending={submitting}>
+            <Button size="lg" type="submit" pending={submitting}>
               Change password
             </Button>
           )}

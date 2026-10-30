@@ -37,6 +37,7 @@ function SignIn() {
   return (
     <AuthCard
       title="Sign in"
+      description="Reach your machines and their workspaces from this browser."
       footer={
         <>
           <p>
@@ -45,9 +46,6 @@ function SignIn() {
               Create an account
             </Link>
           </p>
-          <Link to="/auth/forgot-password" className={`self-start ${linkClass}`}>
-            Forgot your password?
-          </Link>
           <Link to="/auth/verify-email" className={`self-start ${linkClass}`}>
             Didn't get the verification email?
           </Link>
@@ -57,7 +55,7 @@ function SignIn() {
       <form
         ref={formRef}
         noValidate
-        className="flex flex-col gap-3"
+        className="flex flex-col gap-4"
         onSubmit={(event) => {
           event.preventDefault()
           submitOnce(form)
@@ -69,6 +67,7 @@ function SignIn() {
               <form.Field name="email">
                 {(field) => (
                   <TextField
+                    size="lg"
                     label="Email"
                     name={field.name}
                     type="email"
@@ -84,6 +83,7 @@ function SignIn() {
               <form.Field name="password">
                 {(field) => (
                   <PasswordField
+                    size="lg"
                     label="Password"
                     name={field.name}
                     autoComplete="current-password"
@@ -98,10 +98,13 @@ function SignIn() {
             </>
           )}
         </form.Subscribe>
+        <Link to="/auth/forgot-password" className={`-mt-1 self-end text-xs ${linkClass}`}>
+          Forgot your password?
+        </Link>
         <FormError message={problem} />
         <form.Subscribe selector={(state) => state.isSubmitting}>
           {(submitting) => (
-            <Button type="submit" pending={submitting}>
+            <Button size="lg" type="submit" pending={submitting}>
               Sign in
             </Button>
           )}
