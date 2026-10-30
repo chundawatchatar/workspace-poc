@@ -137,11 +137,21 @@ A signed-in user has Better Auth's four session endpoints:
 | `POST /api/auth/revoke-sessions` | Ends every session, the current one included. |
 
 `list-sessions` refuses a session older than `freshAge`, one day (set in `createAuth`), with 403
-`SESSION_NOT_FRESH`; the revoke endpoints need only a valid session. A page that lists devices must ask for a fresh
-sign-in first. The revoke endpoints go through the same origin check as every other `POST`. A password reset also ends
-every session of the account.
+`SESSION_NOT_FRESH`; the revoke endpoints need only a valid session. The revoke endpoints go through the same origin
+check as every other `POST`. A password reset also ends every session of the account.
 
-The client has no page for listing or revoking sessions yet; these are server endpoints only.
+The client's `/account` page uses them. It is reached from the account menu
+(`apps/client/src/components/AccountMenu.tsx`), shown in the home page's title row and in the machine page's sidebar
+header. It changes the password with `change-password` and `revokeOtherSessions: true`, so every other session ends and
+this browser stays signed in under a new session. It lists the sessions in a table, marks this browser's as
+"This device" and revokes any other row. "Sign out from all devices" asks for confirmation, then calls
+`revoke-sessions`. A 401 from any of these calls reads the session again, so a session revoked elsewhere lands on
+sign-in.
+
+On 403 `SESSION_NOT_FRESH` the page says a recent sign-in is needed to see the devices, and its "Sign in again" button
+signs out and opens `/auth/sign-in?redirect=%2Faccount`. Changing the password and signing out from all devices still
+work without a fresh session. Revoking one session needs one, since it lists the sessions again to find the token. See
+[architecture](architecture.md#1-dependencies-point-one-way) for the details.
 
 An operator signs one user out everywhere, for example for a compromised account, with:
 
@@ -152,9 +162,11 @@ bun run --filter @orch/server sessions:revoke-user <email>
 It deletes the user's `session` rows through `skipAuthorization` (`revokeUserSessions` in `auth.sessions.ts`) and
 prints only the count, never the email, a token or `DATABASE_URL`.
 
-Open question: `list-sessions` answers each session's `token`, which `revoke-session` takes. That hands the secrets of
-the user's other sessions to page JavaScript and weakens `HttpOnly`. We keep the stock behaviour for now; dropping the
-tokens means our own revoke-by-id endpoint in `serverRoutes`.
+Resolved for now: `list-sessions` answers each session's `token`, which `revoke-session` takes. The client keeps them
+out of the query cache: `sessionsQuery` (`apps/client/src/lib/accountSessions.ts`) returns rows without the token, and
+`revokeSession` lists the sessions again at revoke time and keeps the token only inside that call. The tokens still
+reach page JavaScript briefly in those responses, which weakens `HttpOnly`; removing them means our own revoke-by-id
+endpoint in `serverRoutes`.
 
 ## 6. Email flows
 
