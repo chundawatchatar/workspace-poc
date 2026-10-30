@@ -4,6 +4,7 @@ import { Link, Outlet, useNavigate, useParams } from '@tanstack/react-router'
 import { useCallback, useMemo } from 'react'
 import { machinePath, type SavedMachine, useMachines } from '../lib/machines'
 import { Centered, linkClass } from './Centered'
+import { NO_KEY_HINT } from './MachineRow'
 
 /** The cloud server: `VITE_SERVER_URL` from the build, or the origin the client is served from. */
 function serverUrl(): string {
@@ -16,7 +17,7 @@ export function MachinePage({ machineId }: { machineId: string }) {
   if (!machine) {
     return (
       <Centered>
-        <p>This machine isn't linked in this browser.</p>
+        <p>This machine isn't linked in this browser. {NO_KEY_HINT} to open it here.</p>
         <Link to="/" className={`text-xs ${linkClass}`}>
           Back to your machines
         </Link>
