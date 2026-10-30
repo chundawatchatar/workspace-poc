@@ -1,12 +1,15 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
 import { connect, type Socket } from 'node:net'
 import {
+  type AgentState,
   CLOSE_MACHINE_OFFLINE,
   decodeFrame,
   encodeFrame,
   type MachineFrame,
   machinePathPrefix,
+  type ServerEvent,
   type ServerFrame,
+  type SessionInfo,
   serverFrame,
   TUNNEL_PATH,
   TUNNEL_PROTOCOL_VERSION,
@@ -234,6 +237,32 @@ describe('bridge socket', () => {
     await Bun.sleep(20)
     expect(of(m, 'ws.close', 3)).toHaveLength(0)
     expect(bridge.size).toBe(0)
+  })
+
+  test("carries a session event's agent state to the browser unchanged", async () => {
+    const m = await machine(proofA)
+    const b = browser('/ws/events')
+    await opened(b)
+    await until(() => of(m, 'ws.open').length === 1)
+
+    const agentState: AgentState = { state: 'working', reason: 'progress', source: 'signals', since: 1_700_000_000_000 }
+    const session: SessionInfo = {
+      id: 's1',
+      title: 'claude',
+      alive: true,
+      attention: null,
+      process: null,
+      cwd: '/repo',
+      progress: 'busy',
+      agent: { kind: 'claude', sessionId: null, cwd: '/repo' },
+      interrupted: null,
+      agentState,
+    }
+    const sent = JSON.stringify({ type: 'session', session } satisfies ServerEvent)
+    m.send({ type: 'ws.data', channel: 1, data: sent })
+    await until(() => b.received.length === 1)
+    expect(b.received).toEqual([sent])
+    expect(JSON.parse(b.received[0] as string).session.agentState).toEqual(agentState)
   })
 
   test('an auth.failed frame keeps the tunnel and the channel open and reaches no browser', async () => {
