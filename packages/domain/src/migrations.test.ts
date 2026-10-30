@@ -15,7 +15,7 @@ describe('checkMigrations', () => {
     const client = new PGlite()
     open.push(client)
     const db = drizzle({ client })
-    expect(await checkMigrations(db)).toEqual(['0000_better_auth'])
+    expect(await checkMigrations(db)).toEqual(['0000_better_auth', '0001_machines'])
     await migrate(db, { migrationsFolder })
     expect(await checkMigrations(db)).toEqual([])
   })

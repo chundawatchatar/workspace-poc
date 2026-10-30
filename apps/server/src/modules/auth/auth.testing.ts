@@ -6,6 +6,7 @@ import { createAccountModule } from '../account/account.routes'
 import { ChannelBridge } from '../bridge/bridge.service'
 import { HttpForwarder } from '../forward/forward.service'
 import { ConnectionLimiter } from '../limits/limits.service'
+import { createMachinesModule } from '../machines/machines.routes'
 import { createMailer } from '../mailer/mailer.service'
 import { type CaptureTransport, createCaptureTransport } from '../mailer/mailer.testing'
 import { MachineRegistry } from '../tunnel/tunnel.service'
@@ -73,14 +74,18 @@ export function authTestClient({
   let nextIp = 1
   let nextEmail = 1
 
-  /** Sends a request as Bun would, from socket address `ip`, with a JSON body on a POST. */
-  function call(method: 'GET' | 'POST', path: string, { ip, body, cookie, origin, headers = {} }: CallOptions) {
+  /** Sends a request as Bun would, from socket address `ip`, with a JSON body on anything but a GET. */
+  function call(
+    method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+    path: string,
+    { ip, body, cookie, origin, headers = {} }: CallOptions,
+  ) {
     const server = { upgrade: () => false, requestIP: () => ({ address: ip, family: 'IPv4', port: 40000 }) }
     // Bun fills `Host` from the request line; `app.request` doesn't, and the server API's origin check needs it.
     const h: Record<string, string> = { host: new URL(base).host, ...headers }
     const init: RequestInit = { method, headers: h }
     if (cookie) h.cookie = cookie
-    if (method === 'POST') {
+    if (method !== 'GET') {
       h.origin = origin ?? base
       h['content-type'] ??= 'application/json'
       init.body = JSON.stringify(body ?? {})
@@ -140,8 +145,9 @@ export function authTestClient({
 }
 
 /**
- * An app with accounts on over `domain`, as `index.ts` builds it: Better Auth
- * and the account endpoints, with the real `authenticate` and `forUser`.
+ * An app with accounts on over `domain`, as `index.ts` builds it: Better Auth,
+ * the account and machines endpoints, with the real `authenticate` and
+ * `forUser`, and the `registry` the machines module reads online state from.
  */
 export function accountsTestApp(domain: TestDomain, ipPrefix: string) {
   const mail = createCaptureTransport()
@@ -164,8 +170,12 @@ export function accountsTestApp(domain: TestDomain, ipPrefix: string) {
       forUser: (principal) => domain.forUser(principal),
     },
     accounts: {
-      modules: [createAuthModule({ auth, clientIp: clientIpReader({ trustProxy: false }) }), createAccountModule()],
+      modules: [
+        createAuthModule({ auth, clientIp: clientIpReader({ trustProxy: false }) }),
+        createAccountModule(),
+        createMachinesModule({ registry }),
+      ],
     },
   })
-  return { app, mail, client: authTestClient({ app, mail, base: TEST_BASE, ipPrefix }) }
+  return { app, mail, registry, client: authTestClient({ app, mail, base: TEST_BASE, ipPrefix }) }
 }

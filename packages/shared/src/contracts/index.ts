@@ -4,6 +4,7 @@ import { fsContract } from './fs'
 import { gitContract } from './git'
 import { remoteAccessContract } from './remoteAccess'
 import { serverAccountContract } from './serverAccount'
+import { serverMachinesContract } from './serverMachines'
 import { serverSystemContract } from './serverSystem'
 import { systemContract } from './system'
 import { terminalSocket } from './terminals'
@@ -44,6 +45,20 @@ export {
 } from './remoteAccess'
 export * from './server'
 export { type ServerMe, serverMeResponse } from './serverAccount'
+export {
+  type LinkMachineBody,
+  type ListMachinesResponse,
+  linkMachineBody,
+  listMachinesResponse,
+  machineIdSchema,
+  machineNameSchema,
+  type RenameMachineBody,
+  renameMachineBody,
+  type ServerMachine,
+  serverMachine,
+  unlinkMachineBody,
+  unlinkMachineResponse,
+} from './serverMachines'
 export { serverHealthResponse } from './serverSystem'
 export { type DaemonReport, daemonResponse, healthResponse } from './system'
 export {
@@ -101,4 +116,5 @@ export const routes = {
 export const serverRoutes = {
   system: serverSystemContract,
   account: serverAccountContract,
+  machines: serverMachinesContract,
 }

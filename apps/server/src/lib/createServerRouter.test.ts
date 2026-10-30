@@ -30,8 +30,8 @@ const contract = defineServerContract({
 })
 
 const signedIn: Authenticate = () => ({ userId: 'u1', email: 'u1@test.example', name: 'U1' })
-// `scopedTables` is empty today, so a user's repositories are an empty object; identity shows where it came from.
-const userData: UserData = {}
+// The handlers here never touch the repositories; identity shows where `data` came from.
+const userData = {} as UserData
 const forUser: ForUser = () => userData
 
 function setup(options: ServerRouterOptions = { authenticate: signedIn, forUser }) {

@@ -3,6 +3,7 @@
 // them after a Better Auth version bump or a new plugin, follow `packages/domain/README.md`.
 
 export * from './account'
+export * from './machines'
 export * from './session'
 export * from './user'
 export * from './verification'
