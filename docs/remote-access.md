@@ -36,7 +36,8 @@ With a `.env` copied from `.env.example`, `DATABASE_URL` is set, so the server
 turns accounts on and refuses to start until Postgres is up and migrated:
 `bun run db:up`, then `bun run db:migrate` (section 5). Unset `DATABASE_URL`
 (or leave it out of `.env`) to run the relay alone. Either way,
-`curl -s http://127.0.0.1:4600/api/health` answers `{"ok":true}`.
+`curl -s http://127.0.0.1:4600/api/health` answers `{"ok":true}`. How to work
+on accounts is in [accounts](accounts.md).
 
 ## 2. Connect a machine
 
@@ -133,6 +134,8 @@ The server loads the root `.env` itself through `loadRootEnv()` from `@orch/shar
 Variables already set in the shell win over the file. With `DATABASE_URL` set it also needs `BETTER_AUTH_SECRET` (at
 least 32 bytes), `BETTER_AUTH_URL`, `SMTP_URL` and `MAIL_FROM`, which `.env.example` fills with dev values, and it
 exits with a message naming the problem when one is missing, the database is unreachable, or a migration is pending.
+
+Migrations, Better Auth, sessions and reading the emails are covered in [accounts](accounts.md).
 
 ## 6. What changes for a real deploy
 
