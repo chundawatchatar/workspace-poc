@@ -104,8 +104,9 @@ product starts get a command shim that adds hooks for that one invocation only.
   `<runtime>/agent/bin/` holds `claude`, `codex` and `orch-agent-hook`, all small POSIX `sh` scripts,
   `<runtime>/agent/claude-settings.json` holds the generated hook settings, and `<runtime>/agent/zsh/` holds the
   startup wrapper. The folders are `0700`, so they are readable only by the user. Their contents are fixed by
-  `packages/terminal/src/agent-shim.ts`: no token, no path from the user's projects. A failed write means no `PATH`
-  change: shells still start and still get a token.
+  `packages/terminal/src/agent-shim.ts` (the frame), `agent-shim-base.ts` (what shims share) and each agent's own
+  `agent-shim-claude.ts` or `agent-shim-codex.ts`: no token, no path from the user's projects. A failed write means no
+  `PATH` change: shells still start and still get a token.
 - `shellEnv` (in `core.ts`) puts `<runtime>/agent/bin` first on `PATH` and adds the token variables (see the
   [channel](#local-reporting-channel)), for terminals the product starts only (TERM-7), and only for a shell that got
   a token. `shellEnv` also removes any `PATH` entry that holds `orch-agent-hook`, wherever `ORCH_PTY_RUNTIME` put it,
@@ -245,6 +246,24 @@ it would be a job of its own.
 
 OpenCode, Cursor Agent, pi and Command Code get no shim and no hooks. Their baseline signals still apply, so a tab
 running one shows `working` from progress and `waiting` from attention when the agent sends them.
+
+#### Adding an agent
+
+Tracking lives in one definition, an `AgentTracker` (`packages/terminal/src/agent-tracker.ts`), so a new agent takes one
+file and one field:
+
+1. Add `packages/terminal/src/agent-shim-<kind>.ts`, directly in `src`, since `daemonBuild` reads only the top level.
+   It exports the definition: `program` (the name on `PATH`), `shim` (starting with `shimStart(program, kind)`),
+   `hookBranch` (the `case` arm of `orch-agent-hook`, which sends only literals, see SEC-3), and `files` or
+   `turnEndOnly` when they apply. Import `AgentEvent` from `agent-channel.ts` as a type only: `agents.ts` imports this
+   file, and `agent-channel.ts` reads `AGENTS` while it loads.
+2. Set `tracking` on the agent's adapter in `agents.ts`.
+
+`writeAgentShim`, `agentEvent`, `agentTracking`, `GET /v1/session`, the daemon's `tracking` request, `agentHook.agent` and
+the host's default all derive from that, and a test can pass its own list (`agent-tracking.test.ts` does). `agentTracking`
+keeps every key required, so a new daemon refuses a `hello` from a host that predates the agent. A host is normally the
+same age or newer, but the job adding the agent has to decide this. Any change here alters `daemonBuild`, so running
+daemons need `bun run terminals:stop`, which ends their shells.
 
 ## When the shim is missed
 
