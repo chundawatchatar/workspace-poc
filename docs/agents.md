@@ -207,7 +207,9 @@ last answer. `-c notify=...` replaces the configured value, so a plain flag woul
   there is no user program. Anything else that mentions it as a key could, including under a table, quoted, on a second
   line, across lines, with a trailing comment, in an inline table, or after a multi-line string, passes through, and so
   does a line that only has the word in its value or comment. Losing tracking is always better than silently losing the
-  user's `notify`. A word inside a path, as in `[projects."/work/notify"]`, doesn't count.
+  user's `notify`. A word inside a path, as in `[projects."/work/notify"]`, doesn't count. A project's file comes from
+  whatever repository was cloned, and this all runs before the agent starts, so more than 64 KB of config in total, or a line
+  over 4 KB, passes through rather than hold `codex` up.
 - **Approvals ring the bell.** The shim adds `-c 'tui.notifications=["approval-requested"]'`,
   `-c 'tui.notification_method="bel"'` and `-c 'tui.notification_condition="always"'`, and leaves all three out when the
   config sets any `notifications`, `notification_method` or `notification_condition` key. The list is approvals only
@@ -568,6 +570,10 @@ This merge lives in `TerminalCore.raise` in `core.ts`, which is where the bell, 
   and the `.codex/config.toml` files above the working directory), never touches the agent's trust state, never
   answers an agent's prompt and never types into the terminal for the user.
 - A hook can't block or fail the agent: it prints nothing, exits 0 and gives up within a second.
+- The user's `notify` elements move from their config onto Codex's command line for the whole session, so they show in
+  `ps` and in the process command a viewer of the machine sees. A secret in one, such as a webhook URL, is exposed for
+  longer than the moment Codex runs it. Anyone with the machine key could read the config through a terminal anyway, so
+  this gives no new access.
 - Events are rate limited per session and overall, and the shim and hook folder is written by the daemon from fixed
   contents in a private folder.
 
@@ -613,9 +619,11 @@ variable, which pointed at a recorder.
 Codex CLI 0.166.0 on macOS, default interactive runs in a pseudo-terminal through the shim against a recording channel,
 in throwaway projects. A folder Codex hasn't seen shows a "Trust this folder?" dialog that per-run `-c`, `-s` and `-a`
 flags don't skip, and its answer is saved in `config.toml`. So the turns ran with a throwaway `CODEX_HOME` that held the
-trust entry and a `notify` of `"<dir>/My Notify/record", "turn-ended"`, linking to the real login, and with that home's
-own shared server. The dialog was never answered. A few aborted start-ups used the real `~/.codex`, which is how the
-dialog was found.
+trust entry and a `notify` of `"<dir>/My Notify/record", "turn-ended"`, and with that home's own shared server. That
+home used the existing login through a link to `auth.json`. This was a one-off for this check, not approved by anyone
+and not a procedure to repeat. A few aborted start-ups used the real `~/.codex`, which is how the dialog was found. In
+two of them the harness typed a prompt and Enter into the dialog, which was not accepted, and Codex's start-up wrote its
+usual logs and caches there.
 
 - A finished turn reached the channel as `idle`/`finished` with the token, with the shared server down and up. The
   process that ran `notify` was the TUI, the one carrying the shim's `-c` flags.
@@ -624,7 +632,7 @@ dialog was found.
   against the server already running under the real `~/.codex`, because that needs a trusted folder there.
 - The user's `notify`, with a space in its path, ran once per report with `turn-ended` and the JSON unchanged, and saw
   none of the session's variables.
-- `~/.codex/config.toml` and `auth.json` were byte-identical after all runs.
+- `~/.codex/config.toml` had the same sha256 after all runs, and `auth.json` the same modification time and size.
 - An approval prompt (a read-only sandbox, asked to `touch` a file) put one BEL on the terminal, and
   `OSC 7501;state=blocked:app=codex:kind=permission`. Replayed through `TerminalCore` that raised attention, and
   `deriveAgentState` gave `waiting`/`attention`, also with a `finished` hook already there. A plain turn rang no bell.
