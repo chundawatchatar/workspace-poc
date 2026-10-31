@@ -38,4 +38,8 @@ test('a daemon status may carry its start time, and one from an older daemon wit
   }
   expect(daemonStatus.parse({ ...status, startedAt: 1_700_000_000_000 }).startedAt).toBe(1_700_000_000_000)
   expect(daemonStatus.parse(status).startedAt).toBeUndefined()
+  expect(daemonStatus.parse(status).agentHook).toBeUndefined()
+  const agentHook = { agent: 'claude', state: 'working', reason: 'tool', at: 5 }
+  expect(daemonStatus.parse({ ...status, agentHook }).agentHook).toEqual(agentHook as never)
+  expect(daemonStatus.parse({ ...status, agentHook: null }).agentHook).toBeNull()
 })

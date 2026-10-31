@@ -11,6 +11,7 @@ import { dataFile, LayoutRepository } from './modules/layout/layout.repository'
 import { RemoteAccessRepository, remoteAccessPath } from './modules/remote-access/remote-access.repository'
 import { RemoteAccessService } from './modules/remote-access/remote-access.service'
 import { daemonFactory, restoreTerminals } from './modules/terminals/daemon.service'
+import { agentTrackingFrom } from './modules/terminals/shared-daemon.service'
 import { machineSecretFile } from './modules/tunnel/tunnel.repository'
 
 // Composition root: creates the long-lived services, wires them together and starts the server.
@@ -27,7 +28,7 @@ const info: HostInfo = {
 
 const hub = new EventHub()
 const layout = new LayoutRepository(dataFile(hostRoot), projectRoot)
-const daemon = daemonFactory(hostRoot)
+const daemon = daemonFactory(hostRoot, agentTrackingFrom(process.env))
 const sessions = new SessionManager(
   (session) => hub.broadcast({ type: 'session', session: session.info() }),
   (id) => hub.broadcast({ type: 'session.gone', id }),

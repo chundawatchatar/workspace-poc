@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, type Mock, spyOn, test } from 'bun:test'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { websocket } from '@hono/bun'
@@ -17,6 +17,7 @@ import {
   remoteAccessStatus,
   routes,
   type ServerFrame,
+  serverFrame,
   TUNNEL_PATH,
   wsPayloadBytes,
 } from '@orch/shared'
@@ -31,6 +32,7 @@ import type { LayoutRepository } from './modules/layout/layout.repository'
 import { RemoteAccessRepository } from './modules/remote-access/remote-access.repository'
 import { RemoteAccessService } from './modules/remote-access/remote-access.service'
 import { TunnelClient } from './modules/tunnel/tunnel.service'
+import { TunnelHttp } from './modules/tunnel/tunnel-http.service'
 
 // The host's sockets end to end: a real app, remote access service and tunnel
 // client, wired as `index.ts` wires them and turned on by a saved setting, a fake
@@ -77,6 +79,7 @@ interface Conn {
 
 let server: Server<unknown>
 let local: Server<unknown>
+let tunnelApp: ReturnType<typeof createApp>['app']
 let conns: Conn[]
 let clients: TunnelClient[]
 let stub: ReturnType<typeof stubSessions>
@@ -157,6 +160,7 @@ beforeEach(() => {
     access: () => remoteAccess.current(),
     remoteAccess,
   } as unknown as AppDeps)
+  tunnelApp = app
   local = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: app.fetch, websocket })
 
   remoteAccess.start()
@@ -349,6 +353,56 @@ describe('tunneled sockets', () => {
     expect(status(2)).toMatchObject({ status: 401 })
     expect(status(3)).toMatchObject({ status: 200 })
     expect(stub.ensured).toHaveLength(1)
+  })
+
+  test('the agent reporting channel is out of reach: tunneled and local requests touch no session', async () => {
+    const conn = await welcomed()
+    const headers: [string, string][] = [
+      [ACCESS_KEY_HEADER, key],
+      ['authorization', `Bearer ${'a'.repeat(64)}`],
+      ['content-type', 'application/json'],
+    ]
+    const event = JSON.stringify({ agent: 'claude', state: 'working', reason: 'tool' })
+    const body = new TextEncoder().encode(event)
+    const request = (id: number, path: string) =>
+      ({ type: 'http.request', id, method: 'POST', path, headers, body }) as const
+
+    // A path outside `/api/` fails the tunnel's frame schema, so it never leaves the socket. Past that, the
+    // request builder refuses it too, which is what a frame that got through would meet.
+    expect(decodeFrame(serverFrame, encodeFrame(request(1, '/v1/state')))).toBeNull()
+    const direct: MachineFrame[] = []
+    const http = new TunnelHttp(
+      async (incoming, principal) => tunnelApp.fetch(incoming, tunnelEnv(principal)),
+      (presented) => keys.authorize(presented),
+      (frame) => direct.push(frame),
+    )
+    http.request(request(1, '/v1/state'))
+    await until(() => direct.some((f) => f.type === 'http.end'))
+    expect(direct[0]).toMatchObject({ type: 'http.response', status: 400 })
+
+    const relayed = ['/api/v1/state', '/api/agent/state']
+    relayed.forEach((path, index) => {
+      send(conn, request(index + 2, path))
+    })
+    const response = (id: number) => conn.frames.find((f) => f.type === 'http.response' && f.id === id)
+    await until(() => response(2) !== undefined && response(3) !== undefined)
+    expect(response(2)).toMatchObject({ status: 404 })
+    expect(response(3)).toMatchObject({ status: 404 })
+
+    for (const path of ['/v1/state', ...relayed]) {
+      const near = await fetch(`http://127.0.0.1:${local.port}${path}`, { method: 'POST', body: event })
+      expect(near.status).toBe(404)
+    }
+    expect(stub.ensured).toEqual([])
+    expect(stub.inputs).toEqual([])
+
+    const sources = readdirSync(import.meta.dir, { recursive: true, encoding: 'utf8' }).filter(
+      (file) => file.endsWith('.ts') && !file.endsWith('.test.ts'),
+    )
+    const reachesChannel = sources.filter((file) =>
+      /agent\.sock|\/v1\/|Bearer/.test(readFileSync(join(import.meta.dir, file), 'utf8')),
+    )
+    expect(reachesChannel).toEqual([])
   })
 
   test('the remote access routes answer 403 through the tunnel and leave the setting and tunnel alone, but work locally', async () => {

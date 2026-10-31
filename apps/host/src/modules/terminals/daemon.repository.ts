@@ -10,6 +10,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { agentSocketPath } from '@orch/terminal'
 import { z } from 'zod'
 
 const agentSchema = z.object({
@@ -57,7 +58,9 @@ export class DaemonRepository {
         throw new Error(`Terminal daemon directory must be private and owned by this user: ${dir}`)
       }
     }
-    if (Buffer.byteLength(this.socket) > 100) throw new Error('ORCH_PTY_RUNTIME produces a socket path over 100 bytes')
+    // The daemon binds its reporting channel next to this socket, under a name one byte longer.
+    if (Buffer.byteLength(agentSocketPath(this.socket)) > 100)
+      throw new Error('ORCH_PTY_RUNTIME produces a socket path over 100 bytes')
   }
 
   /** Reads the credential for `id`, or creates one for a terminal that has none yet. */

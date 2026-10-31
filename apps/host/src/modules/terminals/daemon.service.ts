@@ -2,6 +2,7 @@ import { createConnection } from 'node:net'
 import { resolve } from 'node:path'
 import { type AppState, listPanes } from '@orch/shared'
 import {
+  type AgentTracking,
   DAEMON_PROTOCOL,
   DaemonDecoder,
   daemonMessage,
@@ -109,12 +110,13 @@ export function stopDaemon(repository: DaemonRepository): Promise<'stopped' | 'a
 }
 
 /** Creates the one persistent daemon and the terminals that attach to it. */
-export function daemonFactory(hostRoot: string) {
+export function daemonFactory(hostRoot: string, tracking?: AgentTracking) {
   const repository = new DaemonRepository(hostRoot)
   const shared = new SharedDaemon(
     repository,
     [process.execPath, resolve(hostRoot, '../ptyd-bun/src/main.ts')],
     shellProgram(),
+    tracking,
   )
   return {
     repository,

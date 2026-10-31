@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { z } from 'zod'
 import { buildRequest, buildSocketUrl, defineSocket, type Endpoint, parseMessage } from './contract'
+import { routes } from './index'
 
 const endpoint = (method: Endpoint['method']): Endpoint => ({
   method,
@@ -35,6 +36,14 @@ describe('buildSocketUrl', () => {
     })
     expect(buildSocketUrl(socket, { id: 't1', cols: 80 })).toBe('/ws/term/t1?cols=80')
   })
+})
+
+test('the routes registry never holds the agent reporting channel, which only the daemon serves', () => {
+  const paths = Object.values(routes).flatMap((group) =>
+    Object.values(group as Record<string, { path: string }>).map((route) => route.path),
+  )
+  expect(paths.length).toBeGreaterThan(5)
+  expect(paths.filter((path) => path.includes('/v1/') || path.includes('agent'))).toEqual([])
 })
 
 describe('parseMessage', () => {

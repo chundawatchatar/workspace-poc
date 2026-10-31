@@ -17,8 +17,10 @@ import {
   type TerminalSession,
 } from '@orch/terminal'
 import type { z } from 'zod'
+import { ProgressWatch } from './agent-interrupt.service'
 import type { DaemonRecord } from './daemon.repository'
 import type { SharedDaemon } from './shared-daemon.service'
+import { sendSnapshot } from './view-snapshot.service'
 
 /** A browser-facing terminal whose shell and screen belong to a separate process. */
 export class DaemonSession implements TerminalSession {
@@ -52,6 +54,7 @@ export class DaemonSession implements TerminalSession {
   private palette: TermColors | null = null
   /** The last derived agent state, so its `since` stays put while the state doesn't change. */
   private agentState: SessionInfo['agentState'] = null
+  private readonly progress = new ProgressWatch(() => this.onChange(this))
 
   constructor(
     readonly id: string,
@@ -80,7 +83,8 @@ export class DaemonSession implements TerminalSession {
       attention: status?.attention ?? null,
       progress: status?.progress ?? null,
     }
-    this.agentState = deriveAgentState(signals, this.agentState, Date.now())
+    const reported = { agentHook: status?.agentHook, progressEndedAt: this.progress.endedAt }
+    this.agentState = deriveAgentState({ ...signals, ...reported }, this.agentState, Date.now())
     const cwd = interrupted?.cwd ?? this.workingDir ?? this.record.cwd ?? this.cwd
     return {
       ...signals,
@@ -127,6 +131,7 @@ export class DaemonSession implements TerminalSession {
     const known = this.agent
     const pid = agent ? this.process?.pid : undefined
     const same = pid !== undefined && pid === this.agentPid && known?.kind === agent?.kind && known?.cwd === agent?.cwd
+    if (known && (!agent || pid !== this.agentPid)) this.send({ type: 'agentExited' })
     const next =
       agent && !agent.sessionId && ambiguous && same ? { ...agent, sessionId: known?.sessionId ?? null } : agent
     this.agentPid = pid
@@ -214,6 +219,7 @@ export class DaemonSession implements TerminalSession {
   kill() {
     this.closing = true
     clearTimeout(this.retry)
+    this.progress.stop()
     this.stopResync()
     if (this.socket) {
       this.send({ type: 'close' })
@@ -225,6 +231,7 @@ export class DaemonSession implements TerminalSession {
   shutdown() {
     this.stopped = true
     clearTimeout(this.retry)
+    this.progress.stop()
     this.stopResync()
     this.socket?.destroy()
     this.clients.clear()
@@ -357,6 +364,7 @@ export class DaemonSession implements TerminalSession {
     // The first status of a connection says whether this daemon takes the theme; one from an older build doesn't.
     const first = this.status === null
     this.status = message.status
+    this.progress.note(message.status.progress)
     if (first) this.initialise(message.status)
     if (!message.status.alive) this.process = null
     this.onChange(this)
@@ -384,26 +392,7 @@ export class DaemonSession implements TerminalSession {
 
   private showSnapshot(message: Extract<z.infer<typeof daemonMessage>, { type: 'snapshot' }>) {
     this.snapshotPending = false
-    const snapshot: Extract<TermServerMsg, { type: 'snapshot' }> = {
-      type: 'snapshot',
-      data: message.data,
-      cols: message.status.cols,
-      rows: message.status.rows,
-    }
-    // Only views that are behind get the snapshot; redrawing the others would flicker and lose their scroll position.
-    for (const client of this.clients) {
-      if (client.ready && !client.stale) continue
-      client.queue = []
-      client.queued = 0
-      const serverQueries = !client.answers
-      if (client.buffered() > 1024 * 1024 || client.send(JSON.stringify({ ...snapshot, serverQueries })) === 0) {
-        client.stale = true
-        client.ready = false
-        continue
-      }
-      client.ready = true
-      client.stale = false
-    }
+    sendSnapshot(this.clients, message.data, message.status)
     this.watchStale()
   }
 
@@ -468,6 +457,7 @@ export class DaemonSession implements TerminalSession {
           // agent: it is shown as interrupted instead, so the agent can be resumed.
           create: !this.closing && (this.restoring !== null || !this.record.agent),
           viewing: this.clients.size > 0,
+          tracking: this.shared.tracking,
         })
       })
       socket.on('data', (chunk: Buffer) => {

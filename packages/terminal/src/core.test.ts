@@ -89,6 +89,16 @@ describe('shellEnv', () => {
       TERM_PROGRAM: 'workspace-poc',
     })
   })
+
+  test('adds only the reporting token it is given, never an inherited one', () => {
+    const inherited = { ORCH_AGENT_TOKEN: 'outer', ORCH_AGENT_SOCKET: '/outer/agent.sock', ORCH_AGENT_SHIMMED: '1' }
+    expect(Object.keys(shellEnv(inherited)).filter((key) => key.startsWith('ORCH_AGENT'))).toEqual([])
+    expect(shellEnv(inherited, { token: 'own', socket: '/run/agent.sock' })).toMatchObject({
+      ORCH_AGENT_TOKEN: 'own',
+      ORCH_AGENT_SOCKET: '/run/agent.sock',
+    })
+    expect(shellEnv(inherited, { token: 'own', socket: '/run/agent.sock' }).ORCH_AGENT_SHIMMED).toBeUndefined()
+  })
 })
 
 test('parseProgress turns OSC 9;4 into a spinner state and leaves other OSC 9 payloads as notifications', () => {

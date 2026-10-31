@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { AgentReason, AgentRef, AgentState, AgentStateName } from '@orch/shared'
-import { type AgentSignals, deriveAgentState } from './agent-state'
+import { AGENT_INTERRUPT_MS, type AgentHook, type AgentSignals, deriveAgentState } from './agent-state'
 
 const agent: AgentRef = { kind: 'claude', sessionId: null, cwd: '/repo' }
 const attention = { at: 1, message: 'Claude needs you' }
@@ -51,5 +51,56 @@ describe('deriveAgentState', () => {
       previous = deriveAgentState(signals(patch), previous, now)
       expect(previous).toEqual(expected && result(...expected))
     }
+  })
+
+  const hook = (patch: Partial<AgentHook> = {}): AgentHook => ({
+    agent: 'claude',
+    state: 'waiting',
+    reason: 'permission',
+    at: 100,
+    ...patch,
+  })
+  const derive = (patch: Partial<AgentSignals>, now = 5000): string[] | null => {
+    const state = deriveAgentState(signals(patch), null, now)
+    return state && [state.state, state.reason, state.source]
+  }
+
+  test('a hook event wins over progress and attention, but never brings back a state that is gone', () => {
+    expect(derive({ agentHook: hook(), progress: 'busy', attention })).toEqual(['waiting', 'permission', 'hooks'])
+    expect(derive({ agentHook: hook(), agent: null })).toBeNull()
+    expect(derive({ agentHook: hook(), alive: false })).toBeNull()
+    expect(derive({ agentHook: hook(), interrupted: { agent, cwd: '/repo', command: 'claude' } })).toBeNull()
+    expect(derive({ agentHook: hook({ agent: 'codex' }), progress: 'busy' })).toEqual([
+      'working',
+      'progress',
+      'signals',
+    ])
+    expect(derive({ agentHook: null })).toEqual(['idle', 'detected', 'signals'])
+  })
+
+  test('for Codex the baseline wins while it says working or waiting, and otherwise a finished turn shows', () => {
+    const codex: AgentRef = { ...agent, kind: 'codex' }
+    const finished = hook({ agent: 'codex', state: 'idle', reason: 'finished' })
+    expect(derive({ agent: codex, agentHook: finished, progress: 'busy' })).toEqual(['working', 'progress', 'signals'])
+    expect(derive({ agent: codex, agentHook: finished, attention })).toEqual(['waiting', 'attention', 'signals'])
+    expect(derive({ agent: codex, agentHook: finished })).toEqual(['idle', 'finished', 'hooks'])
+    expect(derive({ agent: codex, agentHook: finished, progress: 'error' })).toEqual(['idle', 'finished', 'hooks'])
+  })
+
+  test('a working hook gives way to interrupted only after progress ended and hooks stayed silent', () => {
+    const agentHook = hook({ state: 'working', reason: 'tool', at: 100 })
+    const ended = 200
+    const interrupted = ['idle', 'interrupted', 'signals']
+    const working = ['working', 'tool', 'hooks']
+    expect(derive({ agentHook, progressEndedAt: ended }, ended + AGENT_INTERRUPT_MS)).toEqual(interrupted)
+    expect(derive({ agentHook, progressEndedAt: ended }, ended + AGENT_INTERRUPT_MS - 1)).toEqual(working)
+    expect(derive({ agentHook }, 1_000_000)).toEqual(working)
+    const later = hook({ state: 'working', reason: 'tool', at: 300 })
+    expect(derive({ agentHook: later, progressEndedAt: ended }, 1_000_000)).toEqual(working)
+    expect(derive({ agentHook: hook({ at: 100 }), progressEndedAt: ended }, 1_000_000)).toEqual([
+      'waiting',
+      'permission',
+      'hooks',
+    ])
   })
 })
