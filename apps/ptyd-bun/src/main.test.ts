@@ -1,8 +1,8 @@
 import { afterEach, expect, test } from 'bun:test'
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createConnection, type Socket } from 'node:net'
 import { join } from 'node:path'
-import { DAEMON_PROTOCOL, DaemonDecoder, type daemonStatus, encodeControlFrame } from '@orch/terminal'
+import { DAEMON_PROTOCOL, DaemonDecoder, type daemonStatus, deriveAgentState, encodeControlFrame } from '@orch/terminal'
 import type { z } from 'zod'
 
 // A real daemon with a fake shell that prints its reporting variables, then waits for a line and exits.
@@ -200,6 +200,50 @@ while IFS= read -r line; do eval "$line"; done
   }
   tracked.send({ type: 'input', data: `${command('SessionEnd')}\r` })
   await until(() => tracked.statuses.at(-1)?.agentHook === null, 'the hook state to go')
+}, 30_000)
+
+test('a Codex turn reaches the status through the hook, and the shim adds nothing where Codex is not tracked', async () => {
+  // Named `zsh` for the wrapper. It runs each line the test sends, as a user's agent would run its hooks.
+  const script = `#!/bin/sh
+echo "PATH=[$PATH]"
+${SHELL.split('\n')[1]}
+while IFS= read -r line; do eval "$line"; done
+`
+  const { dir, socket } = await daemon(() => {}, 'zsh', script)
+  const bin = join(dir, 'agent', 'bin')
+  expect(statSync(join(bin, 'codex')).mode & 0o777).toBe(0o700)
+  const ran = join(dir, 'ran')
+  const mine = join(dir, 'my program')
+  writeFileSync(mine, `#!/bin/sh\necho "$1|$2|$ORCH_AGENT_TOKEN" >"${ran}"\n`)
+  chmodSync(mine, 0o700)
+
+  const tracked = await attach(socket, 'on', { claude: false, codex: true })
+  await shellVariables(tracked)
+  const json = '{"type":"agent-turn-complete"}'
+  tracked.send({ type: 'input', data: `${join(bin, 'orch-agent-hook')} codex '${mine}' turn-ended '${json}'\r` })
+  const status = await until(() => tracked.statuses.find((each) => each.agentHook), 'the hook status')
+  expect(status.agentHook).toMatchObject({ agent: 'codex', state: 'idle', reason: 'finished' })
+  const output = await until(() => existsSync(ran) && readFileSync(ran, 'utf8'), 'the user program')
+  expect(output).toBe(`turn-ended|${json}|\n`)
+  const signals = { alive: true, interrupted: null, progress: null, attention: null, agentHook: status.agentHook }
+  const agent = { kind: 'codex', sessionId: null, cwd: '/tmp' } as const
+  expect(deriveAgentState({ ...signals, agent }, null, 1)).toMatchObject({
+    state: 'idle',
+    reason: 'finished',
+    source: 'hooks',
+  })
+
+  // A fake `codex` straight after the shim shows what it passes on, and keeps any real Codex out of the test.
+  const fakes = join(dir, 'fakes')
+  mkdirSync(fakes)
+  const seen = join(dir, 'seen')
+  writeFileSync(join(fakes, 'codex'), `#!/bin/sh\necho "[$*]" >"${seen}"\n`)
+  chmodSync(join(fakes, 'codex'), 0o700)
+  const other = await attach(socket, 'other', { claude: true, codex: false })
+  await shellVariables(other)
+  other.send({ type: 'input', data: `export PATH="${bin}:${fakes}:/usr/bin:/bin" HOME="${dir}"; codex x\r` })
+  await until(() => existsSync(seen), 'the plain binary')
+  expect(readFileSync(seen, 'utf8')).toBe('[x]\n')
 }, 30_000)
 
 test('a daemon that can not write the shim folder still starts terminals that can report', async () => {
