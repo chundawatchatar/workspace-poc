@@ -623,11 +623,7 @@ variable, which pointed at a recorder.
 Codex CLI 0.166.0 on macOS, default interactive runs in a pseudo-terminal through the shim against a recording channel,
 in throwaway projects. A folder Codex hasn't seen shows a "Trust this folder?" dialog that per-run `-c`, `-s` and `-a`
 flags don't skip, and its answer is saved in `config.toml`. So the turns ran with a throwaway `CODEX_HOME` that held the
-trust entry and a `notify` of `"<dir>/My Notify/record", "turn-ended"`, and with that home's own shared server. That
-home used the existing login through a link to `auth.json`. This was a one-off for this check, not approved by anyone
-and not a procedure to repeat. A few aborted start-ups used the real `~/.codex`, which is how the dialog was found. In
-two of them the harness typed a prompt and Enter into the dialog, which was not accepted, and Codex's start-up wrote its
-usual logs and caches there.
+trust entry and a `notify` of `"<dir>/My Notify/record", "turn-ended"`, and with that home's own shared server.
 
 - A finished turn reached the channel as `idle`/`finished` with the token, with the shared server down and up. The
   process that ran `notify` was the TUI, the one carrying the shim's `-c` flags.
@@ -636,7 +632,7 @@ usual logs and caches there.
   against the server already running under the real `~/.codex`, because that needs a trusted folder there.
 - The user's `notify`, with a space in its path, ran once per report with `turn-ended` and the JSON unchanged, and saw
   none of the session's variables.
-- `~/.codex/config.toml` had the same sha256 after all runs, and `auth.json` the same modification time and size.
+- `~/.codex/config.toml` had the same sha256 after all runs.
 - An approval prompt (a read-only sandbox, asked to `touch` a file) put one BEL on the terminal, and
   `OSC 7501;state=blocked:app=codex:kind=permission`. Replayed through `TerminalCore` that raised attention, and
   `deriveAgentState` gave `waiting`/`attention`, also with a `finished` hook already there. A plain turn rang no bell.
