@@ -30,11 +30,11 @@ async function until<T>(read: () => T | undefined | null | false, what: string):
 }
 
 /** Starts a daemon in a fresh short folder. `prepare` runs first, to set the folder up. */
-async function daemon(prepare: (dir: string) => void = () => {}) {
+async function daemon(prepare: (dir: string) => void = () => {}, shellName = 'shell.sh', script = SHELL) {
   // Not `tmpdir()`: on macOS its path can be too long for a Unix socket.
   const dir = mkdtempSync('/tmp/orch-main-')
-  const shell = join(dir, 'shell.sh')
-  writeFileSync(shell, SHELL)
+  const shell = join(dir, shellName)
+  writeFileSync(shell, script)
   chmodSync(shell, 0o700)
   prepare(dir)
   const socket = join(dir, 'host.sock')
@@ -152,4 +152,61 @@ test('a daemon that can not bind the channel logs it, issues no tokens and its t
   process.kill()
   const log = await new Response(process.stderr as ReadableStream).text()
   expect(log).toContain('the agent channel is off')
+}, 30_000)
+
+test('a turn of generated hooks reaches the status, and a shell with tracking off gets nothing', async () => {
+  // Named `zsh` for the wrapper. It runs each line the test sends, as a user's agent would run its hooks.
+  const script = `#!/bin/sh
+echo "PATH=[$PATH] ZDOTDIR=[$ZDOTDIR]"
+${SHELL.split('\n')[1]}
+while IFS= read -r line; do eval "$line"; done
+`
+  const { dir, socket } = await daemon(() => {}, 'zsh', script)
+  const root = join(dir, 'agent')
+  expect(statSync(root).mode & 0o777).toBe(0o700)
+  expect(statSync(join(root, 'bin', 'orch-agent-hook')).mode & 0o777).toBe(0o700)
+  expect(statSync(join(root, 'claude-settings.json')).mode & 0o777).toBe(0o600)
+
+  const shellLine = (peer: { output: string }) => /PATH=\[(.*?)\] ZDOTDIR=\[(.*?)\]/.exec(peer.output)
+  const off = await attach(socket, 'off', { claude: false, codex: false })
+  const plain = await until(() => shellLine(off), 'the plain shell')
+  expect(plain[1]).not.toContain(root)
+  expect(plain[2]).toBe('')
+  expect((await shellVariables(off)).token).toBe('')
+
+  const tracked = await attach(socket, 'on', { claude: true, codex: false })
+  const shellEnvironment = await until(() => shellLine(tracked), 'the tracked shell')
+  expect(shellEnvironment[1]?.split(':')[0]).toBe(join(root, 'bin'))
+  expect(shellEnvironment[2]).toBe(join(root, 'zsh'))
+
+  const settings = JSON.parse(await Bun.file(join(root, 'claude-settings.json')).text())
+  const command = (event: string, matcher?: string) =>
+    (settings.hooks[event] as { matcher?: string; hooks: { command: string }[] }[]).find(
+      (group) => group.matcher === matcher,
+    )?.hooks[0]?.command
+  const turn = [
+    [command('SessionStart', 'startup|resume|clear'), 'idle', 'started'],
+    [command('UserPromptSubmit'), 'working', 'prompt'],
+    [command('Notification', 'permission_prompt'), 'waiting', 'permission'],
+    [command('Stop'), 'idle', 'finished'],
+  ] as const
+  for (const [line, state, reason] of turn) {
+    tracked.send({ type: 'input', data: `${line}\r` })
+    await until(
+      () => tracked.statuses.at(-1)?.agentHook?.reason === reason && tracked.statuses.at(-1),
+      `the ${reason} status`,
+    )
+    expect(tracked.statuses.at(-1)?.agentHook).toMatchObject({ agent: 'claude', state, reason })
+  }
+  tracked.send({ type: 'input', data: `${command('SessionEnd')}\r` })
+  await until(() => tracked.statuses.at(-1)?.agentHook === null, 'the hook state to go')
+}, 30_000)
+
+test('a daemon that can not write the shim folder still starts terminals that can report', async () => {
+  // A file in the folder's place stops it from being created.
+  const { dir, socket } = await daemon((dir) => writeFileSync(join(dir, 'agent'), ''))
+  const peer = await attach(socket, 'a', { claude: true, codex: false })
+  const { token } = await shellVariables(peer)
+  expect(token).toMatch(/^[a-f0-9]{64}$/)
+  expect((await request(join(dir, 'agent.sock'), token, '/v1/session')).status).toBe(200)
 }, 30_000)

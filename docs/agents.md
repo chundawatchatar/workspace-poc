@@ -20,7 +20,7 @@ An agent's state is one of three, or none:
 | State | Meaning |
 | --- | --- |
 | `working` | The agent is running a turn: thinking, writing or running a tool. |
-| `waiting` | The agent stopped for the user mid-turn: a question, or a permission prompt for a tool. |
+| `waiting` | The agent stopped for the user: a question, a permission prompt for a tool, or, about a minute after a finished turn, Claude Code's reminder that it is waiting for input. |
 | `idle` | The agent finished its turn, or has not started one, and sits at its own prompt. |
 | none (`null`) | No agent is detected in the foreground, tracking is off for the terminal, the terminal is interrupted or its shell is not alive. The UI shows nothing. |
 
@@ -73,12 +73,13 @@ second earlier. A `waiting` always replaces a `working`.
 - **The baseline fills in what hooks can't say.** For Codex, whose `notify` only reports the end of a turn (see
   [Codex](#codex)), `working` and `waiting` come from the baseline and the hook source only sets `idle`/`finished`. The
   combined state is reported with `source: 'hooks'` only when the hook event is the one shown.
-- **Interrupt by the user.** Pressing Esc in Claude Code may end a turn without a `Stop` hook (open question). To keep
-  a tab from showing `working` forever: when the hook state is `working`, `progress` was `busy` during the turn and
+- **Interrupt by the user.** Pressing Esc in Claude Code ends a turn without a `Stop` hook. To keep a tab from showing `working` forever: when the hook state is `working`, `progress` was `busy` during the turn and
   goes back to null, and no hook event arrives within 3 seconds, the state becomes `idle` with reason `interrupted`.
   An agent that never sent progress in the turn is not affected by this rule. The host records when `progress` left
   `busy` and passes it to `deriveAgentState`; only a hook event older than that moment counts. A host timer recomputes
-  the state after the 3 seconds, because nothing else would then.
+  the state after the 3 seconds, because nothing else would then. Claude Code 2.1.316 sent no OSC 9;4 at all to a
+  terminal with `TERM_PROGRAM=workspace-poc`, so today this rule does not fire there and an interrupted turn shows
+  `working` until the next event. See [the record](#claude-code-check-record).
 - **The agent exits.** Process inspection sees the shell back at its prompt, `agent` becomes null, and the state
   becomes null. The host sends `{ type: 'agentExited' }` to the daemon, which drops the hook state. The daemon can't
   see when the next agent starts, so for 1 second after that it ignores events (still answering 204), except reason
@@ -100,14 +101,16 @@ product starts get a command shim that adds hooks for that one invocation only.
 ### The shim
 
 - At start-up the daemon writes a product-owned folder in its runtime directory, next to its socket:
-  `<runtime>/agent/bin/` holds `claude`, `codex` and `orch-agent-hook`, all small POSIX `sh` scripts, and
-  `<runtime>/agent/claude-settings.json` holds the generated hook settings. The daemon's `umask` is already `077`, so
-  they are readable only by the user. Their contents are fixed by the daemon's code: no token, no path from the user's
-  projects.
+  `<runtime>/agent/bin/` holds `claude` and `orch-agent-hook` (and `codex` from step 4), all small POSIX `sh` scripts,
+  `<runtime>/agent/claude-settings.json` holds the generated hook settings, and `<runtime>/agent/zsh/` holds the
+  startup wrapper. The folders are `0700`, so they are readable only by the user. Their contents are fixed by
+  `packages/terminal/src/agent-shim.ts`: no token, no path from the user's projects. A failed write means no `PATH`
+  change: shells still start and still get a token.
 - `shellEnv` (in `core.ts`) puts `<runtime>/agent/bin` first on `PATH` and adds the token variables (see the
-  [channel](#local-reporting-channel)), for terminals the product starts only (TERM-7). `shellEnv` also removes any
-  `PATH` entry that is a product shim folder and any inherited `ORCH_AGENT_*` variable, so a host started from inside
-  a product terminal never hands its own session's shim or token to the shells it starts.
+  [channel](#local-reporting-channel)), for terminals the product starts only (TERM-7), and only for a shell that got
+  a token. `shellEnv` also removes any `PATH` entry that holds `orch-agent-hook`, wherever `ORCH_PTY_RUNTIME` put it,
+  and any inherited `ORCH_AGENT_*` variable, so a host started from inside a product terminal never hands its own
+  session's shim or token to the shells it starts.
 - The `claude` shim execs the real Claude Code with one extra argument,
   `--settings <runtime>/agent/claude-settings.json`, then the user's own arguments unchanged.
 - The `codex` shim execs the real Codex with `-c 'notify=["<runtime>/agent/bin/orch-agent-hook","codex"]'`, then the
@@ -122,7 +125,11 @@ user's arguments only. It also passes through untouched when:
   The shim execs it with the token variables removed (`env -u`), so it can never report as the outer agent.
 - `TMUX` or `STY` is set: inside `tmux` or `screen`, a pane's environment comes from whichever terminal started the
   server, so its token may belong to another tab.
-- The user's arguments already contain `--settings` (Claude) or a `notify` override (Codex), so the two never conflict.
+- The user's arguments already contain `--settings` or `--settings=...` (Claude) or a `notify` override (Codex), so the
+  two never conflict.
+- `claude-settings.json` is missing, for example cleaned from `/tmp`, because Claude Code exits with an error on a
+  missing file. `curl` being missing counts as the daemon being unreachable. A `noexec` `/tmp` never runs the shim at
+  all, so the shell goes on to the next `claude` on `PATH`.
 - The agent's version doesn't support the flag. The shim checks this once per binary (by its `--help` output) and
   caches the answer in `<runtime>/agent/cache/`, keyed by the binary's path and modification time, so an unsupported
   version is started as is instead of failing on an unknown flag.
@@ -132,8 +139,8 @@ need.
 
 ### Finding the real binary
 
-The shim walks `$PATH` in order, skips every entry that resolves (`cd -P`) to its own folder, and runs the first
-executable named `claude` (or `codex`) that is not itself. If none is found it prints the shell's usual
+The shim walks `$PATH` in order, skips every entry that resolves (`cd -P`) to its own folder, also one reached twice
+or through a symlink, and runs the first executable named `claude` (or `codex`) that is not itself. If none is found it prints the shell's usual
 `command not found` message to stderr and exits 127. It uses `exec`, so the agent keeps the shim's pid and process
 inspection sees the agent's own program, as today.
 
@@ -150,21 +157,30 @@ arguments and a 2-second hook timeout:
 
 | Hook event | Matcher | State | Reason |
 | --- | --- | --- | --- |
-| `SessionStart` | any | `idle` | `started` |
+| `SessionStart` | `startup\|resume\|clear` | `idle` | `started` |
 | `UserPromptSubmit` | any | `working` | `prompt` |
 | `PreToolUse` | `AskUserQuestion` | `waiting` | `question` |
-| `PreToolUse` | every other tool | `working` | `tool` |
-| `PostToolUse` | any | `working` | `tool` |
+| `PreToolUse` | every tool (`*`) | `working` | `tool` |
+| `PostToolUse` | every tool (`*`) | `working` | `tool` |
 | `Notification` | `permission_prompt` | `waiting` | `permission` |
 | `Notification` | `elicitation_dialog` | `waiting` | `question` |
+| `Notification` | `idle_prompt` | `waiting` | `question` |
 | `Stop` | any | `idle` | `finished` |
 | `SessionEnd` | any | `idle` | `exited` (drops the hook state) |
 
-`PostToolUse` is there so a granted permission leaves `waiting` as soon as the tool has run. A `Notification` with
-another type (for example the reminder that Claude is waiting for input) is not hooked: `Stop` already set `idle`.
-The matcher names and whether a matcher can exclude one tool are assumptions (see [Open questions](#open-questions));
-if exclusion is not supported, both `PreToolUse` hooks fire for `AskUserQuestion` and the daemon's rule that `tool`
-never replaces a fresh `waiting` keeps the right state.
+`PostToolUse` is there so a granted permission leaves `waiting` as soon as the tool has run. `SessionStart` leaves out
+`compact`, which can happen mid-turn and would set `idle`.
+
+`idle_prompt` is the reminder that Claude Code is waiting for input, about a minute after a finished turn, so an
+unattended tab goes from `idle` to `waiting` then. It uses reason `question` because a reason of its own would change
+`agentEvent`, `daemonStatus` and `AgentReason`. Step 7 must exclude it, or it would say "has a question" after every
+finished turn. To drop it, remove its row here and in `CLAUDE_HOOKS`.
+
+No matcher excludes a tool, so both `PreToolUse` hooks fire for `AskUserQuestion`, in either order. The daemon's rule
+that `tool` never replaces a fresh `waiting` keeps the right state. Known gaps: `StopFailure` and `PostToolUseFailure`
+exist and are not hooked, so a failed API call can leave `working`, and a tool failing after a granted permission can
+leave `waiting`, until the next event. An answer within 1 second of `waiting` also keeps `waiting` until the next
+event, and so does declining a prompt with Esc, which fires nothing.
 
 Claude Code passes each hook a JSON description on stdin, which can hold the prompt or the tool input. The hook
 script never reads it: it redirects stdin from `/dev/null` first. It prints nothing, because some hooks add their
@@ -205,26 +221,28 @@ baseline state, whose `source` is `'signals'`. The UI doesn't warn about a misse
 deliberate. The tab's tooltip names the source ("from terminal signals" or "from Claude Code hooks"), so a user who
 expects hooks can see they are not active.
 
-The `PATH` order is the one case worth fixing in the build: the shell itself rewrites it. The Claude Code hooks job
-checks how often the shim is missed in a default macOS zsh setup. If it is, that job adds a zsh `ZDOTDIR` wrapper in
-the runtime folder that sources the user's own startup files unchanged and then puts the shim folder first again.
-That is how terminals usually add shell integration without editing user files. Other shells keep the `PATH`
-prepend only.
+The `PATH` order is the one case fixed in the build: the shell itself rewrites it. A login zsh on macOS did not keep a
+folder first on `PATH`, and `~/.local/bin`, where Claude Code's own installer puts `claude`, came ahead of it. So for
+zsh `shellEnv` sets `ZDOTDIR` to `<runtime>/agent/zsh`, whose four startup files source the user's own unchanged, with
+the user's `ZDOTDIR` in place while each runs, and write nothing. After the last one the shim folder goes first again.
+At the prompt `ZDOTDIR` is the user's value, or unset, and is never the wrapper; `HISTFILE` is put right if macOS's
+`/etc/zshrc` derived it from the wrapper. If a wrapper file is gone, `shellEnv` leaves `ZDOTDIR` out, since zsh would
+otherwise skip the user's files. Other shells keep the `PATH` prepend only.
 
 ## Trust (AG-4)
 
 Two kinds of trust are involved, and the product keeps them apart.
 
-**The agent's own trust checks.** Claude Code asks whether to trust a folder the first time it runs there, and may
-ask the user to review hooks that come from a settings source (whether it does for `--settings` is an open
-question). Codex has its own approval and sandbox settings. These prompts appear in the terminal and the user
+**The agent's own trust checks.** Claude Code asks whether to trust a folder the first time it runs there, and hooks,
+including those from `--settings`, run only once the folder is trusted. It asks for no separate review of those
+hooks (see [the record](#claude-code-check-record)). Codex has its own approval and sandbox settings. These prompts appear in the terminal and the user
 answers them there. The product never pre-accepts them, never answers them, never types into the terminal on the
 user's behalf, and never writes the agent's trust state (for example the trust entries in `~/.claude.json`). If the
 user declines, the agent runs without the hooks and the tab falls back to the baseline.
 
 **The product's question.** Before the shim adds anything for an agent kind, the product asks the user once, in the
 web UI: "Track Claude Code's status with hooks? This adds hooks to Claude Code sessions started in this app, for
-those sessions only. Your settings are not changed. Claude Code may ask you to approve them." with **Track** and
+those sessions only. Your settings are not changed." with **Track** and
 **Not now**. It is shown the first time that agent is detected in a terminal, as a dismissible notice on the tab, not
 a modal. Codex gets the same question with its own wording.
 
@@ -517,21 +535,38 @@ This merge lives in `TerminalCore.raise` in `core.ts`, which is where the bell, 
 
 These are assumptions to check in the hooks jobs. Each answer is written back into this document.
 
-1. **Claude Code `--settings`.** That it accepts a file path, adds its hooks to the user's own hooks instead of
-   replacing them, and is supported by the versions users have. Which version introduced it, for the shim's check.
-2. **Hook approval.** Whether Claude Code asks the user to review or approve hooks that come from `--settings`, and
-   whether workspace trust gates them. If it asks, the trust notice's wording mentions it.
-3. **Matchers.** The `Notification` matcher values (`permission_prompt`, `elicitation_dialog`), whether a
-   `PreToolUse` matcher can exclude one tool, and whether `AskUserQuestion` is the tool name for questions.
-4. **Interrupt.** Whether Esc fires `Stop`, and whether Claude Code clears its OSC 9;4 progress when interrupted, which
-   the `interrupted` rule relies on.
+1. **Claude Code `--settings`.** Answered: it accepts a file path and its hooks add to the user's and the project's.
+   The version that introduced it was not found, so the shim checks `--help` instead of a version number.
+2. **Hook approval.** Answered: no separate review of hooks from `--settings`. They wait for workspace trust.
+3. **Matchers.** Answered: `permission_prompt`, `idle_prompt` and the tool name `AskUserQuestion` fired as expected.
+   `elicitation_dialog` is in the binary but needs an MCP server to fire, so it was not seen. Excluding one tool
+   wasn't tried, because it isn't needed.
+4. **Interrupt.** Answered: Esc fires no `Stop`, and Claude Code sends no OSC 9;4 here, so there is nothing to clear.
 5. **Codex `notify`.** That `-c notify=[...]` takes a TOML array, that it only reports `agent-turn-complete`, and
    whether Codex has (or gains) events for approvals or a turn start. Whether Codex sends OSC 9;4 progress, and
    whether a per-invocation TUI notification setting for approvals exists and is worth passing.
-6. **`PATH` order.** How often a default macOS zsh setup puts the real agent before the shim, which decides whether
-   the `ZDOTDIR` wrapper is built.
-7. **Notification channel.** What Claude Code sends to a terminal whose `TERM_PROGRAM` is `workspace-poc` (bell, OSC 9
-   or nothing), which decides how often the 2-second merge matters.
+6. **`PATH` order.** Answered: a default macOS zsh setup does put the real agent first, so the `ZDOTDIR` wrapper is built.
+7. **Notification channel.** Answered: nothing. No bell, OSC 9 or OSC 777 reached a terminal with
+   `TERM_PROGRAM=workspace-poc` in a whole session, so the 2-second merge is rarely needed for Claude Code.
+
+### Claude Code check record
+
+Claude Code 2.1.316 on macOS, run in a pseudo-terminal through the shim against a recording channel, in throwaway
+projects whose `.claude/settings.json` had its own `UserPromptSubmit` hook, an allow rule and a deny rule. The user's
+real `~/.claude/settings.json` was not edited: its own `UserPromptSubmit` hook runs a script named by an environment
+variable, which pointed at a recorder.
+
+- Every prompt fired the generated hook, the project's hook and the user's hook, so `--settings` adds to both. A run
+  recording event names showed the user's `SessionStart`, `UserPromptSubmit`, `Stop` and `SessionEnd` hooks all firing.
+- The allow rule ran `echo allowed-marker` without a prompt and the deny rule stopped `touch denied-marker`.
+- Events arrived as `idle`/`started` once the folder was trusted, `working`/`prompt`, `working`/`tool` before and after
+  a tool, `idle`/`finished` and `idle`/`exited`. No dialog asked about the hooks.
+- With `--permission-mode default`, `rm -f` gave `waiting`/`permission`. Without that flag, `touch` and `curl` ran on
+  this machine with no prompt and no `waiting`, so a tab shows `waiting` only when Claude Code really asks.
+- `AskUserQuestion` gave `working`/`tool` and then `waiting`/`question`, so the order is not fixed.
+- `waiting`/`question` from `idle_prompt` came about a minute after `Stop`.
+- Esc on a prompt, a question or a running turn fired no hook. The next prompt recovered the state.
+- The terminal got only OSC 0 titles and an OSC 7501 query: no bell, OSC 9;4, other OSC 9 or OSC 777.
 
 ## Build order
 

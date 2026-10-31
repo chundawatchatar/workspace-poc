@@ -19,6 +19,8 @@ export type AgentTracking = z.infer<typeof agentTracking>
 export interface AgentShellEnv {
   token: string
   socket: string
+  /** The folder of `claude` and `orch-agent-hook`, put first on `PATH`. Null means it couldn't be written. */
+  shimDir: string | null
 }
 
 /** The biggest event body accepted. */
@@ -116,6 +118,7 @@ export class AgentChannel {
   private loggedAt: number
   /** The bound socket; null until `open`, and no tokens are issued without it. */
   private socket: string | null = null
+  private shimDir: string | null = null
 
   constructor(
     /** Called after a session's hook state changes. */
@@ -127,9 +130,10 @@ export class AgentChannel {
     this.loggedAt = now()
   }
 
-  /** Marks the channel as reachable at `socket`, so shells started from now on get a token. */
-  open(socket: string) {
+  /** Marks the channel as reachable at `socket`, so shells started from now on get a token and `shimDir`. */
+  open(socket: string, shimDir: string | null = null) {
     this.socket = socket
+    this.shimDir = shimDir
   }
 
   /** The session's last hook event, or null when there is none for this agent run. */
@@ -174,7 +178,7 @@ export class AgentChannel {
     const token = randomBytes(32).toString('hex')
     session.token = token
     this.tokens.set(token, id)
-    return { token, socket }
+    return { token, socket, shimDir: this.shimDir }
   }
 
   /** The session's shell ended, so its token stops working and its agent run is over. */
