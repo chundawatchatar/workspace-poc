@@ -209,7 +209,9 @@ last answer. `-c notify=...` replaces the configured value, so a plain flag woul
   does a line that only has the word in its value or comment. Losing tracking is always better than silently losing the
   user's `notify`. A word inside a path, as in `[projects."/work/notify"]`, doesn't count. A project's file comes from
   whatever repository was cloned, and this all runs before the agent starts, so more than 64 KB of config in total, or a line
-  over 4 KB, passes through rather than hold `codex` up.
+  over 4 KB, passes through rather than hold `codex` up. The size is counted by reading at most one byte past the limit,
+  because a symlink can point at a proc file, which reports size 0 and can run for terabytes. A failed read passes
+  through, and so does a link that reads as nothing, since `/proc/self` files can look empty and then fail.
 - **Approvals ring the bell.** The shim adds `-c 'tui.notifications=["approval-requested"]'`,
   `-c 'tui.notification_method="bel"'` and `-c 'tui.notification_condition="always"'`, and leaves all three out when the
   config sets any `notifications`, `notification_method` or `notification_condition` key. The list is approvals only
@@ -574,6 +576,8 @@ This merge lives in `TerminalCore.raise` in `core.ts`, which is where the bell, 
   `ps` and in the process command a viewer of the machine sees. A secret in one, such as a webhook URL, is exposed for
   longer than the moment Codex runs it. Anyone with the machine key could read the config through a terminal anyway, so
   this gives no new access.
+- A project's config is untrusted input: the `codex` shim reads a bounded amount of it, and only to decide whether to
+  pass through. Nothing from it reaches the command line.
 - Events are rate limited per session and overall, and the shim and hook folder is written by the daemon from fixed
   contents in a private folder.
 
