@@ -338,6 +338,7 @@ describe('codex shim', () => {
       ['--config=notify=x'],
       ['-c', 'notify = x'],
       ['-cnotify=x'],
+      ['-c=notify=x'],
       ['-p', 'mine'],
       ['--profile', 'mine'],
       ['--profile=mine'],
@@ -362,6 +363,39 @@ describe('codex shim', () => {
     await expectPassThrough(['x'], undefined, below)
     writeFileSync(join(project, '.codex', 'config.toml'), '# notify = ["theirs"]\n')
     await codex(['x'], undefined, below)
+    expect(received()).toContain(notifyValue())
+  })
+
+  test('gives up quickly on a config too large to read, from the user or a repository', async () => {
+    serve()
+    const below = join(project, 'below')
+    mkdirSync(below)
+    mkdirSync(join(project, '.codex'))
+    const large = [`${' '.repeat(2_000_000)}x = 1\n`, 'a=1\n'.repeat(2_000_000), `${' '.repeat(50_000)}x = 1\n`]
+    const worst = `${' '.repeat(4096)}\n`.repeat(15)
+
+    for (const contents of large) {
+      const file = join(project, '.codex', 'config.toml')
+      writeFileSync(file, contents)
+      await expectPassThrough(['x'], undefined, below)
+      rmSync(file)
+      config(contents)
+      await expectPassThrough(['x'])
+      rmSync(join(home, '.codex'), { recursive: true })
+    }
+
+    // Nested folders can't add up to more than one large file.
+    mkdirSync(join(below, '.codex'))
+    writeFileSync(join(project, '.codex', 'config.toml'), 'a=1\n'.repeat(10_000))
+    writeFileSync(join(below, '.codex', 'config.toml'), 'a=1\n'.repeat(10_000))
+    await expectPassThrough(['x'], undefined, below)
+    rmSync(join(below, '.codex'), { recursive: true })
+
+    // The largest input it does read must not hold the agent up either.
+    writeFileSync(join(project, '.codex', 'config.toml'), worst)
+    const started = Date.now()
+    await codex(['x'], undefined, below)
+    expect(Date.now() - started).toBeLessThan(1500)
     expect(received()).toContain(notifyValue())
   })
 

@@ -8,6 +8,13 @@ const CLAUDE_SETTINGS = 'claude-settings.json'
 const ZSH_FILES = ['.zshenv', '.zprofile', '.zshrc', '.zlogin']
 /** How long Claude Code lets a hook run, in seconds. The hook itself gives up after one. */
 const HOOK_TIMEOUT = 2
+/**
+ * The most the Codex shim reads, in bytes across all config files and per line.
+ * A project's file is untrusted, the shell's trimming is quadratic in a line's
+ * length, and all this runs before the agent starts, so anything larger passes through.
+ */
+const CODEX_CONFIG_LIMIT = 65536
+const CODEX_LINE_LIMIT = 4096
 /** Asks Codex to ring the bell for an approval and nothing else, since a bell after each turn would read as waiting. */
 const CODEX_APPROVAL_FLAGS = [
   'tui.notifications=["approval-requested"]',
@@ -189,10 +196,21 @@ config=\${CODEX_HOME:-\${HOME:-}/.codex}/config.toml
 edge='[][:space:].,={"'"'"'[}]'
 user_notify=
 add_tui=yes
+total=0
 
 trim() {
   trimmed=\${1#"\${1%%[![:space:]]*}"}
   trimmed=\${trimmed%"\${trimmed##*[![:space:]]}"}
+}
+
+# Whether a config is a plain file, and small enough with those before it to read before the agent starts.
+readable() {
+  [ -f "$1" ] && [ -r "$1" ] || return 1
+  size=$(wc -c <"$1" 2>/dev/null) || return 1
+  trim "$size"
+  [ "$trimmed" -le ${CODEX_CONFIG_LIMIT} ] 2>/dev/null || return 1
+  total=$((total + trimmed))
+  [ "$total" -le ${CODEX_CONFIG_LIMIT} ]
 }
 
 # Whether the text holds the word as a key could, so not inside a path or a longer name.
@@ -237,6 +255,7 @@ read_config() {
   long=
   found=
   while IFS= read -r line || [ -n "$line" ]; do
+    [ "\${#line}" -le ${CODEX_LINE_LIMIT} ] || return 1
     trim "$line"
     line=$trimmed
     case $line in
@@ -269,8 +288,9 @@ projects_clear() {
   while :; do
     file=$dir/.codex/config.toml
     if { [ -e "$file" ] || [ -L "$file" ]; } && ! [ "$file" -ef "$config" ]; then
-      [ -f "$file" ] && [ -r "$file" ] || return 1
+      readable "$file" || return 1
       while IFS= read -r line || [ -n "$line" ]; do
+        [ "\${#line}" -le ${CODEX_LINE_LIMIT} ] || return 1
         trim "$line"
         case $trimmed in '#'*) continue ;; esac
         if mentions "$trimmed" notify; then return 1; fi
@@ -298,6 +318,7 @@ arguments_clear() {
         ;;
       -c*)
         arg=\${arg#-c}
+        arg=\${arg#=}
         if mentions "\${arg%%=*}" notify; then return 1; fi
         ;;
       -p*|--profile|--profile=*|-C*|--cd|--cd=*|--remote|--remote=*) return 1 ;;
@@ -311,7 +332,7 @@ can_attach() {
   [ -n "\${CODEX_HOME:-\${HOME:-}}" ] || return 1
   arguments_clear "$@" || return 1
   if [ -e "$config" ] || [ -L "$config" ]; then
-    [ -f "$config" ] && [ -r "$config" ] && read_config "$config" || return 1
+    readable "$config" && read_config "$config" || return 1
   fi
   projects_clear
 }
