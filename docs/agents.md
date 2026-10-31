@@ -34,8 +34,8 @@ left whenever hooks are missing:
 - **`SessionInfo.agent`** (from `detectAgent` in `agents.ts`, run by `SessionManager.inspect`): whether an agent is
   in the foreground at all. When it is null, the state is null.
 - **OSC 9;4 `progress`** (`parseProgress` in `packages/terminal/src/core.ts`, kept as `TerminalCore.progress`):
-  `busy` means the program reports work in progress. Claude Code is known to send it; whether Codex does is an open
-  question.
+  `busy` means the program reports work in progress. Neither Claude Code nor Codex sent it to a terminal with
+  `TERM_PROGRAM=workspace-poc` in the checks recorded below.
 - **Attention** (`TerminalCore.attention`, raised by the bell, an OSC 9 notification or an OSC 777 notification, and
   cleared by `ack` when the user looks at the terminal): the agent asked for the user, without saying why.
 
@@ -101,7 +101,7 @@ product starts get a command shim that adds hooks for that one invocation only.
 ### The shim
 
 - At start-up the daemon writes a product-owned folder in its runtime directory, next to its socket:
-  `<runtime>/agent/bin/` holds `claude` and `orch-agent-hook` (and `codex` from step 4), all small POSIX `sh` scripts,
+  `<runtime>/agent/bin/` holds `claude`, `codex` and `orch-agent-hook`, all small POSIX `sh` scripts,
   `<runtime>/agent/claude-settings.json` holds the generated hook settings, and `<runtime>/agent/zsh/` holds the
   startup wrapper. The folders are `0700`, so they are readable only by the user. Their contents are fixed by
   `packages/terminal/src/agent-shim.ts`: no token, no path from the user's projects. A failed write means no `PATH`
@@ -113,8 +113,9 @@ product starts get a command shim that adds hooks for that one invocation only.
   session's shim or token to the shells it starts.
 - The `claude` shim execs the real Claude Code with one extra argument,
   `--settings <runtime>/agent/claude-settings.json`, then the user's own arguments unchanged.
-- The `codex` shim execs the real Codex with `-c 'notify=["<runtime>/agent/bin/orch-agent-hook","codex"]'`, then the
-  user's arguments.
+- The `codex` shim execs the real Codex with `-c 'notify=["<runtime>/agent/bin/orch-agent-hook","codex",<the user's
+  own elements>]'`, three `-c tui.*` flags that ask for a bell on an approval (see [Codex](#codex)), then the user's
+  arguments.
 
 Before adding anything, the shim asks the daemon whether to (`GET /v1/session` on the channel, with a 200 ms timeout).
 It adds its flags only when the daemon answers that tracking is on for this session and this agent. In every other
@@ -125,8 +126,11 @@ user's arguments only. It also passes through untouched when:
   The shim execs it with the token variables removed (`env -u`), so it can never report as the outer agent.
 - `TMUX` or `STY` is set: inside `tmux` or `screen`, a pane's environment comes from whichever terminal started the
   server, so its token may belong to another tab.
-- The user's arguments already contain `--settings` or `--settings=...` (Claude) or a `notify` override (Codex), so the
-  two never conflict.
+- The user's arguments already contain `--settings` or `--settings=...` (Claude) or a `notify` override in any
+  spelling (Codex), so the two never conflict.
+- For Codex, anything could choose a `notify` the shim can't see or can't keep: `-p`/`--profile`, `-C`/`--cd` or
+  `--remote`, a config it can't read or can't take for certain (see [Codex](#codex)), a `.codex/config.toml` from the
+  working directory upward that has a `notify` line, or a runtime path holding `"` or `\`.
 - `claude-settings.json` is missing, for example cleaned from `/tmp`, because Claude Code exits with an error on a
   missing file. `curl` being missing counts as the daemon being unreachable. A `noexec` `/tmp` never runs the shim at
   all, so the shell goes on to the next `claude` on `PATH`.
@@ -140,8 +144,8 @@ need.
 ### Finding the real binary
 
 The shim walks `$PATH` in order, skips every entry that resolves (`cd -P`) to its own folder, also one reached twice
-or through a symlink, and runs the first executable named `claude` (or `codex`) that is not itself. If none is found it prints the shell's usual
-`command not found` message to stderr and exits 127. It uses `exec`, so the agent keeps the shim's pid and process
+or through a symlink, and runs the first executable named `claude` (or `codex`) that is not itself. If none is found
+it prints the shell's usual `command not found` message to stderr and exits 127. It uses `exec`, so the agent keeps the shim's pid and process
 inspection sees the agent's own program, as today.
 
 ### No settings file is ever written
@@ -188,16 +192,50 @@ output to the agent's context, and it always exits 0, because some exit codes bl
 
 ### Codex
 
-Codex's `notify` runs a program after an event, with a JSON argument. As far as is known it reports only the end of a
-turn (`agent-turn-complete`), and that JSON includes the user's messages and the agent's last answer. So:
+Codex's `notify` runs a program after a turn, with a JSON argument that includes the user's messages and the agent's
+last answer. `-c notify=...` replaces the configured value, so a plain flag would stop the user's own `notify`. So:
 
-- `orch-agent-hook codex` ignores its JSON argument entirely and always reports `idle` with reason `finished`. It
-  doesn't parse the argument to find its type; if Codex later sends other types, the hooks job revisits this.
-- Codex gets no hook `working` or `waiting`. Those come from the baseline only: `progress` if Codex sends OSC 9;4,
-  and attention if it sends a bell or OSC 9 notification for an approval. Without either, a Codex tab shows `idle`
-  until the turn ends, then `idle` with reason `finished` and a "finished" notification.
-- Codex may be able to send terminal notifications for approvals itself (a TUI notification setting passed with
-  `-c`). Whether that exists in the supported versions, and whether to pass it, is an open question.
+- **The hook chains.** The `codex` shim reads the user's `notify` array and passes its elements on inside the value.
+  `orch-agent-hook codex <user argv...> <json>` reports first, then runs the user's program with its own arguments and
+  the JSON last, as Codex would, without `ORCH_AGENT_TOKEN`, `ORCH_AGENT_SOCKET` or `ORCH_AGENT_SHIMMED`. The shim
+  stores nothing and the hook reads no file.
+- **The arguments are opaque.** The hook never parses, logs or sends them, and always reports `idle` with reason
+  `finished`, so the JSON goes only to the program the user already gave it (SEC-3). A channel that never answers
+  delays the user's program by about a second, and the hook hides that program's output and exit code.
+- **The reader is narrow on purpose.** `sh` has no TOML parser, so in `${CODEX_HOME:-$HOME/.codex}/config.toml` it takes
+  one line, `notify = [ ... ]` of plain strings, above the first line starting with `[`. No key spelled `notify` means
+  there is no user program. Anything else that mentions it as a key could, including under a table, quoted, on a second
+  line, across lines, with a trailing comment, in an inline table, or after a multi-line string, passes through, and so
+  does a line that only has the word in its value or comment. Losing tracking is always better than silently losing the
+  user's `notify`. A word inside a path, as in `[projects."/work/notify"]`, doesn't count.
+- **Approvals ring the bell.** The shim adds `-c 'tui.notifications=["approval-requested"]'`,
+  `-c 'tui.notification_method="bel"'` and `-c 'tui.notification_condition="always"'`, and leaves all three out when the
+  config sets any `notifications`, `notification_method` or `notification_condition` key. The list is approvals only
+  because a bell after each finished turn would read as `waiting`, and `always` because the default may skip a focused
+  terminal. A bell carries no text, and the baseline already turns it into `waiting`/`attention` until the user looks.
+  This costs Codex's default finished-turn notification in that terminal, and nothing shows "finished" until step 7.
+- **Any `-c` keeps the session off the shared server.** Interactive Codex connects to a long-lived shared app server,
+  where a `notify` would run with the server's environment and no token. With any `-c` flag it runs in-process instead,
+  even when the server is up, so `notify` runs in the terminal's own Codex, with the token. No `--no-daemon` is needed,
+  but this depends on that behaviour, and a tracked session has no place in `codex agents` and can't be reconnected.
+  If a later Codex applies `-c` on the server, tracking stops and the rule is to add `--no-daemon`, guarded by
+  `supports_flag`. The token never goes on a command line or in a file to get round it. A run passing `--remote` passes
+  through, because its `notify` runs elsewhere.
+- Codex gets no hook `working` or `waiting`. Those come from the baseline only, and Codex sends no OSC 9;4, so a turn
+  shows no `working` here. A later turn shows `idle`/`finished` until the next signal: `combine` trusts the baseline
+  during a turn, and Codex has no turn-start event in `notify`.
+- **An early `finished`.** The title Codex generates for a new session is a turn of its own, which fires `notify` too,
+  so the first prompt reports `finished` twice and the first of them can come while the real turn is still running.
+  The hook can't tell them apart without reading the JSON, which it never does. A bell still wins (`combine` prefers a
+  baseline `waiting`). Step 7 has to keep this in mind for "Codex finished".
+
+**Candidates for later.** Codex's real hook system (`PermissionRequest`, `Stop` and others) would give precise events
+and leave `notify` alone, but hooks need review: Codex shows a "Hooks need review" dialog and stores trust in
+`hooks.state` in `config.toml`. `--dangerously-bypass-hook-trust` must never be used (AG-4), and whether `-c` can declare
+hooks is unknown, so this belongs after step 8, which owns the ask-once question. Codex also sends
+`OSC 7501;state=working|idle|done:app=codex` and `state=blocked:app=codex:kind=permission`, which `TerminalCore`
+ignores today: a terminal-side source of the states `notify` can't give, needing no shim. It is undocumented, so reading
+it would be a job of its own.
 
 ### Other agents
 
@@ -325,7 +363,8 @@ const agentEvent = z.strictObject({
 `agent` must match the tracking the session allows. `reason` is a short fixed enum, and every value the hook script
 sends is a literal in the generated settings or the shim. **Prompts, messages, tool names, tool input or output,
 file paths, folder names and anything else from the agent's stdin or arguments are never sent (SEC-3).** The script
-never reads them, and the schema has no field to carry them.
+never reads them, and the schema has no field to carry them. The one thing done with Codex's JSON argument is to
+forward it, unread, to the `notify` program the user configured.
 
 ### Rate limit
 
@@ -523,9 +562,10 @@ This merge lives in `TerminalCore.raise` in `core.ts`, which is where the bell, 
   programs of the same user can already reach the daemon's sockets, as SEC-1 allows; the token stops one terminal
   from setting another's state, not the user's own programs.
 - Events carry only an agent kind, a state and a fixed reason, under a strict schema and a 256-byte limit. Prompts,
-  messages, tool names, tool input and output, and paths are never sent (SEC-3); the hook script never reads its
-  stdin or arguments.
-- The product never writes the user's or a project's agent settings, never touches the agent's trust state, never
+  messages, tool names, tool input and output, and paths are never sent (SEC-3). The hook script never reads its
+  stdin or arguments; it forwards Codex's argument unread to the user's own `notify`, without the session's variables.
+- The product never writes the user's or a project's agent settings (the `codex` shim only reads the one config file
+  and the `.codex/config.toml` files above the working directory), never touches the agent's trust state, never
   answers an agent's prompt and never types into the terminal for the user.
 - A hook can't block or fail the agent: it prints nothing, exits 0 and gives up within a second.
 - Events are rate limited per session and overall, and the shim and hook folder is written by the daemon from fixed
@@ -542,9 +582,9 @@ These are assumptions to check in the hooks jobs. Each answer is written back in
    `elicitation_dialog` is in the binary but needs an MCP server to fire, so it was not seen. Excluding one tool
    wasn't tried, because it isn't needed.
 4. **Interrupt.** Answered: Esc fires no `Stop`, and Claude Code sends no OSC 9;4 here, so there is nothing to clear.
-5. **Codex `notify`.** That `-c notify=[...]` takes a TOML array, that it only reports `agent-turn-complete`, and
-   whether Codex has (or gains) events for approvals or a turn start. Whether Codex sends OSC 9;4 progress, and
-   whether a per-invocation TUI notification setting for approvals exists and is worth passing.
+5. **Codex `notify`.** Answered: `-c notify=[...]` takes a TOML array, and `notify` reported only
+   `agent-turn-complete`, for the session's title turn as well. It has no event for approvals or a turn start. Codex
+   sends no OSC 9;4. `tui.notifications=["approval-requested"]` with `bel` works and is worth passing.
 6. **`PATH` order.** Answered: a default macOS zsh setup does put the real agent first, so the `ZDOTDIR` wrapper is built.
 7. **Notification channel.** Answered: nothing. No bell, OSC 9 or OSC 777 reached a terminal with
    `TERM_PROGRAM=workspace-poc` in a whole session, so the 2-second merge is rarely needed for Claude Code.
@@ -567,6 +607,34 @@ variable, which pointed at a recorder.
 - `waiting`/`question` from `idle_prompt` came about a minute after `Stop`.
 - Esc on a prompt, a question or a running turn fired no hook. The next prompt recovered the state.
 - The terminal got only OSC 0 titles and an OSC 7501 query: no bell, OSC 9;4, other OSC 9 or OSC 777.
+
+### Codex check record
+
+Codex CLI 0.166.0 on macOS, default interactive runs in a pseudo-terminal through the shim against a recording channel,
+in throwaway projects. A folder Codex hasn't seen shows a "Trust this folder?" dialog that per-run `-c`, `-s` and `-a`
+flags don't skip, and its answer is saved in `config.toml`. So the turns ran with a throwaway `CODEX_HOME` that held the
+trust entry and a `notify` of `"<dir>/My Notify/record", "turn-ended"`, linking to the real login, and with that home's
+own shared server. The dialog was never answered. A few aborted start-ups used the real `~/.codex`, which is how the
+dialog was found.
+
+- A finished turn reached the channel as `idle`/`finished` with the token, with the shared server down and up. The
+  process that ran `notify` was the TUI, the one carrying the shim's `-c` flags.
+- Without the shim the risk was real: a run with no flags used the server, and `notify` ran there with no token. A run
+  with one unrelated `-c` stayed in-process, with the token. So the shim needs no `--no-daemon`. This wasn't repeated
+  against the server already running under the real `~/.codex`, because that needs a trusted folder there.
+- The user's `notify`, with a space in its path, ran once per report with `turn-ended` and the JSON unchanged, and saw
+  none of the session's variables.
+- `~/.codex/config.toml` and `auth.json` were byte-identical after all runs.
+- An approval prompt (a read-only sandbox, asked to `touch` a file) put one BEL on the terminal, and
+  `OSC 7501;state=blocked:app=codex:kind=permission`. Replayed through `TerminalCore` that raised attention, and
+  `deriveAgentState` gave `waiting`/`attention`, also with a `finished` hook already there. A plain turn rang no bell.
+- No OSC 9;4, other OSC 9 or OSC 777 in any run. Each run had `OSC 0` titles, a `10;?`/`11;?` colour query and
+  `OSC 7501;state=working|idle|done:app=codex`.
+- Every `notify` was `agent-turn-complete`. The first prompt gave two, one for the title turn. During the approval
+  prompt the title turn's report arrived while the real turn was blocked.
+- A project's `notify` is not honoured: with a trusted project's `.codex/config.toml` naming another program and
+  `--no-daemon`, the `CODEX_HOME` one ran and the project's didn't. Whether the project file was loaded at all wasn't
+  checked, so the shim's project check stays, as it can only cost tracking.
 
 ## Build order
 
