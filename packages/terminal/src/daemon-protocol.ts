@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { z } from 'zod'
+import { trackedKinds } from './agents'
 
 /**
  * The terminal daemon wire version: JSON control messages and raw binary frames
@@ -39,7 +40,7 @@ export const daemonStatus = z.object({
   /** The last hook event of the current agent run. Absent from daemons started by an older build. */
   agentHook: z
     .object({
-      agent: z.enum(['claude', 'codex']),
+      agent: z.enum(trackedKinds()),
       state: z.enum(['working', 'waiting', 'idle']),
       reason: z.enum(['started', 'prompt', 'tool', 'permission', 'question', 'finished']),
       at: z.number(),

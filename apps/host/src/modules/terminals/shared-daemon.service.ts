@@ -2,14 +2,13 @@ import { spawn } from 'node:child_process'
 import { closeSync, openSync } from 'node:fs'
 import { createConnection } from 'node:net'
 import { join } from 'node:path'
-import { type AgentTracking, daemonBuild, type daemonStatus, shellEnv } from '@orch/terminal'
+import { type AgentTracking, daemonBuild, type daemonStatus, shellEnv, trackingForAll } from '@orch/terminal'
 import type { z } from 'zod'
 import type { DaemonRepository } from './daemon.repository'
 
 /** Which agents new terminals track. Only the development flag turns this on until the trust prompt exists. */
 export function agentTrackingFrom(env: Record<string, string | undefined>): AgentTracking {
-  const on = env.ORCH_AGENT_HOOKS === '1'
-  return { claude: on, codex: on }
+  return trackingForAll(env.ORCH_AGENT_HOOKS === '1')
 }
 
 /**
@@ -29,7 +28,7 @@ export class SharedDaemon {
     private readonly command: string[],
     private readonly shell: string,
     /** Sent to the daemon with every terminal. */
-    readonly tracking: AgentTracking = { claude: false, codex: false },
+    readonly tracking: AgentTracking = trackingForAll(false),
   ) {
     this.build = daemonBuild(command[command.length - 1])
   }

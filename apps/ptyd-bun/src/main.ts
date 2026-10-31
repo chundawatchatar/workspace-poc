@@ -15,6 +15,7 @@ import {
   prepareAgentShim,
   shellProgram,
   TerminalCore,
+  trackingForAll,
 } from '@orch/terminal'
 import { z } from 'zod'
 
@@ -79,8 +80,8 @@ const request = z.discriminatedUnion('type', [
   z.object({ type: z.literal('redraw') }),
   /** The shell is back at its prompt, so progress its last program left behind is cleared. */
   z.object({ type: z.literal('idle') }),
-  /** Which agents this session may track. Turning both off ends its token at once. */
-  z.object({ type: z.literal('tracking'), claude: z.boolean(), codex: z.boolean() }),
+  /** Which agents this session may track. Turning all of them off ends its token at once. */
+  z.object({ type: z.literal('tracking'), ...agentTracking.shape }),
   /** The agent run ended (process inspection saw it leave), so its hook state is dropped. */
   z.object({ type: z.literal('agentExited') }),
   /** Ends every session and the daemon. Sent by `terminals:stop`, never by a running host. */
@@ -240,7 +241,7 @@ function ensureSession(
     return existing
   }
   // The core starts its shell while it is constructed, so the session's token must be ready to issue before that.
-  agents.setTracking(id, tracking ?? { claude: false, codex: false })
+  agents.setTracking(id, tracking ?? trackingForAll(false))
   // The core's callbacks close over `entry`, so fill it in after construction.
   const entry = { id, token, core: undefined as unknown as TerminalCore, peers: new Set<Peer>() }
   entry.core = new TerminalCore(
@@ -371,7 +372,7 @@ function handle(peer: Peer, value: unknown) {
       entry.core.idle()
       break
     case 'tracking':
-      agents.setTracking(entry.id, { claude: message.claude, codex: message.codex })
+      agents.setTracking(entry.id, agentTracking.parse(message))
       break
     case 'agentExited':
       agents.agentExited(entry.id)
