@@ -1,5 +1,6 @@
 import type { AgentReason, AgentState, AgentStateName, SessionInfo } from '@orch/shared'
 import type { z } from 'zod'
+import { AGENTS, type AgentAdapter } from './agents'
 import type { daemonStatus } from './daemon-protocol'
 
 /** How long after `progress` ends with no hook event a hook's `working` gives way to `idle` / `interrupted`. */
@@ -32,13 +33,12 @@ function baseline({ progress, attention }: AgentSignals): Derived {
 }
 
 /** Applies "Which source wins" in `docs/agents.md`. */
-function combine(signals: AgentSignals, now: number): Derived {
+function combine(signals: AgentSignals, now: number, agents: readonly AgentAdapter[]): Derived {
   const base = baseline(signals)
   const hook = signals.agentHook
   if (!hook || hook.agent !== signals.agent?.kind) return base
   const fromHook: Derived = { state: hook.state, reason: hook.reason, source: 'hooks' }
-  // Codex's `notify` only knows a turn ended, so the baseline says what happens during one.
-  if (hook.agent === 'codex') {
+  if (agents.find((agent) => agent.kind === hook.agent)?.tracking?.turnEndOnly) {
     const finished = hook.state === 'idle' && hook.reason === 'finished'
     return !finished || base.state !== 'idle' ? base : fromHook
   }
@@ -54,8 +54,13 @@ function combine(signals: AgentSignals, now: number): Derived {
  * What the agent in the foreground is doing. `since` carries over from
  * `previous` while the state name stays the same, so a reason change keeps it.
  */
-export function deriveAgentState(signals: AgentSignals, previous: AgentState | null, now: number): AgentState | null {
+export function deriveAgentState(
+  signals: AgentSignals,
+  previous: AgentState | null,
+  now: number,
+  agents: readonly AgentAdapter[] = AGENTS,
+): AgentState | null {
   if (!signals.agent || signals.interrupted || !signals.alive) return null
-  const derived = combine(signals, now)
+  const derived = combine(signals, now, agents)
   return { ...derived, since: previous?.state === derived.state ? previous.since : now }
 }

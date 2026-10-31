@@ -2,6 +2,9 @@ import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, s
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import type { AgentKind, AgentRef, ProcessInfo } from '@orch/shared'
+import { claudeTracking } from './agent-shim-claude'
+import { codexTracking } from './agent-shim-codex'
+import type { AgentTracker } from './agent-tracker'
 
 /** What an adapter needs to know about a running agent to find its conversation. */
 export interface AgentProcess {
@@ -35,6 +38,8 @@ export interface AgentAdapter {
    * had not started one yet, so it starts fresh; the others continue their latest conversation in the cwd.
    */
   resumeCommand(sessionId: string | null): string
+  /** How to attach to the agent's own events. Without it, only the terminal's signals say what it is doing. */
+  tracking?: AgentTracker
 }
 
 /** Session ids are typed into a shell, so anything beyond these characters is refused. */
@@ -120,7 +125,7 @@ function recentDays(): string[] {
   return days
 }
 
-const claude: AgentAdapter = {
+const claude = {
   kind: 'claude',
   exact: true,
   matches: (name) => name === 'claude',
@@ -138,9 +143,10 @@ const claude: AgentAdapter = {
     }
   },
   resumeCommand: (id) => (id ? `claude --resume ${id}` : 'claude'),
-}
+  tracking: claudeTracking,
+} satisfies AgentAdapter
 
-const codex: AgentAdapter = {
+const codex = {
   kind: 'codex',
   exact: false,
   matches: (name) => name === 'codex',
@@ -158,29 +164,30 @@ const codex: AgentAdapter = {
     return undefined
   },
   resumeCommand: (id) => (id ? `codex resume ${id}` : 'codex'),
-}
+  tracking: codexTracking,
+} satisfies AgentAdapter
 
 // OpenCode keeps conversations in a SQLite database, so only an id on the command line is read.
-const opencode: AgentAdapter = {
+const opencode = {
   kind: 'opencode',
   exact: false,
   matches: (name) => name === 'opencode',
   idFromArgs: (argv) => flagValue(argv, ['--session', '-s']),
   findSessionId: () => undefined,
   resumeCommand: (id) => (id ? `opencode --session ${id}` : 'opencode --continue'),
-}
+} satisfies AgentAdapter
 
 // Cursor's chat store is undocumented and changes between releases, so only an id on the command line is read.
-const cursor: AgentAdapter = {
+const cursor = {
   kind: 'cursor',
   exact: false,
   matches: (name, command) => name === 'cursor-agent' || (name === 'agent' && command.includes('cursor')),
   idFromArgs: (argv) => flagValue(argv, ['--resume']),
   findSessionId: () => undefined,
   resumeCommand: (id) => (id ? `cursor-agent --resume ${id}` : 'cursor-agent resume'),
-}
+} satisfies AgentAdapter
 
-const pi: AgentAdapter = {
+const pi = {
   kind: 'pi',
   exact: false,
   matches: (name) => name === 'pi',
@@ -192,9 +199,9 @@ const pi: AgentAdapter = {
     return (file && basename(file, '.jsonl').split('_').pop()) || undefined
   },
   resumeCommand: (id) => (id ? `pi --session ${id}` : 'pi'),
-}
+} satisfies AgentAdapter
 
-const commandcode: AgentAdapter = {
+const commandcode = {
   kind: 'commandcode',
   exact: false,
   matches: (name) => name === 'cmd' || name === 'commandcode',
@@ -219,9 +226,19 @@ const commandcode: AgentAdapter = {
     return undefined
   },
   resumeCommand: (id) => (id ? `cmd --session ${id}` : 'cmd'),
-}
+} satisfies AgentAdapter
 
-export const AGENTS: readonly AgentAdapter[] = [claude, codex, opencode, cursor, pi, commandcode]
+export const AGENTS = [claude, codex, opencode, cursor, pi, commandcode] as const satisfies readonly AgentAdapter[]
+
+type TrackedAgent = Extract<(typeof AGENTS)[number], { tracking: AgentTracker }>
+
+/** The kinds that have `tracking`. Exact, so anything keyed by it fails to compile when it misses one. */
+export type TrackedAgentKind = TrackedAgent['kind']
+
+/** The kinds in `agents` that have `tracking`, in list order. */
+export function trackedKinds(agents: readonly AgentAdapter[] = AGENTS): TrackedAgentKind[] {
+  return agents.filter((agent): agent is TrackedAgent => agent.tracking !== undefined).map((agent) => agent.kind)
+}
 
 export function agentAdapter(kind: AgentKind): AgentAdapter | undefined {
   return AGENTS.find((agent) => agent.kind === kind)

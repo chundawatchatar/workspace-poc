@@ -2,24 +2,37 @@ import { randomBytes } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
 import type { AgentHook } from './agent-state'
+import { AGENTS, type AgentAdapter, type TrackedAgentKind, trackedKinds } from './agents'
 
-/** The one event a hook can report. It has no field that could carry a prompt, a tool or a path. */
-export const agentEvent = z.strictObject({
-  agent: z.enum(['claude', 'codex']),
-  state: z.enum(['working', 'waiting', 'idle']),
-  reason: z.enum(['started', 'prompt', 'tool', 'permission', 'question', 'finished', 'exited']),
-})
+/** The one event a hook of `agents` can report. It has no field that could carry a prompt, a tool or a path. */
+export function agentEventFor(agents: readonly AgentAdapter[]) {
+  return z.strictObject({
+    agent: z.enum(trackedKinds(agents)),
+    state: z.enum(['working', 'waiting', 'idle']),
+    reason: z.enum(['started', 'prompt', 'tool', 'permission', 'question', 'finished', 'exited']),
+  })
+}
+export const agentEvent = agentEventFor(AGENTS)
 export type AgentEvent = z.infer<typeof agentEvent>
 
+const trackingFlags = Object.fromEntries(trackedKinds().map((kind) => [kind, z.boolean()]))
+
 /** Which agents a session may report for. */
-export const agentTracking = z.object({ claude: z.boolean(), codex: z.boolean() })
+export const agentTracking = z.object(trackingFlags as Record<TrackedAgentKind, z.ZodBoolean>)
 export type AgentTracking = z.infer<typeof agentTracking>
+
+/** The same answer for every tracked agent. */
+export function trackingForAll(on: boolean): AgentTracking {
+  return Object.fromEntries(trackedKinds().map((kind) => [kind, on])) as AgentTracking
+}
+
+const anyTracked = (tracking: AgentTracking) => Object.values(tracking).some(Boolean)
 
 /** What a shell needs to report for its session. Only that shell's environment ever holds it. */
 export interface AgentShellEnv {
   token: string
   socket: string
-  /** The folder of `claude` and `orch-agent-hook`, put first on `PATH`. Null means it couldn't be written. */
+  /** The folder of the agents' shims and `orch-agent-hook`, put first on `PATH`. Null means it couldn't be written. */
   shimDir: string | null
 }
 
@@ -119,13 +132,16 @@ export class AgentChannel {
   /** The bound socket; null until `open`, and no tokens are issued without it. */
   private socket: string | null = null
   private shimDir: string | null = null
+  private readonly events: ReturnType<typeof agentEventFor>
 
   constructor(
     /** Called after a session's hook state changes. */
     private readonly onChange: (id: string) => void,
     private readonly log: (message: string) => void = console.warn,
     private readonly now: () => number = Date.now,
+    private readonly agents: readonly AgentAdapter[] = AGENTS,
   ) {
+    this.events = agentEventFor(agents)
     this.shared = new Bucket(SHARED_BURST, SHARED_REFILL_PER_SECOND, now())
     this.loggedAt = now()
   }
@@ -142,7 +158,7 @@ export class AgentChannel {
   }
 
   /**
-   * Sets which agents a session tracks, creating its state on first use. Both
+   * Sets which agents a session tracks, creating its state on first use. All
    * false forgets the token and the hook state at once. Turning tracking on
    * gives a running shell no token; only its next start does.
    */
@@ -160,7 +176,7 @@ export class AgentChannel {
       return
     }
     session.tracking = tracking
-    if (!tracking.claude && !tracking.codex) {
+    if (!anyTracked(tracking)) {
       this.forget(id, session)
       return
     }
@@ -174,7 +190,7 @@ export class AgentChannel {
     if (!session) return null
     this.forget(id, session)
     const { socket } = this
-    if (!socket || (!session.tracking.claude && !session.tracking.codex)) return null
+    if (!socket || !anyTracked(session.tracking)) return null
     const token = randomBytes(32).toString('hex')
     session.token = token
     this.tokens.set(token, id)
@@ -227,12 +243,12 @@ export class AgentChannel {
     const caller = this.lookup(token)
     if (!caller) return failure(401, 'unauthorized')
     if (route === 'GET /v1/session') {
-      const { claude, codex } = caller.session.tracking
-      return Response.json({ claude, codex })
+      const { tracking } = caller.session
+      return Response.json(Object.fromEntries(trackedKinds(this.agents).map((kind) => [kind, tracking[kind]])))
     }
     const body = await readBody(request).catch(() => null)
     if (!body) return failure(413, 'too_large')
-    const parsed = agentEvent.safeParse(parseJson(body))
+    const parsed = this.events.safeParse(parseJson(body))
     // The token may have been forgotten while the body was arriving.
     const owner = this.lookup(token)
     if (!owner) return failure(401, 'unauthorized')
