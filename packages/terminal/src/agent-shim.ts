@@ -204,11 +204,16 @@ trim() {
 }
 
 # Whether a config is a plain file, and small enough with those before it to read before the agent starts.
+# It counts by reading no more than the limit, since a proc file reports size 0 and can be endless. A
+# pipeline only gives \`wc\`'s status, so \`head\` reports its own on fd 3, and a failed read isn't an empty file.
+# Nothing through a link is refused too: \`/proc/self\` files opened before \`exec\` read as empty, then fail \`read\`.
 readable() {
   [ -f "$1" ] && [ -r "$1" ] || return 1
-  size=$(wc -c <"$1" 2>/dev/null) || return 1
-  trim "$size"
+  counted=$({ { head -c ${CODEX_CONFIG_LIMIT + 1} <"$1" 2>/dev/null; echo "read=$?" >&3; } | wc -c 2>/dev/null; } 3>&1) || return 1
+  case $counted in *read=0*) ;; *) return 1 ;; esac
+  trim "\${counted%%read=0*}\${counted#*read=0}"
   [ "$trimmed" -le ${CODEX_CONFIG_LIMIT} ] 2>/dev/null || return 1
+  if [ "$trimmed" -eq 0 ] && [ -L "$1" ]; then return 1; fi
   total=$((total + trimmed))
   [ "$total" -le ${CODEX_CONFIG_LIMIT} ]
 }

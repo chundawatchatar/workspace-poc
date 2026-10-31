@@ -399,6 +399,36 @@ describe('codex shim', () => {
     expect(received()).toContain(notifyValue())
   })
 
+  test('never takes a failed read for an empty config', async () => {
+    serve()
+    mkdirSync(join(project, '.codex'))
+    writeFileSync(join(project, '.codex', 'config.toml'), 'x = 1\n')
+    await expectAttached(['x'])
+
+    // Empty is fine as a plain file, but through a link it can be a proc file that only looks empty.
+    writeFileSync(join(project, '.codex', 'config.toml'), '')
+    await expectAttached(['x'])
+    rmSync(join(project, '.codex', 'config.toml'))
+    writeFileSync(join(root, 'empty'), '')
+    symlinkSync(join(root, 'empty'), join(project, '.codex', 'config.toml'))
+    await expectPassThrough(['x'])
+
+    rmSync(join(project, '.codex', 'config.toml'))
+    writeFileSync(join(project, '.codex', 'config.toml'), 'x = 1\n')
+    program(join(fakes, 'head'), 'exit 1')
+    await expectPassThrough(['x'])
+  })
+
+  // Only Linux has it: a regular file reporting size 0, far larger than anything worth reading.
+  test.skipIf(!existsSync('/proc/self/pagemap'))('does not read a proc file to its end', async () => {
+    serve()
+    mkdirSync(join(project, '.codex'))
+    symlinkSync('/proc/self/pagemap', join(project, '.codex', 'config.toml'))
+    const started = Date.now()
+    await expectPassThrough(['x'])
+    expect(Date.now() - started).toBeLessThan(1500)
+  })
+
   test('passes through when the runtime path can not go into the value', async () => {
     serve()
     for (const name of ['with"quote', 'with\\slash']) {
