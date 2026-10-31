@@ -4,6 +4,7 @@ import type { AgentRef, SessionInfo, TermColors, TermServerMsg } from '@orch/sha
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { Terminal } from '@xterm/headless'
 import type { AgentShellEnv } from './agent-channel'
+import { isShimFolder, zshWrapperFor } from './agent-shim'
 import type { Foreground } from './processes'
 
 /** One attached browser terminal. Output is held back until its snapshot is sent. */
@@ -102,11 +103,14 @@ const KEPT_ENV = new Set([
  * The environment a new shell starts with. It leaves out whatever the host was
  * launched from (a package script, an agent session, an editor terminal), so
  * agents run in it behave as in the user's own terminal and inherit no tokens.
- * `agent` is this shell's own reporting token and socket, when it has them.
+ * `agent` is this shell's own reporting token, socket and shim folder, when it
+ * has them. A shim folder inherited from a product terminal is always dropped.
+ * `shell` is the program being started, which decides the zsh wrapper.
  */
 export function shellEnv(
   env: Record<string, string | undefined>,
   agent?: AgentShellEnv | null,
+  shell: string = shellProgram(env),
 ): Record<string, string> {
   const kept: Record<string, string> = {}
   for (const [key, value] of Object.entries(env)) {
@@ -115,13 +119,15 @@ export function shellEnv(
   // `bun run` puts package binaries and its own `node` shim first.
   const path = (env.PATH ?? '')
     .split(':')
-    .filter((dir) => dir && !dir.includes('/node_modules/.bin') && !dir.includes('/bun-node-'))
-    .join(':')
-  if (path) kept.PATH = path
+    .filter((dir) => dir && !dir.includes('/node_modules/.bin') && !dir.includes('/bun-node-') && !isShimFolder(dir))
+  if (agent?.shimDir) path.unshift(agent.shimDir)
+  if (path.length > 0) kept.PATH = path.join(':')
   if (agent) {
     kept.ORCH_AGENT_TOKEN = agent.token
     kept.ORCH_AGENT_SOCKET = agent.socket
   }
+  const wrapper = agent?.shimDir ? zshWrapperFor(shell, agent.shimDir) : null
+  if (wrapper) kept.ZDOTDIR = wrapper
   return { ...kept, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'workspace-poc' }
 }
 
@@ -416,7 +422,7 @@ export class TerminalCore {
   private spawn() {
     const proc = Bun.spawn([this.shell, '-l'], {
       cwd: usableCwd(this.cwd),
-      env: shellEnv(process.env, this.reporting?.issue()),
+      env: shellEnv(process.env, this.reporting?.issue(), this.shell),
       terminal: {
         cols: this.cols,
         rows: this.rows,

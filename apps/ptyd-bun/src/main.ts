@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { chmodSync, existsSync, unlinkSync } from 'node:fs'
+import { dirname } from 'node:path'
 import { routes } from '@orch/shared'
 import {
   AgentChannel,
@@ -11,6 +12,7 @@ import {
   daemonBuild,
   encodeControlFrame,
   encodeOutputFrame,
+  prepareAgentShim,
   shellProgram,
   TerminalCore,
 } from '@orch/terminal'
@@ -464,7 +466,7 @@ function bindAgentChannel() {
     } catch {}
     agentServer = Bun.serve({ unix: path, development: false, fetch: (request) => agents.handle(request) })
     chmodSync(path, 0o600)
-    agents.open(path)
+    agents.open(path, prepareAgentShim(dirname(socketPath)))
     setInterval(() => agents.tick(), 100).unref()
   } catch (error) {
     agentServer?.stop(true)

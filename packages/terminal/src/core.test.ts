@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { Terminal } from '@xterm/headless'
+import { writeAgentShim } from './agent-shim'
 import {
   assignResponder,
   deliver,
@@ -93,11 +97,35 @@ describe('shellEnv', () => {
   test('adds only the reporting token it is given, never an inherited one', () => {
     const inherited = { ORCH_AGENT_TOKEN: 'outer', ORCH_AGENT_SOCKET: '/outer/agent.sock', ORCH_AGENT_SHIMMED: '1' }
     expect(Object.keys(shellEnv(inherited)).filter((key) => key.startsWith('ORCH_AGENT'))).toEqual([])
-    expect(shellEnv(inherited, { token: 'own', socket: '/run/agent.sock' })).toMatchObject({
+    const own = { token: 'own', socket: '/run/agent.sock', shimDir: null }
+    expect(shellEnv(inherited, own)).toMatchObject({
       ORCH_AGENT_TOKEN: 'own',
       ORCH_AGENT_SOCKET: '/run/agent.sock',
     })
-    expect(shellEnv(inherited, { token: 'own', socket: '/run/agent.sock' }).ORCH_AGENT_SHIMMED).toBeUndefined()
+    expect(shellEnv(inherited, own).ORCH_AGENT_SHIMMED).toBeUndefined()
+  })
+
+  test('puts the shim folder first only with a token, and never hands on an inherited one', () => {
+    const runtime = mkdtempSync(join(tmpdir(), 'orch-shell-env-'))
+    try {
+      const inherited = writeAgentShim(join(runtime, 'custom place'))
+      const shimDir = writeAgentShim(join(runtime, 'own'))
+      const env = { PATH: `${inherited}:/usr/bin:${inherited}` }
+      const own = { token: 'own', socket: '/run/agent.sock', shimDir }
+
+      expect(shellEnv(env).PATH).toBe('/usr/bin')
+      expect(shellEnv(env, { ...own, shimDir: null }).PATH).toBe('/usr/bin')
+      expect(shellEnv(env, own, '/bin/bash').PATH).toBe(`${shimDir}:/usr/bin`)
+      expect(shellEnv(env, own, '/bin/bash').ZDOTDIR).toBeUndefined()
+      expect(shellEnv(env, undefined, '/bin/zsh').ZDOTDIR).toBeUndefined()
+      expect(shellEnv({ ...env, ZDOTDIR: '/outer' }, own, '/bin/zsh').ZDOTDIR).toBe(join(dirname(shimDir), 'zsh'))
+
+      // zsh would skip the user's startup files if the wrapper folder had been cleaned up.
+      rmSync(join(dirname(shimDir), 'zsh', '.zshrc'))
+      expect(shellEnv(env, own, '/bin/zsh').ZDOTDIR).toBeUndefined()
+    } finally {
+      rmSync(runtime, { recursive: true, force: true })
+    }
   })
 })
 

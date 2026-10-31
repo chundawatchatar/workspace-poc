@@ -1,4 +1,5 @@
 export * from './agent-channel'
+export * from './agent-shim'
 export * from './agent-state'
 export * from './agents'
 export * from './core'
