@@ -76,11 +76,15 @@ second earlier. A `waiting` always replaces a `working`.
 - **Interrupt by the user.** Pressing Esc in Claude Code may end a turn without a `Stop` hook (open question). To keep
   a tab from showing `working` forever: when the hook state is `working`, `progress` was `busy` during the turn and
   goes back to null, and no hook event arrives within 3 seconds, the state becomes `idle` with reason `interrupted`.
-  An agent that never sent progress in the turn is not affected by this rule.
+  An agent that never sent progress in the turn is not affected by this rule. The host records when `progress` left
+  `busy` and passes it to `deriveAgentState`; only a hook event older than that moment counts. A host timer recomputes
+  the state after the 3 seconds, because nothing else would then.
 - **The agent exits.** Process inspection sees the shell back at its prompt, `agent` becomes null, and the state
-  becomes null. The host sends `{ type: 'agentExited' }` to the daemon, which drops the hook state; a late hook event
-  after that has no agent run to apply to and is ignored. A `SessionEnd` hook (reason `exited`) does the same from
-  the agent's side.
+  becomes null. The host sends `{ type: 'agentExited' }` to the daemon, which drops the hook state. The daemon can't
+  see when the next agent starts, so for 1 second after that it ignores events (still answering 204), except reason
+  `started`, which always begins a new run. A `SessionEnd` hook (reason `exited`) drops the hook state from the agent's
+  side. The host inspects every 2 seconds, so if one agent exits and another starts inside that gap, `agentExited`
+  can drop the new agent's `started` event; the tab shows the baseline until its next event.
 - **The host restarts.** The daemon keeps receiving events while the host is down and keeps the hook state in memory.
   On reattach the daemon's status carries it, and the host computes the state again from that status plus its own
   fresh inspection. Nothing about agent state is stored on disk by the host.
@@ -283,8 +287,10 @@ command line, so other sessions can't read it from the process list.
 | `GET /v1/session` | The shim asks whether to add its flags. | `200 { "claude": boolean, "codex": boolean }` |
 | `POST /v1/state` | A hook reports an event. | `204` |
 
-Errors are `400` (bad body), `401` (unknown token), `413` (body over 256 bytes), `429` (rate limited). None carries a
-body beyond `{ "error": "<code>" }`.
+Errors are `400` (bad body, or an `agent` the session doesn't track), `401` (missing or unknown token), `404` (any
+other method or path), `413` (body over 256 bytes, with or without `Content-Length`), `429` (rate limited). They are
+checked in the order 401, 413, 400, 429, so only valid events are kept as the newest dropped one. None carries a body
+beyond `{ "error": "<code>" }`.
 
 ### Payload
 
@@ -384,6 +390,8 @@ The daemon's request schema (`apps/ptyd-bun/src/main.ts`) gains:
 
 ```ts
 // On `hello`: which agents this session may track. Absent means none, so an older host never turns tracking on.
+// On an existing session it acts like a `tracking` request, so a restarted host can turn tracking off, and absent
+// leaves it unchanged. Turning it on gives a running shell no token.
 tracking: z.object({ claude: z.boolean(), codex: z.boolean() }).optional(),
 
 // New requests, bound to the session like the others.
@@ -415,7 +423,7 @@ Files that must change together:
 | Side | Files |
 | --- | --- |
 | Shared | `packages/shared/src/protocol.ts` (`SessionInfo`, `AgentState`), `packages/shared/src/contracts/events.ts` (`agentTracking`) |
-| Terminal package | `packages/terminal/src/daemon-protocol.ts` (`daemonStatus.agentHook`), `packages/terminal/src/core.ts` (`shellEnv`, hook state, attention merge), new `packages/terminal/src/agent-state.ts` and the channel |
+| Terminal package | `packages/terminal/src/daemon-protocol.ts` (`daemonStatus.agentHook`), `packages/terminal/src/core.ts` (`shellEnv`, attention merge), new `packages/terminal/src/agent-state.ts`, and `packages/terminal/src/agent-channel.ts` (tokens, requests, rate limit, hook state), which lives here because `daemonBuild` hashes this folder and only `main.ts` of the daemon |
 | Daemon | `apps/ptyd-bun/src/main.ts` (request schema, `agent.sock`, the shim folder) |
 | Host | `apps/host/src/modules/terminals/daemon-session.service.ts`, `daemon.repository.ts` (the switch in each record), `apps/host/src/modules/events/events.ws.ts` (`agentTracking`) |
 | Web | `packages/terminal-ui` (tab state, sidebar counts, trust notice, switch) |
