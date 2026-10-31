@@ -3,6 +3,7 @@ import { homedir } from 'node:os'
 import type { AgentRef, SessionInfo, TermColors, TermServerMsg } from '@orch/shared'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { Terminal } from '@xterm/headless'
+import type { AgentShellEnv } from './agent-channel'
 import type { Foreground } from './processes'
 
 /** One attached browser terminal. Output is held back until its snapshot is sent. */
@@ -101,8 +102,12 @@ const KEPT_ENV = new Set([
  * The environment a new shell starts with. It leaves out whatever the host was
  * launched from (a package script, an agent session, an editor terminal), so
  * agents run in it behave as in the user's own terminal and inherit no tokens.
+ * `agent` is this shell's own reporting token and socket, when it has them.
  */
-export function shellEnv(env: Record<string, string | undefined>): Record<string, string> {
+export function shellEnv(
+  env: Record<string, string | undefined>,
+  agent?: AgentShellEnv | null,
+): Record<string, string> {
   const kept: Record<string, string> = {}
   for (const [key, value] of Object.entries(env)) {
     if (value !== undefined && (KEPT_ENV.has(key) || key.startsWith('LC_'))) kept[key] = value
@@ -113,8 +118,20 @@ export function shellEnv(env: Record<string, string | undefined>): Record<string
     .filter((dir) => dir && !dir.includes('/node_modules/.bin') && !dir.includes('/bun-node-'))
     .join(':')
   if (path) kept.PATH = path
+  if (agent) {
+    kept.ORCH_AGENT_TOKEN = agent.token
+    kept.ORCH_AGENT_SOCKET = agent.socket
+  }
   return { ...kept, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'workspace-poc' }
 }
+
+/** How a terminal takes part in agent reporting: one token per shell, given up when that shell ends. */
+export interface ShellReporting {
+  /** Asked before every shell start, including a restart with Enter. Null means this shell gets no token. */
+  issue(): AgentShellEnv | null
+  exited(): void
+}
+
 const encoder = new TextEncoder()
 
 /** A client this far behind stops getting output, and is resynced once it drains below `CAUGHT_UP`. */
@@ -300,6 +317,7 @@ export class TerminalCore {
     private readonly onOutput: (data: Uint8Array) => void,
     private readonly onChange: () => void,
     private readonly shell: string = SHELL,
+    private readonly reporting?: ShellReporting,
   ) {
     this.cols = cols
     this.rows = rows
@@ -398,7 +416,7 @@ export class TerminalCore {
   private spawn() {
     const proc = Bun.spawn([this.shell, '-l'], {
       cwd: usableCwd(this.cwd),
-      env: shellEnv(process.env),
+      env: shellEnv(process.env, this.reporting?.issue()),
       terminal: {
         cols: this.cols,
         rows: this.rows,
@@ -412,6 +430,7 @@ export class TerminalCore {
       this.alive = false
       this.proc = null
       this.progress = null
+      this.reporting?.exited()
       this.output(encoder.encode(`\r\n\x1b[2m[process exited with code ${code} — press Enter to restart]\x1b[0m\r\n`))
       this.onChange()
     })

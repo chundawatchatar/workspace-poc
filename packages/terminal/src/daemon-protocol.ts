@@ -36,6 +36,16 @@ export const daemonStatus = z.object({
   build: z.string().optional(),
   /** When the daemon process started, in epoch milliseconds. Absent from daemons started by an older build. */
   startedAt: z.number().int().optional(),
+  /** The last hook event of the current agent run. Absent from daemons started by an older build. */
+  agentHook: z
+    .object({
+      agent: z.enum(['claude', 'codex']),
+      state: z.enum(['working', 'waiting', 'idle']),
+      reason: z.enum(['started', 'prompt', 'tool', 'permission', 'question', 'finished']),
+      at: z.number(),
+    })
+    .nullable()
+    .optional(),
 })
 
 /**

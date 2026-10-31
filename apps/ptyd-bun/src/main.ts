@@ -1,7 +1,11 @@
 import { randomBytes } from 'node:crypto'
-import { existsSync, unlinkSync } from 'node:fs'
+import { chmodSync, existsSync, unlinkSync } from 'node:fs'
 import { routes } from '@orch/shared'
 import {
+  AgentChannel,
+  type AgentTracking,
+  agentSocketPath,
+  agentTracking,
   DAEMON_PROTOCOL,
   DaemonDecoder,
   daemonBuild,
@@ -58,6 +62,8 @@ const request = z.discriminatedUnion('type', [
     create: z.boolean().default(true),
     /** Whether a browser view is attached through this connection; one that is answers terminal queries. */
     viewing: z.boolean().default(false),
+    /** Which agents this session may track. Absent means none, and leaves a session that exists unchanged. */
+    tracking: agentTracking.optional(),
   }),
   z.object({ type: z.literal('input'), data: z.string().max(64 * 1024) }),
   z.object({ type: z.literal('resize'), cols: z.number().int(), rows: z.number().int() }),
@@ -71,6 +77,10 @@ const request = z.discriminatedUnion('type', [
   z.object({ type: z.literal('redraw') }),
   /** The shell is back at its prompt, so progress its last program left behind is cleared. */
   z.object({ type: z.literal('idle') }),
+  /** Which agents this session may track. Turning both off ends its token at once. */
+  z.object({ type: z.literal('tracking'), claude: z.boolean(), codex: z.boolean() }),
+  /** The agent run ended (process inspection saw it leave), so its hook state is dropped. */
+  z.object({ type: z.literal('agentExited') }),
   /** Ends every session and the daemon. Sent by `terminals:stop`, never by a running host. */
   z.object({ type: z.literal('stop') }),
 ])
@@ -108,6 +118,10 @@ interface SessionEntry {
 const MAX_QUEUE = 4 * 1024 * 1024
 const peers = new Map<Bun.Socket<unknown>, Peer>()
 const sessions = new Map<string, SessionEntry>()
+const agents = new AgentChannel((id) => {
+  const entry = sessions.get(id)
+  if (entry) broadcast(entry, statusMessage(entry))
+})
 
 function statusMessage(entry: SessionEntry) {
   const info = entry.core.info()
@@ -132,6 +146,7 @@ function statusMessage(entry: SessionEntry) {
       queries: true,
       build,
       startedAt,
+      agentHook: agents.hook(entry.id),
     },
   }
 }
@@ -208,12 +223,22 @@ function flush(peer: Peer) {
 }
 
 /** Creates the session for an id if needed; an existing one must present the same token. */
-function ensureSession(id: string, token: string, cwd: string, cols: number, rows: number): SessionEntry {
+function ensureSession(
+  id: string,
+  token: string,
+  cwd: string,
+  cols: number,
+  rows: number,
+  tracking: AgentTracking | undefined,
+): SessionEntry {
   const existing = sessions.get(id)
   if (existing) {
     if (existing.token !== token) throw new Error('terminal identity mismatch')
+    if (tracking) agents.setTracking(id, tracking)
     return existing
   }
+  // The core starts its shell while it is constructed, so the session's token must be ready to issue before that.
+  agents.setTracking(id, tracking ?? { claude: false, codex: false })
   // The core's callbacks close over `entry`, so fill it in after construction.
   const entry = { id, token, core: undefined as unknown as TerminalCore, peers: new Set<Peer>() }
   entry.core = new TerminalCore(
@@ -227,6 +252,7 @@ function ensureSession(id: string, token: string, cwd: string, cols: number, row
     },
     () => broadcast(entry, statusMessage(entry)),
     shell,
+    { issue: () => agents.issue(id), exited: () => agents.shellExited(id) },
   )
   sessions.set(id, entry)
   return entry
@@ -235,6 +261,7 @@ function ensureSession(id: string, token: string, cwd: string, cols: number, row
 /** Ends one session, telling the peer that asked so it can remove the record. */
 function closeSession(entry: SessionEntry, ack?: Peer) {
   if (sessions.get(entry.id) === entry) sessions.delete(entry.id)
+  agents.close(entry.id)
   entry.core.kill()
   for (const peer of [...entry.peers]) {
     if (peer === ack) acknowledgeClose(peer)
@@ -281,7 +308,7 @@ function handle(peer: Peer, value: unknown) {
     }
     let entry: SessionEntry
     try {
-      entry = ensureSession(message.id, message.token, message.cwd, message.cols, message.rows)
+      entry = ensureSession(message.id, message.token, message.cwd, message.cols, message.rows, message.tracking)
     } catch {
       drop(peer)
       return
@@ -341,6 +368,12 @@ function handle(peer: Peer, value: unknown) {
     case 'idle':
       entry.core.idle()
       break
+    case 'tracking':
+      agents.setTracking(entry.id, { claude: message.claude, codex: message.codex })
+      break
+    case 'agentExited':
+      agents.agentExited(entry.id)
+      break
     case 'close':
       closeSession(entry, peer)
       break
@@ -348,6 +381,7 @@ function handle(peer: Peer, value: unknown) {
 }
 
 let server: ReturnType<typeof listen> | null = null
+let agentServer: Bun.Server<undefined> | null = null
 let stopping = false
 
 function listen() {
@@ -418,6 +452,27 @@ async function liveDaemon(): Promise<boolean> {
   }
 }
 
+/**
+ * Binds the reporting channel. Terminals work without it, so a failure only means no shell gets a token. It runs
+ * once `host.sock` is held, so a second daemon that loses that race never touches the live channel's socket.
+ */
+function bindAgentChannel() {
+  const path = agentSocketPath(socketPath)
+  try {
+    try {
+      unlinkSync(path)
+    } catch {}
+    agentServer = Bun.serve({ unix: path, development: false, fetch: (request) => agents.handle(request) })
+    chmodSync(path, 0o600)
+    agents.open(path)
+    setInterval(() => agents.tick(), 100).unref()
+  } catch (error) {
+    agentServer?.stop(true)
+    agentServer = null
+    console.error('ptyd-bun: the agent channel is off', error instanceof Error ? error.message : 'unknown error')
+  }
+}
+
 async function start() {
   try {
     server = listen()
@@ -431,6 +486,7 @@ async function start() {
     } catch {}
     server = listen()
   }
+  bindAgentChannel()
 }
 
 function shutdown(code: number) {
@@ -444,9 +500,12 @@ function shutdown(code: number) {
   }
   peers.clear()
   server?.stop(true)
-  try {
-    unlinkSync(socketPath)
-  } catch {}
+  agentServer?.stop(true)
+  for (const path of agentServer ? [socketPath, agentSocketPath(socketPath)] : [socketPath]) {
+    try {
+      unlinkSync(path)
+    } catch {}
+  }
   process.exit(code)
 }
 

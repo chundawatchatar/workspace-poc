@@ -33,6 +33,22 @@ test('refuses a credentials directory accessible to other users', () => {
   expect(() => new DaemonRepository(root)).toThrow('must be private')
 })
 
+test('refuses a runtime folder too long for the reporting socket, which is one byte longer than the host socket', () => {
+  const root = mkdtempSync(join(tmpdir(), 'orch-record-'))
+  roots.push(root)
+  const runtime = join(root, 'r'.repeat(100 - root.length - 'host.sock'.length - 2))
+  roots.push(runtime)
+  const before = process.env.ORCH_PTY_RUNTIME
+  process.env.ORCH_PTY_RUNTIME = runtime
+  try {
+    expect(Buffer.byteLength(join(runtime, 'host.sock'))).toBe(100)
+    expect(() => new DaemonRepository(root)).toThrow('over 100 bytes')
+  } finally {
+    if (before === undefined) delete process.env.ORCH_PTY_RUNTIME
+    else process.env.ORCH_PTY_RUNTIME = before
+  }
+})
+
 test('keeps where a terminal was and the agent it ran, and still reads records from before they existed', () => {
   const root = mkdtempSync(join(tmpdir(), 'orch-record-'))
   roots.push(root)
