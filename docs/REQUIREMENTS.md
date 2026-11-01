@@ -52,7 +52,7 @@ A free developer workspace that runs on the user's own machine or VM and is used
 
 | ID | Requirement | Status |
 | --- | --- | --- |
-| AG-1 | For Claude Code and Codex, each tab shows whether the agent is working, waiting for the user, or idle. | Next |
+| AG-1 | For Claude Code and Codex, each tab shows whether the agent is working, waiting for the user, or idle. Tabs and sidebar rows show it; hook precision needs `ORCH_AGENT_HOOKS=1` on the host until the trust prompt ships, and without it the state comes from terminal signals, which can't tell idle from a turn in progress, so no idle mark shows. | Partly |
 | AG-2 | The sidebar shows, per workspace, how many agents are in each state. | Next |
 | AG-3 | The user is notified when an agent finishes, asks a question, or needs permission. | Next |
 | AG-4 | Agent tracking works without editing the user's own agent settings. Where an agent asks the user to trust the tracking, the product asks once and never bypasses that check. | Next |

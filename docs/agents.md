@@ -22,7 +22,7 @@ An agent's state is one of three, or none:
 | `working` | The agent is running a turn: thinking, writing or running a tool. |
 | `waiting` | The agent stopped for the user: a question, a permission prompt for a tool, or, about a minute after a finished turn, Claude Code's reminder that it is waiting for input. |
 | `idle` | The agent finished its turn, or has not started one, and sits at its own prompt. |
-| none (`null`) | No agent is detected in the foreground, tracking is off for the terminal, the terminal is interrupted or its shell is not alive. The UI shows nothing. |
+| none (`null`) | No agent is detected in the foreground, tracking is off for the terminal, the terminal is interrupted or its shell is not alive. The UI shows no agent state, only the progress a program reports with OSC 9;4. |
 
 Each state comes from one of two sources. Both always exist; the precedence rule below picks one.
 
@@ -48,8 +48,10 @@ The baseline derivation, in order:
 4. `progress` is `error`: `idle`, reason `error`.
 5. Otherwise: `idle`, reason `detected`.
 
-An agent that sends neither progress nor notifications therefore shows `idle` all the time from the baseline. That
-is honest: the product only knows the agent is there.
+An agent that sends neither progress nor notifications therefore derives `idle` all the time from the baseline, even
+mid-turn: the product only knows the agent is there. So the UI shows the `idle` mark only when `source` is `'hooks'`.
+A baseline `idle` shows no agent mark: the tab and sidebar row fall back to their progress and other signals, except
+`progress` `error`, which still shows failed. `working` and `waiting` show from either source.
 
 ### Precise: the agent's own hooks
 
@@ -278,8 +280,8 @@ The shim only works when the shell finds it first under the plain program name. 
 - the agent's version lacks `--settings` or `-c`, or the user's own settings turn hooks off.
 
 The fallback is always the baseline signals. Nothing breaks and nothing is reported as wrong: the tab shows the
-baseline state, whose `source` is `'signals'`. The UI doesn't warn about a missed shim, since many of these cases are
-deliberate. The tab's tooltip names the source ("from terminal signals" or "from Claude Code hooks"), so a user who
+baseline state, whose `source` is `'signals'`, and no mark while that state is `idle`. The UI doesn't warn about a missed shim, since many of these cases are
+deliberate. The tab's tooltip names the source ("terminal signals" or "agent hooks") whenever it shows a state, so a user who
 expects hooks can see they are not active.
 
 The `PATH` order is the one case fixed in the build: the shell itself rewrites it. A login zsh on macOS did not keep a
@@ -676,7 +678,8 @@ Each step is one job and leaves the product working:
 3. **Claude Code hooks.** The shim folder, the `claude` shim, the generated settings, `orch-agent-hook`, the version
    check, and answers to open questions 1 to 4, 6 and 7.
 4. **Codex notify.** The `codex` shim and its `notify` mapping, and an answer to open question 5.
-5. **Tab state.** The tab shows `working`, `waiting` or `idle`, with the reason and source in its tooltip.
+5. **Tab state.** The tab shows `working`, `waiting` or, from hooks only, `idle`, with the reason and source in its
+   tooltip.
 6. **Sidebar counts.** Per-workspace counts per state.
 7. **Notifications.** Hook transitions raise attention in the daemon, with the 2-second merge in `TerminalCore.raise`.
 8. **Off switch and trust prompt.** The per-session switch in the record, the `agentTracking` client message, the
