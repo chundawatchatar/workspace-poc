@@ -18,7 +18,10 @@ describe('agentStatus', () => {
     [agentState('idle', 'error'), 'error', 'failed'],
     [agentState('idle', 'finished'), 'error', 'failed'],
     [agentState('idle', 'finished'), 'busy', 'idle'],
-    [agentState('idle', 'detected'), null, 'idle'],
+    [agentState('idle', 'interrupted'), null, 'idle'],
+    [agentState('idle', 'detected', 'signals'), null, undefined],
+    [agentState('idle', 'detected', 'signals'), 'busy', 'working'],
+    [agentState('idle', 'error', 'signals'), 'error', 'failed'],
     [null, 'busy', 'working'],
     [undefined, 'error', 'failed'],
     [null, null, undefined],
@@ -56,9 +59,9 @@ describe('agentStatus', () => {
       label: 'Codex waiting for you',
       tooltip: 'Codex waiting for you: asked for attention (terminal signals)',
     })
-    expect(status(agentState('idle', 'detected', 'signals'))).toMatchObject({
+    expect(status(agentState('idle', 'detected'))).toMatchObject({
       label: 'Claude Code idle',
-      tooltip: 'Claude Code idle (terminal signals)',
+      tooltip: 'Claude Code idle (agent hooks)',
     })
   })
 })
@@ -78,6 +81,11 @@ describe('sidebarSignal', () => {
   const waiting = agentStatus({ agentState: agentState('waiting', 'question'), progress: null, agent: claude })
   const working = agentStatus({ progress: 'busy', agent: null })
   const failed = agentStatus({ progress: 'error', agent: null })
+  const signalIdle = agentStatus({
+    agentState: agentState('idle', 'detected', 'signals'),
+    progress: null,
+    agent: claude,
+  })
 
   const rows: [string, Parameters<typeof sidebarSignal>[0], Parameters<typeof sidebarSignal>[1], SidebarSignal][] = [
     ['working beats attention', { ...session, attention }, working, 'status'],
@@ -85,6 +93,7 @@ describe('sidebarSignal', () => {
     ['failed beats attention', { ...session, attention }, failed, 'status'],
     ['attention beats an idle agent', { ...session, attention, process }, idle, 'attention'],
     ['an idle agent beats the running dot', { ...session, process }, idle, 'status'],
+    ['an idle state from signals keeps the running dot', { ...session, process }, signalIdle, 'running'],
     ['interrupted beats running', { ...session, interrupted, process }, null, 'interrupted'],
     ['running', { ...session, process }, null, 'running'],
     ['exited', { ...session, alive: false }, null, 'exited'],

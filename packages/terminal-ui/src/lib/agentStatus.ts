@@ -46,7 +46,8 @@ function statusKind(session: AgentStatusSource): AgentStatusKind | null {
   if (state === 'working' || state === 'waiting') return state
   // Hooks can replace the reason with `finished` while the program still reports the error, so this reads `progress`.
   if (session.progress === 'error') return 'failed'
-  if (state === 'idle') return 'idle'
+  // Terminal signals report `idle` for any agent that sends none, even mid-turn, so only hooks can show it.
+  if (state === 'idle' && session.agentState?.source === 'hooks') return 'idle'
   return session.progress === 'busy' ? 'working' : null
 }
 

@@ -1,10 +1,10 @@
-import { CircleAlert, Hand, LoaderCircle, type LucideIcon, Moon } from '@orch/ui/icons'
+import { CircleAlert, Hand, LoaderCircle, type LucideIcon, Pause } from '@orch/ui/icons'
 import type { AgentStatus, AgentStatusKind } from '../lib/agentStatus'
 
 const MARKS: Record<AgentStatusKind, { Icon: LucideIcon; colour: string }> = {
   working: { Icon: LoaderCircle, colour: '' },
   waiting: { Icon: Hand, colour: 'text-warn' },
-  idle: { Icon: Moon, colour: 'text-faint' },
+  idle: { Icon: Pause, colour: 'text-faint' },
   failed: { Icon: CircleAlert, colour: 'text-bad' },
 }
 

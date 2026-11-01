@@ -24,7 +24,7 @@ test('each kind has its own shape, role and accessible name', () => {
   expect(marks[0]).toContain('animate-spin')
   expect(marks[1]).toContain('lucide-hand')
   expect(marks[1]).toContain('text-warn')
-  expect(marks[2]).toContain('lucide-moon')
+  expect(marks[2]).toContain('lucide-pause')
   expect(marks[2]).toContain('text-faint')
   expect(marks[3]).toContain('lucide-circle-alert')
   expect(marks[3]).toContain('text-bad')
