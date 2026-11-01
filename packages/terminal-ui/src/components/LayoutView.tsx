@@ -2,7 +2,6 @@ import {
   AGENT_LABELS,
   type LayoutNode,
   type PaneNode,
-  type SessionInfo,
   type SplitNode,
   type Surface,
   type SurfaceKind,
@@ -10,12 +9,10 @@ import {
 } from '@orch/shared'
 import { TerminalInterrupted } from '@orch/ui'
 import {
-  CircleAlert,
   Columns2,
   Copy,
   GitPullRequest,
   KanbanSquare,
-  LoaderCircle,
   Maximize2,
   Minimize2,
   Plus,
@@ -25,6 +22,7 @@ import {
 } from '@orch/ui/icons'
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { type AgentStatus, agentStatus, withStatus } from '../lib/agentStatus'
 import {
   addSurface,
   closeSurface,
@@ -45,6 +43,7 @@ import {
   useApp,
   zoomedPaneId,
 } from '../lib/store'
+import { AgentStateMark } from './AgentStateMark'
 import { IssuesView, PullsView } from './SampleSurfaces'
 import { pendingAttention } from './Sidebar'
 import { TerminalView } from './TerminalView'
@@ -121,11 +120,9 @@ const KIND_ICON: Record<SurfaceKind, ReactNode> = {
   issues: <KanbanSquare size={13} />,
 }
 
-/** A tab's icon: its kind, or the progress its program reports. */
-export function SurfaceIcon({ kind, progress }: { kind: SurfaceKind; progress?: SessionInfo['progress'] }) {
-  if (progress === 'busy') return <LoaderCircle size={13} className="animate-spin" aria-label="Working" />
-  if (progress === 'error') return <CircleAlert size={13} className="text-bad" aria-label="Failed" />
-  return KIND_ICON[kind]
+/** A tab's icon: the status of its agent or program, or else its kind. */
+export function SurfaceIcon({ kind, status }: { kind: SurfaceKind; status: AgentStatus | null }) {
+  return status ? <AgentStateMark status={status} size={13} /> : KIND_ICON[kind]
 }
 
 function PaneView({ workspace, pane }: { workspace: Workspace; pane: PaneNode }) {
@@ -251,7 +248,7 @@ function PaneView({ workspace, pane }: { workspace: Workspace; pane: PaneNode })
                 surface.kind === 'terminal' ? tidyTitle(sessions[surface.id]?.title ?? surface.title) : surface.title
               }
               attention={Boolean(sessions[surface.id]?.attention)}
-              progress={sessions[surface.id]?.progress}
+              status={agentStatus(sessions[surface.id])}
             />
           ))}
         </div>
@@ -344,11 +341,11 @@ function Tab(props: {
   title: string
   paneFocused: boolean
   attention: boolean
-  progress?: SessionInfo['progress']
+  status: AgentStatus | null
   /** Shows where a dragged tab would be inserted relative to this one. */
   marker?: 'before' | 'after'
 }) {
-  const { workspace, pane, surface, title, paneFocused, attention, progress, marker } = props
+  const { workspace, pane, surface, title, paneFocused, attention, status, marker } = props
   const active = pane.activeSurfaceId === surface.id
   // Where the tab menu was opened; null means it is closed.
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
@@ -371,7 +368,7 @@ function Tab(props: {
         event.preventDefault()
         setMenu({ x: event.clientX, y: event.clientY })
       }}
-      title={title}
+      title={withStatus(title, status)}
       className={`anim-fade group flex max-w-52 min-w-24 cursor-default items-center gap-1.5 border-r border-line px-2.5 text-xs select-none ${
         active ? `bg-panel ${paneFocused ? 'text-ink' : 'text-dim'}` : 'text-faint hover:text-dim'
       } ${
@@ -383,7 +380,7 @@ function Tab(props: {
       }`}
     >
       <span className={active && paneFocused ? 'text-accent' : ''}>
-        <SurfaceIcon kind={surface.kind} progress={progress} />
+        <SurfaceIcon kind={surface.kind} status={status} />
       </span>
       <span className="min-w-0 flex-1 truncate">{title}</span>
       {attention && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />}

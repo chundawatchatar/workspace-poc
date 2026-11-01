@@ -1,10 +1,11 @@
 import { AGENT_LABELS, listPanes, type SessionInfo, type Workspace } from '@orch/shared'
-import { CircleAlert, LoaderCircle } from '@orch/ui/icons'
 import { useEffect, useState } from 'react'
+import { agentStatus, sidebarSignal, withStatus } from '../lib/agentStatus'
 import { revealSurface } from '../lib/commands'
 import { shortPath } from '../lib/paths'
 import { useApp } from '../lib/store'
 import { useGoToWorkspace } from '../navigation'
+import { AgentStateMark } from './AgentStateMark'
 import { tidyTitle } from './LayoutView'
 
 const COLLAPSED_KEY = 'poc-sidebar-collapsed'
@@ -90,7 +91,7 @@ export function SidebarTerminals({ workspace, active }: { workspace: Workspace; 
           <li key={id}>
             <button
               type="button"
-              title={running?.command ?? tidyTitle(session?.title ?? 'Terminal')}
+              title={withStatus(running?.command ?? tidyTitle(session?.title ?? 'Terminal'), agentStatus(session))}
               className={`flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left text-[11px] ${
                 active ? 'hover:bg-on-accent/15' : 'hover:bg-line'
               }`}
@@ -119,14 +120,15 @@ export function SidebarTerminals({ workspace, active }: { workspace: Workspace; 
 }
 
 function StatusMark({ session, active }: { session: SessionInfo | undefined; active: boolean }) {
-  if (session?.progress === 'busy') return <LoaderCircle size={10} className="animate-spin" aria-label="Working" />
-  if (session?.progress === 'error') return <CircleAlert size={10} className="text-bad" aria-label="Failed" />
+  const status = agentStatus(session)
+  const signal = sidebarSignal(session, status)
+  if (status && signal === 'status') return <AgentStateMark status={status} size={10} onAccent={active} />
   const dot = 'h-1.5 w-1.5 rounded-full'
-  if (session?.attention) return <span className={`${dot} ${active ? 'bg-on-accent' : 'bg-accent'}`} />
+  if (signal === 'attention') return <span className={`${dot} ${active ? 'bg-on-accent' : 'bg-accent'}`} />
   // On the selected tile's accent background, an outline keeps the green and red dots visible.
   const outline = active ? 'ring-1 ring-on-accent' : ''
-  if (session?.interrupted) return <span className={`${dot} bg-warn ${outline}`} title="Interrupted" />
-  if (session?.process) return <span className={`${dot} bg-good ${outline}`} />
-  if (session && !session.alive) return <span className={`${dot} ${active ? 'bg-bad' : 'bg-bad/70'} ${outline}`} />
+  if (signal === 'interrupted') return <span className={`${dot} bg-warn ${outline}`} title="Interrupted" />
+  if (signal === 'running') return <span className={`${dot} bg-good ${outline}`} />
+  if (signal === 'exited') return <span className={`${dot} ${active ? 'bg-bad' : 'bg-bad/70'} ${outline}`} />
   return <span className={`${dot} border ${active ? 'border-on-accent/60' : 'border-faint'}`} />
 }
