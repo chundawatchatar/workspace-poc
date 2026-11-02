@@ -14,7 +14,7 @@ every command from it. Outside the worktree, write only `<job folder>/build.md`.
    skills in `.agents/skills/` that apply (`host-feature-module`, `write-tests`, `comment`).
 2. Run `bun install` once in the worktree, so it has its own `node_modules`.
 3. Implement the spec. Add a few behaviour-focused `*.test.ts` tests for the acceptance criteria that can be tested.
-4. Verify in the worktree: `bun run typecheck`, `bun test`, and `bunx biome check --write <changed files>`. Fix what
+4. Verify in the worktree: `bun run typecheck`, `bun run test`, and `bunx biome check --write <changed files>`. Fix what
    fails.
 5. Commit on `factory/<job-id>` only. Use the format in `.agents/skills/commit/SKILL.md`, one logical change per commit.
    Never switch branches, merge, push, or touch `main`.

@@ -15,7 +15,7 @@ Write `<round folder>/review-code.md` and nothing else. Don't edit code, and don
 
 ## Check
 
-1. Run these in the worktree: `bun run typecheck`, `bun test`, and `bunx biome check <changed files>`. A failure is
+1. Run these in the worktree: `bun run typecheck`, `bun run test`, and `bunx biome check <changed files>`. A failure is
    CHANGES.
 2. Every acceptance criterion is met, and the evidence in build.md is real: the tests exist, run, and assert the
    behaviour.
