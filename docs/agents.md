@@ -309,17 +309,37 @@ user declines, the agent runs without the hooks and the tab falls back to the ba
 
 **The product's question.** Before the shim adds anything for an agent kind, the product asks the user once, in the
 web UI: "Track Claude Code's status with hooks? This adds hooks to Claude Code sessions started in this app, for
-those sessions only. Your settings are not changed." with **Track** and
-**Not now**. It is shown the first time that agent is detected in a terminal, as a dismissible notice on the tab, not
-a modal. Codex gets the same question with its own wording.
+those sessions only. Your settings are not changed." with **Track** and **Not now**. The notice goes on to say that
+it applies to agents started after the answer, and that a terminal already open gets it once its shell starts again
+or in a new tab (see the gap below). It is a strip across the top of the terminal pane (`TrustNotice` in
+`packages/terminal-ui`), not a modal, so the agent's own prompts below it stay usable. Codex gets the same question
+with its own name.
 
+- It shows on every terminal whose `SessionInfo.agent.kind` is `claude` or `codex` while that kind's answer is null,
+  and never for other agents or an answered kind. It has no separate dismiss: closing it means answering.
 - The answer is remembered per machine and per agent kind in the host's data folder, in
-  `apps/host/.data/agent-tracking.json`: `{ "claude": "on" | "off", "codex": "on" | "off" }`. A missing entry means
-  not asked yet, which behaves as off. The file holds no tokens.
-- **Not now** stores `off`; the question is not shown again. Both answers can be changed later in the host's
-  settings (and the command palette).
-- The host passes the answer to the daemon with every terminal (see [Protocol change](#protocol-change)). Until the
-  answer is `on`, the shim adds no flags for that agent; the baseline still works.
+  `apps/host/.data/agent-tracking.json` (`0600`, written aside and renamed): `{ "claude": "on" | "off", "codex":
+  "on" | "off" }`. A missing entry means not asked yet, which behaves as off; a missing or damaged file reads as all
+  unasked. The file holds no tokens. The `agent-tracking` host module owns it.
+- The web reads and changes the answers through `routes.agentTracking`: `status` (GET, `{ claude, codex }` with null
+  for not asked) and `update` (POST `{ agent, answer }`, strict, so an unknown agent or an extra field gets 400).
+  `update` is a POST, not a PUT, because host contracts are GET or POST only and state changes use POST. Remote
+  clients may answer too, like `ack`; they only ever see the answers.
+- **Not now** stores `off`; the question is not shown again. Both answers can be changed later from the command
+  palette ("Track Claude Code with hooks", "Stop tracking Claude Code with hooks", and the same for Codex). There is
+  no host settings page for them yet.
+- The host passes the answers to the daemon with every terminal (see [Protocol change](#protocol-change)), and sends
+  every open terminal a new `tracking` request whenever an answer changes. Until the answer is `on`, the shim adds no
+  flags for that agent; the baseline still works.
+- The development flag `ORCH_AGENT_HOOKS` that turned hooks on before this prompt existed is gone. Developers get
+  hooks by answering Track once.
+
+**Known gap: a running shell gets no token.** The daemon issues a shell its token only when some kind is tracked at
+the shell's start, and turning tracking on never gives a running shell one. So the terminal where the user first
+answers Track, any shell started while every answer was off or unasked, and any shell started with its switch off get
+hooks only after the shell starts again (exit and press Enter) or in a new tab. The notice and the switch's tooltip
+say so. Open question: issue a token whenever the switch is on and let `GET /v1/session` gate per kind, which needs a
+daemon change and a daemon restart.
 
 ## Local reporting channel
 
@@ -528,9 +548,13 @@ new fields. The daemon side may land first, since a host that never sends `track
 ## Turning tracking off for one session (AG-5)
 
 - **Where the switch lives.** In the terminal's record in the host's data folder (`.data/terminal-daemons/`, next to
-  `cwd` and `agent`), as `agentTracking: false`; absent means on. It persists across host and daemon restarts, and
-  it is removed with the terminal. The UI shows it in the tab's context menu and the command palette ("Stop tracking
-  the agent in this terminal"), and reflects it from `SessionInfo.agentTracking`.
+  `cwd` and `agent`), as `agentTracking: false`; absent means on. It persists across host and daemon restarts (the
+  host reads it before `hello`), and it is removed with the terminal. The UI shows it in the terminal tab's context
+  menu ("Stop tracking the agent" / "Track the agent again") and in the command palette for the focused terminal
+  ("Stop tracking the agent in this terminal" / "Track the agent in this terminal again"), and reflects it from
+  `SessionInfo.agentTracking`. The `agentTracking` client message reaches `DaemonSession.setAgentTracking` through
+  the events socket; the method is on the host's own session class, not on `TerminalSession`, so the daemon's build
+  does not change. The switch applies to both agent kinds.
 - **What off disables.** The daemon issues no token to a shell started with tracking off, so its shims add no flags
   and its hooks have nothing to send with. `agentState` is null, so the tab shows nothing, the session leaves the
   sidebar counts, and hook transitions raise no attention. The existing bell and notification attention (NOTE-1 to
@@ -569,8 +593,8 @@ Notifications reuse the existing attention path: an unseen `attention` gives the
 the workspace its count and message in the sidebar (NOTE-1), it is listed with the others (NOTE-2), and looking at
 the terminal clears it with `ack` (NOTE-3). Nothing new is added on the web side.
 
-Notifications follow hook state, so they need hook tracking (`ORCH_AGENT_HOOKS=1` on the host until the trust
-prompt ships, and the session's switch on). Without it nothing new happens: the bell or OSC 9 attention that already
+Notifications follow hook state, so they need hook tracking (the user answered Track for that agent, and the
+session's switch is on). Without it nothing new happens: the bell or OSC 9 attention that already
 exists is the notification.
 
 `AgentChannel` decides, for each hook event it accepts and applies, whether it is a notifying transition, comparing it
@@ -731,8 +755,8 @@ Each step is one job and leaves the product working:
    baseline signals only, computed by the host. Host and web change together; the UI shows nothing yet.
 2. **Host reporting channel.** The daemon's `agent.sock`, per-session tokens in `shellEnv`, the strict schema, the
    rate limit, `daemonStatus.agentHook`, `tracking` on `hello` and the `tracking`/`agentExited` requests, and the
-   hook precedence in `deriveAgentState`. Hooks are off for everyone until step 8, except with a development flag on
-   the host (`ORCH_AGENT_HOOKS=1`).
+   hook precedence in `deriveAgentState`. Hooks were off for everyone until step 8, except with a development flag on
+   the host, removed in step 8.
 3. **Claude Code hooks.** The shim folder, the `claude` shim, the generated settings, `orch-agent-hook`, the version
    check, and answers to open questions 1 to 4, 6 and 7.
 4. **Codex notify.** The `codex` shim and its `notify` mapping, and an answer to open question 5.
@@ -741,4 +765,4 @@ Each step is one job and leaves the product working:
 6. **Sidebar counts.** Per-workspace counts per state.
 7. **Notifications.** Hook transitions raise attention in the daemon, with the 2-second merge in `AttentionSlot`.
 8. **Off switch and trust prompt.** The per-session switch in the record, the `agentTracking` client message, the
-   ask-once notice and `agent-tracking.json`. This turns hook tracking on for users who say yes.
+   ask-once notice and `agent-tracking.json`. This turns hook tracking on for users who say yes. Done.
