@@ -7,7 +7,16 @@ import {
   type SurfaceKind,
   type Workspace,
 } from '@orch/shared'
-import { TerminalInterrupted } from '@orch/ui'
+import {
+  ContextMenu,
+  ContextMenuPopup,
+  ContextMenuTrigger,
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuTrigger,
+  TerminalInterrupted,
+} from '@orch/ui'
 import {
   Columns2,
   Copy,
@@ -22,8 +31,7 @@ import {
   SquareTerminal,
   X,
 } from '@orch/ui/icons'
-import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { type AgentStatus, agentStatus, withStatus } from '../lib/agentStatus'
 import { SWITCH_HINT } from '../lib/agentTracking'
 import {
@@ -359,160 +367,68 @@ function Tab(props: {
 }) {
   const { workspace, pane, surface, title, paneFocused, attention, status, tracking, marker } = props
   const active = pane.activeSurfaceId === surface.id
-  // Where the tab menu was opened; null means it is closed.
-  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   return (
-    <div
-      draggable
-      data-tab-id={surface.id}
-      onDragStart={(event) => {
-        event.dataTransfer.setData(DRAG_TYPE, surface.id)
-        event.dataTransfer.effectAllowed = 'move'
-        dragSource = { surfaceId: surface.id, paneId: pane.id }
-      }}
-      onDragEnd={() => {
-        dragSource = null
-      }}
-      onClick={() => selectSurface(workspace, pane.id, surface.id)}
-      onContextMenu={(event) => {
-        // Only terminals have a menu; other tabs keep the browser's.
-        if (surface.kind !== 'terminal') return
-        event.preventDefault()
-        setMenu({ x: event.clientX, y: event.clientY })
-      }}
-      title={withStatus(title, status)}
-      className={`anim-fade group flex max-w-52 min-w-24 cursor-default items-center gap-1.5 border-r border-line px-2.5 text-xs select-none ${
-        active ? `bg-panel ${paneFocused ? 'text-ink' : 'text-dim'}` : 'text-faint hover:text-dim'
-      } ${
-        marker === 'before'
-          ? 'shadow-[inset_2px_0_0_var(--color-accent)]'
-          : marker === 'after'
-            ? 'shadow-[inset_-2px_0_0_var(--color-accent)]'
-            : ''
-      }`}
-    >
-      <span className={active && paneFocused ? 'text-accent' : ''}>
-        <SurfaceIcon kind={surface.kind} status={status} />
-      </span>
-      <span className="min-w-0 flex-1 truncate">{title}</span>
-      {attention && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />}
-      <button
-        type="button"
-        aria-label={`Close ${title}`}
-        className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-raised"
-        onClick={(event) => {
-          event.stopPropagation()
-          closeSurface(workspace, surface.id)
-        }}
+    // Only terminals have a menu; other tabs keep the browser's.
+    <ContextMenu disabled={surface.kind !== 'terminal'}>
+      <ContextMenuTrigger
+        render={
+          <div
+            draggable
+            data-tab-id={surface.id}
+            onDragStart={(event) => {
+              event.dataTransfer.setData(DRAG_TYPE, surface.id)
+              event.dataTransfer.effectAllowed = 'move'
+              dragSource = { surfaceId: surface.id, paneId: pane.id }
+            }}
+            onDragEnd={() => {
+              dragSource = null
+            }}
+            onClick={() => selectSurface(workspace, pane.id, surface.id)}
+            title={withStatus(title, status)}
+            className={`anim-fade group flex max-w-52 min-w-24 cursor-default items-center gap-1.5 border-r border-line px-2.5 text-xs select-none ${
+              active ? `bg-panel ${paneFocused ? 'text-ink' : 'text-dim'}` : 'text-faint hover:text-dim'
+            } ${
+              marker === 'before'
+                ? 'shadow-[inset_2px_0_0_var(--color-accent)]'
+                : marker === 'after'
+                  ? 'shadow-[inset_-2px_0_0_var(--color-accent)]'
+                  : ''
+            }`}
+          />
+        }
       >
-        <X size={12} />
-      </button>
-      {menu && (
-        <TabMenu
-          at={menu}
-          onClose={() => setMenu(null)}
-          items={[
-            {
-              label: 'Copy working folder',
-              icon: <Copy size={13} />,
-              onSelect: () => void copyWorkingFolder(surface.id, workspace.cwd),
-            },
-            ...(tracking === undefined
-              ? []
-              : [
-                  {
-                    label: tracking ? 'Stop tracking the agent' : 'Track the agent again',
-                    icon: tracking ? <EyeOff size={13} /> : <Eye size={13} />,
-                    hint: SWITCH_HINT,
-                    onSelect: () => setAgentTracking(surface.id, !tracking),
-                  },
-                ]),
-          ]}
-        />
-      )}
-    </div>
-  )
-}
-
-interface MenuItem {
-  label: string
-  icon: ReactNode
-  /** The item's tooltip. */
-  hint?: string
-  onSelect: () => void
-}
-
-/**
- * A menu opened at the pointer, kept inside the window. It closes on an item,
- * a pointer down outside it, or Escape.
- */
-function TabMenu({ at, items, onClose }: { at: { x: number; y: number }; items: MenuItem[]; onClose: () => void }) {
-  const root = useRef<HTMLDivElement>(null)
-  const [position, setPosition] = useState(at)
-
-  // Measured before paint, so a menu opened near the right or bottom edge never shows clipped.
-  useLayoutEffect(() => {
-    const rect = root.current?.getBoundingClientRect()
-    if (!rect) return
-    const margin = 4
-    setPosition({
-      x: Math.max(margin, Math.min(at.x, window.innerWidth - rect.width - margin)),
-      y: Math.max(margin, Math.min(at.y, window.innerHeight - rect.height - margin)),
-    })
-  }, [at])
-
-  useEffect(() => {
-    const onPointerDown = (event: PointerEvent) => {
-      if (!root.current?.contains(event.target as Node)) onClose()
-    }
-    // Capture, so the terminal under the menu cannot swallow the key first.
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
-      event.stopPropagation()
-      onClose()
-    }
-    window.addEventListener('pointerdown', onPointerDown)
-    window.addEventListener('keydown', onKeyDown, true)
-    return () => {
-      window.removeEventListener('pointerdown', onPointerDown)
-      window.removeEventListener('keydown', onKeyDown, true)
-    }
-  }, [onClose])
-
-  // Rendered in the body so it is not part of the draggable tab, and the tab bar's scrolling cannot clip it.
-  // React still bubbles its events to the tab, so they stop here: a click must not select the tab.
-  return createPortal(
-    <div
-      ref={root}
-      role="menu"
-      className="anim-pop fixed z-50 w-48 rounded-md border border-line bg-raised py-1 shadow-xl"
-      style={{ left: position.x, top: position.y }}
-      onClick={(event) => event.stopPropagation()}
-      onDoubleClick={(event) => event.stopPropagation()}
-      onContextMenu={(event) => {
-        event.preventDefault()
-        event.stopPropagation()
-      }}
-    >
-      {items.map((item) => (
+        <span className={active && paneFocused ? 'text-accent' : ''}>
+          <SurfaceIcon kind={surface.kind} status={status} />
+        </span>
+        <span className="min-w-0 flex-1 truncate">{title}</span>
+        {attention && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />}
         <button
-          key={item.label}
           type="button"
-          role="menuitem"
-          title={item.hint}
-          className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs text-ink hover:bg-accent/20"
-          onClick={() => {
-            onClose()
-            item.onSelect()
+          aria-label={`Close ${title}`}
+          className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-raised"
+          onClick={(event) => {
+            event.stopPropagation()
+            closeSurface(workspace, surface.id)
           }}
         >
-          <span className="text-dim">{item.icon}</span>
-          {item.label}
+          <X size={12} />
         </button>
-      ))}
-    </div>,
-    document.body,
+      </ContextMenuTrigger>
+      <ContextMenuPopup aria-label={`${title} tab`} className="w-48">
+        <MenuItem icon={<Copy size={13} />} onClick={() => void copyWorkingFolder(surface.id, workspace.cwd)}>
+          Copy working folder
+        </MenuItem>
+        {tracking !== undefined && (
+          <MenuItem
+            icon={tracking ? <EyeOff size={13} /> : <Eye size={13} />}
+            title={SWITCH_HINT}
+            onClick={() => setAgentTracking(surface.id, !tracking)}
+          >
+            {tracking ? 'Stop tracking the agent' : 'Track the agent again'}
+          </MenuItem>
+        )}
+      </ContextMenuPopup>
+    </ContextMenu>
   )
 }
 
@@ -531,18 +447,6 @@ function IconButton(props: { label: string; onClick: () => void; children: React
 }
 
 function AddMenu({ onAdd }: { onAdd: (kind: SurfaceKind) => void }) {
-  const [open, setOpen] = useState(false)
-  const root = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const close = (event: PointerEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false)
-    }
-    window.addEventListener('pointerdown', close)
-    return () => window.removeEventListener('pointerdown', close)
-  }, [open])
-
   const items: { kind: SurfaceKind; label: string }[] = [
     { kind: 'terminal', label: 'Terminal' },
     // Disabled for now while the app focuses on the terminal.
@@ -551,28 +455,21 @@ function AddMenu({ onAdd }: { onAdd: (kind: SurfaceKind) => void }) {
   ]
 
   return (
-    <div ref={root} className="relative">
-      <IconButton label="New tab" onClick={() => setOpen(!open)}>
+    <Menu>
+      <MenuTrigger
+        title="New tab"
+        aria-label="New tab"
+        className="rounded p-1 hover:bg-raised hover:text-ink data-popup-open:bg-raised data-popup-open:text-ink"
+      >
         <Plus size={14} />
-      </IconButton>
-      {open && (
-        <div className="anim-pop absolute top-7 right-0 z-30 w-44 rounded-md border border-line bg-raised py-1 shadow-xl">
-          {items.map((item) => (
-            <button
-              key={item.kind}
-              type="button"
-              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs text-ink hover:bg-accent/20"
-              onClick={() => {
-                setOpen(false)
-                onAdd(item.kind)
-              }}
-            >
-              <span className="text-dim">{KIND_ICON[item.kind]}</span>
-              {item.label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+      </MenuTrigger>
+      <MenuPopup aria-label="New tab" className="w-44">
+        {items.map((item) => (
+          <MenuItem key={item.kind} icon={KIND_ICON[item.kind]} onClick={() => onAdd(item.kind)}>
+            {item.label}
+          </MenuItem>
+        ))}
+      </MenuPopup>
+    </Menu>
   )
 }
