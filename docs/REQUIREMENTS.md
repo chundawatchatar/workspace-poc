@@ -52,11 +52,11 @@ A free developer workspace that runs on the user's own machine or VM and is used
 
 | ID | Requirement | Status |
 | --- | --- | --- |
-| AG-1 | For Claude Code and Codex, each tab shows whether the agent is working, waiting for the user, or idle. Tabs and sidebar rows show it; hook precision needs `ORCH_AGENT_HOOKS=1` on the host until the trust prompt ships, and without it the state comes from terminal signals, which can't tell idle from a turn in progress, so no idle mark shows. | Partly |
-| AG-2 | The sidebar shows, per workspace, how many agents are in each state. The idle count needs hooks, which need `ORCH_AGENT_HOOKS=1` on the host until the trust prompt ships. | Partly |
-| AG-3 | The user is notified when an agent finishes, asks a question, or needs permission. Notifications follow hook state, which needs `ORCH_AGENT_HOOKS=1` on the host until the trust prompt ships; without it the bell and OSC 9 attention that already exists is the only notification. | Partly |
+| AG-1 | For Claude Code and Codex, each tab shows whether the agent is working, waiting for the user, or idle. Tabs and sidebar rows show it; hook precision needs the user to answer Track once for that agent (AG-4), and without hooks the state comes from terminal signals, which can't tell idle from a turn in progress, so no idle mark shows. | Partly |
+| AG-2 | The sidebar shows, per workspace, how many agents are in each state. The idle count needs hooks, which the user turns on by answering Track once for that agent (AG-4). | Partly |
+| AG-3 | The user is notified when an agent finishes, asks a question, or needs permission. Notifications follow hook state, which needs the user to answer Track once for that agent (AG-4); without hooks the bell and OSC 9 attention that already exists is the only notification. | Partly |
 | AG-4 | Agent tracking works without editing the user's own agent settings. Where an agent asks the user to trust the tracking, the product asks once and never bypasses that check. | Next |
-| AG-5 | Tracking can be turned off for a single session. | Next |
+| AG-5 | Tracking can be turned off for a single session. | Done |
 | AG-6 | Events such as a pull request opening, an issue being assigned or a check failing can start the user's chosen agent in a new pane, where the user can watch or take over. | Later |
 | AG-7 | Agents started by events act only with access limited to their repository, and need the user's approval to merge or to use secrets. | Later |
 

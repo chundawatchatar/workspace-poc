@@ -257,6 +257,7 @@ describe('bridge socket', () => {
       agent: { kind: 'claude', sessionId: null, cwd: '/repo' },
       interrupted: null,
       agentState,
+      agentTracking: true,
     }
     const sent = JSON.stringify({ type: 'session', session } satisfies ServerEvent)
     m.send({ type: 'ws.data', channel: 1, data: sent })

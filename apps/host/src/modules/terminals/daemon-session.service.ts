@@ -1,5 +1,5 @@
 import { createConnection, type Socket } from 'node:net'
-import { AGENT_LABELS, type AgentRef, type SessionInfo, type TermColors, type TermServerMsg } from '@orch/shared'
+import type { AgentRef, SessionInfo, TermColors, TermServerMsg } from '@orch/shared'
 import {
   assignResponder,
   CAUGHT_UP,
@@ -15,12 +15,13 @@ import {
   resumeCommand,
   type TermClient,
   type TerminalSession,
+  trackingForAll,
 } from '@orch/terminal'
 import type { z } from 'zod'
 import { ProgressWatch } from './agent-interrupt.service'
 import type { DaemonRecord } from './daemon.repository'
 import type { SharedDaemon } from './shared-daemon.service'
-import { sendSnapshot } from './view-snapshot.service'
+import { sendInterrupted, sendSnapshot } from './view-snapshot.service'
 
 /** A browser-facing terminal whose shell and screen belong to a separate process. */
 export class DaemonSession implements TerminalSession {
@@ -84,7 +85,9 @@ export class DaemonSession implements TerminalSession {
       progress: status?.progress ?? null,
     }
     const reported = { agentHook: status?.agentHook, progressEndedAt: this.progress.endedAt }
-    this.agentState = deriveAgentState({ ...signals, ...reported }, this.agentState, Date.now())
+    const agentTracking = this.record.agentTracking !== false
+    // With the switch off the terminal shows no agent state, so the tab mark and the sidebar counts drop it.
+    this.agentState = agentTracking ? deriveAgentState({ ...signals, ...reported }, this.agentState, Date.now()) : null
     const cwd = interrupted?.cwd ?? this.workingDir ?? this.record.cwd ?? this.cwd
     return {
       ...signals,
@@ -93,7 +96,29 @@ export class DaemonSession implements TerminalSession {
       process: this.process,
       cwd,
       agentState: this.agentState,
+      agentTracking,
     }
+  }
+
+  /**
+   * Turns agent tracking off or on again for this terminal. Off forgets the shell's token in the daemon at once;
+   * on gives the running shell none, so hooks return only once the shell starts again. Both outlive the host.
+   */
+  setAgentTracking(on: boolean) {
+    if (on === (this.record.agentTracking !== false)) return
+    this.save({ agentTracking: on ? undefined : false })
+    this.resendTracking()
+    this.onChange(this)
+  }
+
+  /** Tells the daemon which agents this terminal may track now. */
+  resendTracking() {
+    this.send({ type: 'tracking', ...this.tracking() })
+  }
+
+  /** The trust answers with the switch applied: all false while the switch is off. */
+  private tracking() {
+    return this.record.agentTracking === false ? trackingForAll(false) : this.shared.tracking()
   }
 
   observe(found: (Foreground & { cwd: string | null }) | undefined) {
@@ -158,7 +183,7 @@ export class DaemonSession implements TerminalSession {
     client.ready = false
     this.clients.add(client)
     if (this.interrupted) {
-      this.showInterrupted(client)
+      sendInterrupted(client, this.interrupted, this.size)
       return
     }
     this.answer()
@@ -237,7 +262,7 @@ export class DaemonSession implements TerminalSession {
     this.clients.clear()
   }
 
-  private save(patch: Partial<Pick<DaemonRecord, 'cwd' | 'agent'>>) {
+  private save(patch: Partial<Pick<DaemonRecord, 'cwd' | 'agent' | 'agentTracking'>>) {
     if (this.closing || this.stopped) return
     const record: Partial<DaemonRecord> = this.record
     const same = Object.entries(patch).every(([key, value]) => {
@@ -251,22 +276,6 @@ export class DaemonSession implements TerminalSession {
     }
   }
 
-  /** Shows a view the interrupted notice. The overlay in the web app offers the choices. */
-  private showInterrupted(client: TermClient) {
-    const interrupted = this.interrupted
-    if (!interrupted) return
-    const label = AGENT_LABELS[interrupted.agent.kind]
-    const text =
-      `\x1b[2m[The terminal daemon restarted while ${label} was running in ${interrupted.cwd}.\r\n` +
-      ` Resume ${label}, or press Enter for a plain shell.]\x1b[0m\r\n`
-    const { cols, rows } = this.size
-    client.send(JSON.stringify({ type: 'snapshot', data: text, cols, rows } satisfies TermServerMsg))
-    client.queue = []
-    client.queued = 0
-    client.stale = false
-    client.ready = true
-  }
-
   /** The daemon no longer has this session. An agent's terminal waits for the user rather than losing it silently. */
   private lose() {
     const agent = this.record.agent
@@ -277,7 +286,7 @@ export class DaemonSession implements TerminalSession {
     this.agentPid = undefined
     this.process = null
     this.snapshotPending = false
-    for (const client of this.clients) this.showInterrupted(client)
+    for (const client of this.clients) sendInterrupted(client, this.interrupted, this.size)
     this.onChange(this)
   }
 
@@ -457,7 +466,7 @@ export class DaemonSession implements TerminalSession {
           // agent: it is shown as interrupted instead, so the agent can be resumed.
           create: !this.closing && (this.restoring !== null || !this.record.agent),
           viewing: this.clients.size > 0,
-          tracking: this.shared.tracking,
+          tracking: this.tracking(),
         })
       })
       socket.on('data', (chunk: Buffer) => {

@@ -1,4 +1,5 @@
 import { accessContract } from './access'
+import { agentTrackingContract } from './agentTracking'
 import { eventsSocket } from './events'
 import { fsContract } from './fs'
 import { gitContract } from './git'
@@ -10,6 +11,16 @@ import { systemContract } from './system'
 import { terminalSocket } from './terminals'
 
 export { type RotateAccessResponse, rotateAccessResponse } from './access'
+export {
+  type AgentTrackingAnswer,
+  type AgentTrackingStatus,
+  agentTrackingAnswer,
+  agentTrackingStatus,
+  type TrackedAgent,
+  trackedAgent,
+  type UpdateAgentTrackingBody,
+  updateAgentTrackingBody,
+} from './agentTracking'
 export * from './contract'
 export {
   type DirListing,
@@ -102,6 +113,7 @@ export const routes = {
   git: gitContract,
   access: accessContract,
   remoteAccess: remoteAccessContract,
+  agentTracking: agentTrackingContract,
   sockets: {
     events: eventsSocket,
     terminal: terminalSocket,

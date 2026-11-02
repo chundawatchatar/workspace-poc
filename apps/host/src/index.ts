@@ -6,12 +6,13 @@ import { SessionManager, shellProgram } from '@orch/terminal'
 import { createApp } from './app'
 import { tunnelEnv } from './lib/principal'
 import { accessKeysPath } from './modules/access/access.repository'
+import { AgentTrackingRepository, agentTrackingPath } from './modules/agent-tracking/agent-tracking.repository'
+import { AgentTrackingService } from './modules/agent-tracking/agent-tracking.service'
 import { EventHub } from './modules/events/events.service'
 import { dataFile, LayoutRepository } from './modules/layout/layout.repository'
 import { RemoteAccessRepository, remoteAccessPath } from './modules/remote-access/remote-access.repository'
 import { RemoteAccessService } from './modules/remote-access/remote-access.service'
-import { daemonFactory, restoreTerminals } from './modules/terminals/daemon.service'
-import { agentTrackingFrom } from './modules/terminals/shared-daemon.service'
+import { daemonFactory, resendTracking, restoreTerminals } from './modules/terminals/daemon.service'
 import { machineSecretFile } from './modules/tunnel/tunnel.repository'
 
 // Composition root: creates the long-lived services, wires them together and starts the server.
@@ -28,12 +29,15 @@ const info: HostInfo = {
 
 const hub = new EventHub()
 const layout = new LayoutRepository(dataFile(hostRoot), projectRoot)
-const daemon = daemonFactory(hostRoot, agentTrackingFrom(process.env))
+const agentTracking = new AgentTrackingService(new AgentTrackingRepository(agentTrackingPath(hostRoot)))
+const daemon = daemonFactory(hostRoot, () => agentTracking.tracking())
 const sessions = new SessionManager(
   (session) => hub.broadcast({ type: 'session', session: session.info() }),
   (id) => hub.broadcast({ type: 'session.gone', id }),
   daemon.create,
 )
+// A changed answer reaches agents started afterwards in every open terminal, not only in new ones.
+agentTracking.onChange(() => resendTracking(sessions.list()))
 void restoreTerminals(layout, sessions, daemon)
 
 // Polls what each terminal is running. A slow round is never overlapped by the next.
@@ -67,6 +71,7 @@ const { app, sockets } = createApp({
   daemonStartedAt: () => daemon.shared.startedAt,
   access: () => remoteAccess.current(),
   remoteAccess,
+  agentTracking,
 })
 const server = Bun.serve({
   hostname: '127.0.0.1',

@@ -257,6 +257,11 @@ export function restoreSession(sessionId: string, mode: 'agent' | 'shell') {
   send({ type: 'restore', sessionId, mode })
 }
 
+/** Turns agent tracking off or on again for one terminal. The host saves it and answers with the session. */
+export function setAgentTracking(sessionId: string, on: boolean) {
+  send({ type: 'agentTracking', sessionId, on })
+}
+
 export function setFocus(workspaceId: string, paneId: string) {
   const zoomed = snapshot.zoom[workspaceId]
   // Moving to another pane leaves full screen, so that pane is not hidden behind it.

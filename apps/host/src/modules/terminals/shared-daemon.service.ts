@@ -6,11 +6,6 @@ import { type AgentTracking, daemonBuild, type daemonStatus, shellEnv, trackingF
 import type { z } from 'zod'
 import type { DaemonRepository } from './daemon.repository'
 
-/** Which agents new terminals track. Only the development flag turns this on until the trust prompt exists. */
-export function agentTrackingFrom(env: Record<string, string | undefined>): AgentTracking {
-  return trackingForAll(env.ORCH_AGENT_HOOKS === '1')
-}
-
 /**
  * One daemon for every terminal of this host. It owns each session's shell and
  * screen so they outlive the host, while sharing one Bun runtime between them.
@@ -27,8 +22,8 @@ export class SharedDaemon {
     readonly repository: DaemonRepository,
     private readonly command: string[],
     private readonly shell: string,
-    /** Sent to the daemon with every terminal. */
-    readonly tracking: AgentTracking = trackingForAll(false),
+    /** The user's trust answers as tracking, read each time a terminal tells the daemon its tracking. */
+    readonly tracking: () => AgentTracking = () => trackingForAll(false),
   ) {
     this.build = daemonBuild(command[command.length - 1])
   }

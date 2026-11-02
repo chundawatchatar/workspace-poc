@@ -11,6 +11,8 @@ import { TerminalInterrupted } from '@orch/ui'
 import {
   Columns2,
   Copy,
+  Eye,
+  EyeOff,
   GitPullRequest,
   KanbanSquare,
   Maximize2,
@@ -23,6 +25,7 @@ import {
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { type AgentStatus, agentStatus, withStatus } from '../lib/agentStatus'
+import { SWITCH_HINT } from '../lib/agentTracking'
 import {
   addSurface,
   closeSurface,
@@ -39,6 +42,7 @@ import {
   focusedPaneId,
   pushState,
   restoreSession,
+  setAgentTracking,
   setFocus,
   useApp,
   zoomedPaneId,
@@ -47,6 +51,7 @@ import { AgentStateMark } from './AgentStateMark'
 import { IssuesView, PullsView } from './SampleSurfaces'
 import { pendingAttention } from './Sidebar'
 import { TerminalView } from './TerminalView'
+import { TrustNotice } from './TrustNotice'
 
 const DRAG_TYPE = 'application/x-poc-surface'
 
@@ -249,6 +254,7 @@ function PaneView({ workspace, pane }: { workspace: Workspace; pane: PaneNode })
               }
               attention={Boolean(sessions[surface.id]?.attention)}
               status={agentStatus(sessions[surface.id])}
+              tracking={sessions[surface.id]?.agentTracking}
             />
           ))}
         </div>
@@ -293,14 +299,18 @@ function PaneView({ workspace, pane }: { workspace: Workspace; pane: PaneNode })
           return (
             <div key={surface.id} className={`absolute inset-0 ${visible ? '' : 'pointer-events-none invisible'}`}>
               {surface.kind === 'terminal' ? (
-                <>
-                  <TerminalView
-                    sessionId={surface.id}
-                    cwd={workspace.cwd}
-                    active={visible && focused && !overlayOpen}
-                  />
-                  <Interrupted sessionId={surface.id} />
-                </>
+                // The notice takes rows from the terminal rather than covering its top, where agents ask their own questions.
+                <div className="flex h-full flex-col">
+                  <TrustNotice sessionId={surface.id} />
+                  <div className="relative min-h-0 flex-1">
+                    <TerminalView
+                      sessionId={surface.id}
+                      cwd={workspace.cwd}
+                      active={visible && focused && !overlayOpen}
+                    />
+                    <Interrupted sessionId={surface.id} />
+                  </div>
+                </div>
               ) : surface.kind === 'pulls' ? (
                 <PullsView />
               ) : (
@@ -342,10 +352,12 @@ function Tab(props: {
   paneFocused: boolean
   attention: boolean
   status: AgentStatus | null
+  /** The terminal's per-session switch; undefined until the host reports the session. */
+  tracking: boolean | undefined
   /** Shows where a dragged tab would be inserted relative to this one. */
   marker?: 'before' | 'after'
 }) {
-  const { workspace, pane, surface, title, paneFocused, attention, status, marker } = props
+  const { workspace, pane, surface, title, paneFocused, attention, status, tracking, marker } = props
   const active = pane.activeSurfaceId === surface.id
   // Where the tab menu was opened; null means it is closed.
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
@@ -405,6 +417,16 @@ function Tab(props: {
               icon: <Copy size={13} />,
               onSelect: () => void copyWorkingFolder(surface.id, workspace.cwd),
             },
+            ...(tracking === undefined
+              ? []
+              : [
+                  {
+                    label: tracking ? 'Stop tracking the agent' : 'Track the agent again',
+                    icon: tracking ? <EyeOff size={13} /> : <Eye size={13} />,
+                    hint: SWITCH_HINT,
+                    onSelect: () => setAgentTracking(surface.id, !tracking),
+                  },
+                ]),
           ]}
         />
       )}
@@ -415,6 +437,8 @@ function Tab(props: {
 interface MenuItem {
   label: string
   icon: ReactNode
+  /** The item's tooltip. */
+  hint?: string
   onSelect: () => void
 }
 
@@ -476,6 +500,7 @@ function TabMenu({ at, items, onClose }: { at: { x: number; y: number }; items: 
           key={item.label}
           type="button"
           role="menuitem"
+          title={item.hint}
           className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs text-ink hover:bg-accent/20"
           onClick={() => {
             onClose()
