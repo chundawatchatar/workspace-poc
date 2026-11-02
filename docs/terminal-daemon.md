@@ -187,7 +187,7 @@ resumed). For a local tool that is worth the memory.
 
 ```sh
 bun run typecheck          # every workspace, including @orch/terminal and @orch/ptyd-bun
-bun test                   # unit tests, including the daemon protocol codecs
+bun run test               # every workspace's tests, including the daemon protocol codecs
 bun run test:bun-daemon    # end-to-end: handshake, binary output, reconnect, queries, redraw, resize, close
 bun run terminals:stop     # end any daemon left running
 ```

@@ -10,7 +10,9 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "db:generate": "bun --bun drizzle-kit generate",
-    "db:migrate": "bun src/migrate.ts"
+    "db:migrate": "bun src/migrate.ts",
+    "test": "bun test",
+    "test:coverage": "bun test --coverage"
   },
   "dependencies": {
     "@orch/shared": "workspace:*",

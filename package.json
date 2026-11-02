@@ -21,8 +21,8 @@
     "typecheck": "bun run --filter '*' typecheck",
     "lint": "biome check .",
     "format": "biome check --write .",
-    "test": "bun test",
-    "test:coverage": "bun test --coverage"
+    "test": "bun run --filter '*' --sequential --no-exit-on-error test",
+    "test:coverage": "bun run --filter '*' --sequential --no-exit-on-error test:coverage"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
