@@ -31,7 +31,7 @@ test('draws the non-zero states in the order waiting, working, idle, without a s
   const html = render(1, 2, 3)
   const shapes = ['lucide-hand', 'lucide-loader-circle', 'lucide-pause'].map((shape) => html.indexOf(shape))
   expect(shapes[0]).toBeGreaterThan(-1)
-  expect(shapes).toEqual(shapes.toSorted((a, b) => a - b))
+  expect(shapes).toEqual([...shapes].sort((a, b) => a - b))
   expect(html).not.toContain('animate-spin')
 
   const idleOnly = render(0, 0, 3)
