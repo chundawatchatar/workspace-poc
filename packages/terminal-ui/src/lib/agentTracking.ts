@@ -7,10 +7,10 @@ import {
   type TrackedAgent,
   trackedAgent,
 } from '@orch/shared'
+import { showToast } from '@orch/ui'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback } from 'react'
 import { apiKey, apiMutation, apiQuery } from './api'
-import { showToast } from './toast'
 
 /** True for an agent kind whose hooks the product can attach. */
 export function isTrackedAgent(kind: string | undefined): kind is TrackedAgent {

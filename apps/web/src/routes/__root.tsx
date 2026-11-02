@@ -6,7 +6,7 @@ import {
   TerminalUI,
   type TerminalUIProps,
 } from '@orch/terminal-ui'
-import { FAVICON_HREF, THEME_BOOT_SCRIPT } from '@orch/ui'
+import { FAVICON_HREF, THEME_BOOT_SCRIPT, Toaster } from '@orch/ui'
 import { createRootRoute, HeadContent, Outlet, Scripts, useNavigate, useParams } from '@tanstack/react-router'
 import { type ReactNode, useCallback } from 'react'
 import appCss from '../styles.css?url'
@@ -63,14 +63,17 @@ function RootLayout() {
   const workspaceHref = useCallback((id: string) => `/w/${encodeURIComponent(id)}`, [])
 
   return (
-    <TerminalUI
-      transport={transport}
-      workspaceId={workspaceId}
-      navigate={navigate}
-      workspaceHref={workspaceHref}
-      remoteAccessSetting
-    >
-      <Outlet />
-    </TerminalUI>
+    <>
+      <TerminalUI
+        transport={transport}
+        workspaceId={workspaceId}
+        navigate={navigate}
+        workspaceHref={workspaceHref}
+        remoteAccessSetting
+      >
+        <Outlet />
+      </TerminalUI>
+      <Toaster />
+    </>
   )
 }

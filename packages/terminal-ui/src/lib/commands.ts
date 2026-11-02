@@ -12,10 +12,10 @@ import {
   type SurfaceKind,
   type Workspace,
 } from '@orch/shared'
+import { showToast } from '@orch/ui'
 import { shortPath } from './paths'
 import { dispatch, focusedPaneId, getSnapshot, mutate, setFocus, toggleZoom as toggleZoomState } from './store'
 import { placeSurface } from './tabOrder'
-import { showToast } from './toast'
 import { withPaneTransition } from './transition'
 
 // Every way of triggering an action (button, shortcut, leader key) calls these.

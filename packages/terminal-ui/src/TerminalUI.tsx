@@ -4,7 +4,6 @@ import { ConnectionBanner } from './components/ConnectionBanner'
 import { DEFAULT_DENIED_HINT, LOCAL_OFFLINE_HINT } from './components/HostStatus'
 import { Overlays } from './components/Overlays'
 import { Sidebar } from './components/Sidebar'
-import { Toaster } from './components/Toaster'
 import { useShortcuts } from './lib/shortcuts'
 import { connect, initTheme, useApp } from './lib/store'
 import { type Navigation, NavigationProvider, useNavigation } from './navigation'
@@ -40,7 +39,10 @@ export interface TerminalUIProps {
   remoteAccessSetting?: boolean
 }
 
-/** The page inside a machine: sidebar, workspace layout, overlays and toasts, connected through `transport`. */
+/**
+ * The page inside a machine: sidebar, workspace layout and overlays, connected through `transport`. Its toasts are
+ * drawn by the `<Toaster />` from `@orch/ui`, which the app mounts at its root.
+ */
 export function TerminalUI({
   transport,
   workspaceId,
@@ -102,7 +104,6 @@ function Page({ children }: { children: ReactNode }) {
         {children}
       </main>
       <Overlays />
-      <Toaster />
     </div>
   )
 }

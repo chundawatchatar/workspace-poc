@@ -33,8 +33,8 @@ describe('toaster', () => {
     toaster.subscribe(() => notified++)
 
     toaster.show('Copied ~/src')
-    expect(toaster.get()).toMatchObject({ message: 'Copied ~/src', kind: 'info' })
-    advance(TOAST_DURATION - 1)
+    expect(toaster.get()).toMatchObject({ message: 'Copied ~/src', kind: 'info', placement: 'bottom' })
+    advance(TOAST_DURATION.info - 1)
     expect(toaster.get()?.message).toBe('Copied ~/src')
     advance(1)
     expect(toaster.get()).toBeNull()
@@ -47,14 +47,16 @@ describe('toaster', () => {
 
     toaster.show('First')
     advance(1500)
-    toaster.show('Could not copy folder', 'error')
+    toaster.show('Could not copy folder', 'error', { placement: 'top-right' })
     const second = toaster.get()
-    expect(second).toMatchObject({ message: 'Could not copy folder', kind: 'error' })
+    expect(second).toMatchObject({ message: 'Could not copy folder', kind: 'error', placement: 'top-right' })
 
-    // The first toast's deadline passes without hiding the second.
+    // The first toast's deadline passes without hiding the second, which stays for the longer error duration.
     advance(500)
     expect(toaster.get()).toBe(second)
-    advance(TOAST_DURATION - 500)
+    advance(TOAST_DURATION.error - 501)
+    expect(toaster.get()).toBe(second)
+    advance(1)
     expect(toaster.get()).toBeNull()
   })
 })

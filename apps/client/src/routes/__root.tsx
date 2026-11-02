@@ -1,5 +1,5 @@
 import { SIDEBAR_BOOT_SCRIPT } from '@orch/terminal-ui'
-import { FAVICON_HREF, PRODUCT_NAME, THEME_BOOT_SCRIPT } from '@orch/ui'
+import { FAVICON_HREF, PRODUCT_NAME, THEME_BOOT_SCRIPT, Toaster } from '@orch/ui'
 import { QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createRootRouteWithContext, HeadContent, Outlet, Scripts, useNavigate } from '@tanstack/react-router'
 import { type ReactNode, useEffect } from 'react'
@@ -68,5 +68,10 @@ function RootLayout() {
     window.addEventListener('hashchange', onHashChange)
     return () => window.removeEventListener('hashchange', onHashChange)
   }, [navigate, queryClient])
-  return <Outlet />
+  return (
+    <>
+      <Outlet />
+      <Toaster />
+    </>
+  )
 }

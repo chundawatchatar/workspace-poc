@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
+import { getToast } from '@orch/ui'
 import { copyWorkingFolder, workingFolder } from './commands'
-import { getToast } from './toast'
 
 describe('workingFolder', () => {
   test("prefers the session's live folder and falls back to the workspace's", () => {
