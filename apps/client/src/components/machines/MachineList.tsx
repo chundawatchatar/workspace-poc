@@ -1,9 +1,9 @@
 import { Button, FormError } from '@orch/ui'
 import { useQuery } from '@tanstack/react-query'
-import { machinesQuery } from '../lib/accountMachines'
-import { sessionQuery } from '../lib/auth'
-import { useMachines } from '../lib/machines'
-import { AccountMenu } from './AccountMenu'
+import { machinesQuery } from '../../lib/accountMachines'
+import { sessionQuery } from '../../lib/auth'
+import { useMachines } from '../../lib/machines'
+import { AccountMenu } from '../account/AccountMenu'
 import { MachineRow } from './MachineRow'
 
 /** The home page: the machines linked to the signed-in account. */

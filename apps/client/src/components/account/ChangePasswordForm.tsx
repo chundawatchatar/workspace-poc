@@ -2,7 +2,7 @@ import { Button, FormError, PasswordField } from '@orch/ui'
 import { useForm } from '@tanstack/react-form'
 import { useQueryClient } from '@tanstack/react-query'
 import { useRef, useState } from 'react'
-import { changePasswordFormOptions, focusFirstInvalid, shownError, submitOnce } from '../lib/authForms'
+import { changePasswordFormOptions, focusFirstInvalid, shownError, submitOnce } from '../../lib/authForms'
 
 const fields = [
   { name: 'currentPassword', label: 'Current password', autoComplete: 'current-password', hint: undefined },

@@ -1,6 +1,6 @@
 import { NotFound } from '@orch/terminal-ui'
 import { createFileRoute } from '@tanstack/react-router'
-import { MachinePage } from '../../../components/MachinePage'
+import { MachinePage } from '../../../components/machines/MachinePage'
 import { requireSession } from '../../../lib/auth'
 
 export const Route = createFileRoute('/m/$machineId')({

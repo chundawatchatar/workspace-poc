@@ -2,9 +2,9 @@ import { createRemoteTransport, TerminalUI, type TerminalUIProps } from '@orch/t
 import { ArrowLeft } from '@orch/ui/icons'
 import { Link, Outlet, useNavigate, useParams } from '@tanstack/react-router'
 import { useCallback, useMemo } from 'react'
-import { machinePath, type SavedMachine, useMachines } from '../lib/machines'
-import { AccountMenu } from './AccountMenu'
-import { Centered, linkClass } from './Centered'
+import { machinePath, type SavedMachine, useMachines } from '../../lib/machines'
+import { AccountMenu } from '../account/AccountMenu'
+import { Centered, linkClass } from '../Centered'
 import { NO_KEY_HINT } from './MachineRow'
 
 /** The cloud server: `VITE_SERVER_URL` from the build, or the origin the client is served from. */

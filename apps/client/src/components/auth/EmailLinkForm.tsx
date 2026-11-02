@@ -7,7 +7,7 @@ import {
   resendVerificationFormOptions,
   shownError,
   submitOnce,
-} from '../lib/authForms'
+} from '../../lib/authForms'
 
 /**
  * A one-field form that emails a link to the address typed in: a new verification link (`resend`) or a

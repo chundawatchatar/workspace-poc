@@ -2,8 +2,8 @@ import { Menu, MenuItem, MenuLinkItem, MenuPopup, MenuTrigger, showToast } from 
 import { ChevronDown, CircleUser } from '@orch/ui/icons'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { sessionQuery, signOut } from '../lib/auth'
-import { focusClass } from './Centered'
+import { sessionQuery, signOut } from '../../lib/auth'
+import { focusClass } from '../Centered'
 
 /**
  * A button showing the signed-in user's email, which opens a menu with the account page and sign out. It reads the

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { type SessionRow, sessionsQuery } from '../lib/accountSessions'
+import { type SessionRow, sessionsQuery } from '../../lib/accountSessions'
 import { SessionsTable } from './SessionsTable'
 
 const rows: SessionRow[] = [

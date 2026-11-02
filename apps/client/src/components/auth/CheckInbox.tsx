@@ -1,6 +1,6 @@
 import { Button, FormError } from '@orch/ui'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
-import { resendVerificationEmail } from '../lib/auth'
+import { resendVerificationEmail } from '../../lib/auth'
 import { AuthCard } from './AuthCard'
 
 /** How long the resend button stays off after it sent an email, so one click sends one email. */

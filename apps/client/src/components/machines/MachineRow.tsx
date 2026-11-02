@@ -5,9 +5,9 @@ import { useForm } from '@tanstack/react-form'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
-import { renameMachineFormOptions, renameMachineMutation, unlinkMachineMutation } from '../lib/accountMachines'
-import { shownError, submitOnce } from '../lib/authForms'
-import { focusClass, linkClass } from './Centered'
+import { renameMachineFormOptions, renameMachineMutation, unlinkMachineMutation } from '../../lib/accountMachines'
+import { shownError, submitOnce } from '../../lib/authForms'
+import { focusClass, linkClass } from '../Centered'
 
 /** What a machine page says when this browser holds no key for the machine. */
 export const NO_KEY_HINT = 'Open the connect link on this device'

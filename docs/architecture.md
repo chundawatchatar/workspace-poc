@@ -165,7 +165,7 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   goes out, and a successful sign-up empties the form before showing "Check your inbox", whose heading then takes
   focus. Neither page keeps the email or password outside the form state, logs them or puts them in the URL.
 - The client's email pages live under `/auth` too. Sign-up success is an in-page "Check your inbox" state
-  (`src/components/CheckInbox.tsx`), so the address never enters the URL; its "Send the link again" button posts
+  (`src/components/auth/CheckInbox.tsx`), so the address never enters the URL; its "Send the link again" button posts
   `/api/auth/send-verification-email` and then stays off for 30 seconds (not kept across a reload; Better Auth's limit
   of 3 a minute is the real guard). `/auth/verify-email` verifies the token from its link once, with
   `GET /api/auth/verify-email?token=…`, and never signs in; with a refused token (one message for expired, invalid and
@@ -195,7 +195,7 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   with remote access off. Rename (an inline TanStack Form with `machineNameSchema`) and unlink invalidate the list;
   unlink also forgets the machine's local key, since the list no longer shows local-only machines and a key left
   behind could never be seen or removed. Open question: whether unlink should ask for confirmation.
-- The client's `/account` page is reached from the account menu (`src/components/AccountMenu.tsx`: the user's email
+- The client's `/account` page is reached from the account menu (`src/components/account/AccountMenu.tsx`: the user's email
   as a button opening "Account" and "Sign out"), shown in the home page's title row and in the machine page's sidebar
   `header`. It changes the password with Better Auth's `change-password` and `revokeOtherSessions: true`: Better Auth
   1.7.14 deletes every session of the user and starts a new one for this browser, so the user stays signed in under a

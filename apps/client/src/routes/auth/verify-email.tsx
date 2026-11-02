@@ -1,9 +1,9 @@
 import { FormError } from '@orch/ui'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
-import { AuthCard } from '../../components/AuthCard'
+import { AuthCard } from '../../components/auth/AuthCard'
+import { EmailLinkForm } from '../../components/auth/EmailLinkForm'
 import { linkClass } from '../../components/Centered'
-import { EmailLinkForm } from '../../components/EmailLinkForm'
 import { verifyEmailToken } from '../../lib/auth'
 import { takeEmailLinkToken, useEmailLinkArrivals } from '../../lib/emailLink'
 

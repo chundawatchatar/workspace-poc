@@ -3,9 +3,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { createColumnHelper, tableFeatures, useTable } from '@tanstack/react-table'
 import { useId, useState } from 'react'
-import { isNotFresh, revokeSession, type SessionRow, sessionsQuery } from '../lib/accountSessions'
-import { sessionQuery, signOut } from '../lib/auth'
-import { focusClass } from './Centered'
+import { isNotFresh, revokeSession, type SessionRow, sessionsQuery } from '../../lib/accountSessions'
+import { sessionQuery, signOut } from '../../lib/auth'
+import { focusClass } from '../Centered'
 
 const smallButtonClass = `px-1.5 py-0.5 text-xs text-dim hover:bg-raised hover:text-ink active:bg-line disabled:opacity-60 ${focusClass}`
 
