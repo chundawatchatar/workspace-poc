@@ -1,45 +1,37 @@
-import { Button, FormError } from '@orch/ui'
+import { formatLocalDateTime } from '@orch/shared'
+import { Button, DataTable, type DataTableColumn, FormError } from '@orch/ui'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { createColumnHelper, tableFeatures, useTable } from '@tanstack/react-table'
-import { useId, useState } from 'react'
+import { useState } from 'react'
 import { isNotFresh, revokeSession, type SessionRow, sessionsQuery } from '../../lib/accountSessions'
 import { sessionQuery, signOut } from '../../lib/auth'
 import { focusClass } from '../Centered'
 
 const smallButtonClass = `px-1.5 py-0.5 text-xs text-dim hover:bg-raised hover:text-ink active:bg-line disabled:opacity-60 ${focusClass}`
 
-/** A date and time from the server, in the browser's locale and time zone. */
-function LocalTime({ value }: { value: string }) {
-  return (
-    <time dateTime={value}>
-      {new Date(value).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}
-    </time>
-  )
-}
-
-// Stable across renders, as TanStack Table asks: a new array would rebuild the row model every time.
-const features = tableFeatures({})
-const column = createColumnHelper<typeof features, SessionRow>()
-const columns = column.columns([
-  column.accessor('device', { header: 'Device' }),
-  column.accessor('ipAddress', { header: 'IP address', cell: ({ getValue }) => getValue() ?? 'Unknown' }),
-  column.accessor('createdAt', { header: 'Created', cell: ({ getValue }) => <LocalTime value={getValue()} /> }),
-  column.accessor('lastActiveAt', {
+// Outside the component, so the table isn't rebuilt on every render.
+const columns: DataTableColumn<SessionRow>[] = [
+  { id: 'device', header: 'Device', cell: (row) => row.device },
+  { id: 'ipAddress', header: 'IP address', cell: (row) => row.ipAddress ?? 'Unknown' },
+  {
+    id: 'createdAt',
+    header: 'Created',
+    cell: (row) => <time dateTime={row.createdAt}>{formatLocalDateTime(row.createdAt)}</time>,
+  },
+  {
+    id: 'lastActiveAt',
     header: 'Last active',
-    cell: ({ getValue }) => <LocalTime value={getValue()} />,
-  }),
-  column.display({
+    note: 'Last active is approximate: it updates when the session is renewed, at most once a day.',
+    cell: (row) => <time dateTime={row.lastActiveAt}>{formatLocalDateTime(row.lastActiveAt)}</time>,
+  },
+  {
     id: 'action',
-    header: () => <span className="sr-only">Action</span>,
-    cell: ({ row }) =>
-      row.original.current ? (
-        <span className="text-xs text-good">This device</span>
-      ) : (
-        <RevokeButton row={row.original} />
-      ),
-  }),
-])
+    header: 'Action',
+    hideHeader: true,
+    align: 'end',
+    cell: (row) => (row.current ? <span className="text-xs text-good">This device</span> : <RevokeButton row={row} />),
+  },
+]
 
 /** Ends one other session. A failure stays in its row, and the list is left as it was. */
 function RevokeButton({ row }: { row: SessionRow }) {
@@ -86,53 +78,7 @@ export function SessionsTable({ userId }: { userId: string }) {
       </div>
     )
   }
-  return <Table rows={list.data} />
-}
-
-function Table({ rows }: { rows: SessionRow[] }) {
-  const table = useTable({ features, columns, data: rows, getRowId: (row) => row.id })
-  const noteId = useId()
-  return (
-    <>
-      <div className="overflow-x-auto rounded-md border border-line">
-        <table className="w-full text-left text-[13px]">
-          <thead className="text-xs text-faint">
-            {table.getHeaderGroups().map((group) => (
-              <tr key={group.id} className="border-b border-line">
-                {group.headers.map((header) => (
-                  <th
-                    key={header.id}
-                    scope="col"
-                    aria-describedby={header.column.id === 'lastActiveAt' ? noteId : undefined}
-                    className="px-3 py-2 font-medium whitespace-nowrap"
-                  >
-                    {header.isPlaceholder ? null : <table.FlexRender header={header} />}
-                  </th>
-                ))}
-              </tr>
-            ))}
-          </thead>
-          <tbody className="divide-y divide-line">
-            {table.getRowModel().rows.map((row) => (
-              <tr key={row.id}>
-                {row.getAllCells().map((cell) => (
-                  <td
-                    key={cell.id}
-                    className={`px-3 py-2 align-top ${cell.column.id === 'action' ? 'text-right' : 'text-ink'}`}
-                  >
-                    <table.FlexRender cell={cell} />
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <p id={noteId} className="text-xs text-faint">
-        Last active is approximate: it updates when the session is renewed, at most once a day.
-      </p>
-    </>
-  )
+  return <DataTable rows={list.data} columns={columns} getRowId={(row) => row.id} />
 }
 
 /** What the table area says when the session is too old to list devices. */

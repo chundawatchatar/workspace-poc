@@ -1,6 +1,7 @@
 export * from './BrandMark'
 export * from './Button'
 export * from './brand'
+export * from './DataTable'
 export * from './FolderBrowser'
 export * from './FormError'
 export * from './Icon'
