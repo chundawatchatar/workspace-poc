@@ -82,6 +82,43 @@ in the agent's folder and types its resume command, or **Open shell** (also
 Enter). Terminals without an agent are created again as usual, in their saved
 `cwd`. The same happens when the daemon dies while the host is running.
 
+## Agent tracking
+
+The daemon is where agent hooks report, because it is the one process that is
+always there while an agent runs. The whole design is in
+[agents.md](agents.md); the daemon's part is:
+
+- **A second socket.** Next to `host.sock` the daemon listens on
+  `<runtime>/agent.sock`, plain HTTP for the hook script. It is the only local
+  endpoint outside the host's `routes` registry, and the tunnel and the
+  `/m/<id>` relay never reach it. A shell only gets this address, so it can
+  never speak the control protocol on `host.sock`.
+- **The shim folder.** At start the daemon writes `<runtime>/agent/`: the
+  `claude` and `codex` shims and `orch-agent-hook` in `bin/`, the generated
+  Claude Code settings and the zsh startup wrapper, all from fixed contents in
+  `packages/terminal/src/agent-shim*.ts`. If the write fails, shells start
+  without the `PATH` change.
+- **Per-session tokens.** When a session tracks any agent, each shell it starts
+  gets a fresh random token in `ORCH_AGENT_TOKEN`, with `ORCH_AGENT_SOCKET`.
+  Only that shell's environment and the daemon's memory hold it: it is never
+  sent to the host, stored or logged.
+- **Requests from the host.** `hello` carries `tracking` (which agents the
+  session may track; absent means none), and two requests change it later:
+  `tracking`, sent when the user's answer or the terminal's switch changes, and
+  `agentExited`, sent when process inspection sees the agent leave, which drops
+  its hook state. The daemon's status carries the last hook event as
+  `agentHook`.
+- **The switch in the record.** A terminal the user stopped tracking has
+  `agentTracking: false` in its record under `.data/terminal-daemons/`; absent
+  means on. The host reads it before `hello`.
+- **Hook state lives in memory.** It survives a host restart, but a daemon
+  restart loses it with the sessions, and a resumed agent starts from terminal
+  signals with a new token.
+- **Editing tracking code changes `daemonBuild`.** The channel and shims live in
+  `packages/terminal/src`, whose top-level sources the build hash covers along
+  with the daemon's `main.ts`. A running daemon keeps the old code, and the
+  host warns about it, until `bun run terminals:stop`, which ends its shells.
+
 ## Why output is binary
 
 Control messages are length-prefixed JSON, but terminal output travels as raw
