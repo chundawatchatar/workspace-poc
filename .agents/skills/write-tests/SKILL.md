@@ -128,7 +128,7 @@ test('a failed sign-out shows the error toast and stays on the page', async () =
 
 ## Lint
 
-Biome checks test files (`*.test.ts`, `*.test.tsx`) with the built-in test rules (no focused, skipped or nested-too-deep suites, no duplicate hooks, no `done` callbacks) and with the GritQL plugins in `biome-plugins/`:
+Biome refuses `@happy-dom/*`, `@testing-library/*` and `msw` imports in the server-side workspaces (`apps/server`, `apps/host`, `apps/ptyd-bun`, `packages/domain`, `packages/shared`, `packages/terminal`). It checks test files and test helpers (`*.test.ts`, `*.test.tsx`, anything under a `test/` folder) with the built-in test rules (no focused, skipped or nested-too-deep suites, no duplicate hooks, no `done` callbacks) and with the GritQL plugins in `biome-plugins/`:
 
 - `no-snapshots`: no `toMatchSnapshot` or inline snapshots. A snapshot asserts "nothing changed", not a behavior, and gets updated without being read.
 - `no-fire-event`: use `user-event`, which sends the full event sequence a browser would.

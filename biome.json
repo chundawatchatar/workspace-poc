@@ -114,7 +114,65 @@
       }
     },
     {
-      "includes": ["**/*.test.ts", "**/*.test.tsx"],
+      "includes": ["apps/server/**", "apps/host/**", "apps/ptyd-bun/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": { "lucide-react": "Import icons from @orch/ui/icons instead." },
+                "patterns": [
+                  {
+                    "group": ["@happy-dom/**", "happy-dom", "@testing-library/**", "msw", "msw/**"],
+                    "message": "Browser test tools replace fetch and WebSocket and intercept requests, which breaks tests against real servers. See the write-tests skill."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/domain/**", "packages/shared/**", "packages/terminal/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": { "lucide-react": "Import icons from @orch/ui/icons instead." },
+                "patterns": [
+                  {
+                    "group": [
+                      "@orch/web",
+                      "@orch/web/**",
+                      "@orch/host",
+                      "@orch/host/**",
+                      "@orch/client",
+                      "@orch/client/**",
+                      "@orch/server",
+                      "@orch/server/**",
+                      "@orch/ptyd-bun",
+                      "@orch/ptyd-bun/**",
+                      "**/apps/**"
+                    ],
+                    "message": "Shared packages must not import from apps. Pass data and callbacks as props instead."
+                  },
+                  {
+                    "group": ["@happy-dom/**", "happy-dom", "@testing-library/**", "msw", "msw/**"],
+                    "message": "Browser test tools replace fetch and WebSocket and intercept requests, which breaks tests against real servers. See the write-tests skill."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["**/*.test.ts", "**/*.test.tsx", "**/test/**"],
       "plugins": [
         "./biome-plugins/no-snapshots.grit",
         "./biome-plugins/no-fire-event.grit",
