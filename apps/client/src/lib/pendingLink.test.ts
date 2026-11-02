@@ -1,16 +1,12 @@
-import { afterAll, beforeEach, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import {
   clearPendingMachineLink,
   PENDING_LINK_MAX_AGE,
   readPendingMachineLink,
   setPendingMachineLink,
 } from './pendingLink'
-import { installMemoryStorage, uninstallMemoryStorage } from './testStorage'
 
 const KEY = 'orch-pending-machine-link'
-
-beforeEach(() => installMemoryStorage())
-afterAll(() => uninstallMemoryStorage())
 
 describe('the pending machine link', () => {
   test('keeps only the id, name and time, and lasts a day', () => {

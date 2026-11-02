@@ -134,6 +134,7 @@ Biome refuses `@happy-dom/*`, `@testing-library/*` and `msw` imports in the serv
 - `no-fire-event`: use `user-event`, which sends the full event sequence a browser would.
 - `no-dom-queries`: no `getByTestId` and friends, no `container.querySelector`. Query by role, label or text.
 - `no-assertion-count`: no `expect.assertions` or `expect.hasAssertions`. Assert on results; with `waitFor` the count is flaky.
+- `no-static-render`: no `renderToStaticMarkup` or `renderToString`. An HTML string runs no effects or events and can only be matched with regexes; render with Testing Library's `render`.
 
 Silence one only with a `// biome-ignore` that gives a real reason.
 

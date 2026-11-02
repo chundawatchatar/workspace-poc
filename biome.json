@@ -177,7 +177,8 @@
         "./biome-plugins/no-snapshots.grit",
         "./biome-plugins/no-fire-event.grit",
         "./biome-plugins/no-dom-queries.grit",
-        "./biome-plugins/no-assertion-count.grit"
+        "./biome-plugins/no-assertion-count.grit",
+        "./biome-plugins/no-static-render.grit"
       ],
       "linter": {
         "rules": {
