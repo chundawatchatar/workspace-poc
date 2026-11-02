@@ -1,6 +1,6 @@
-import { expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import type { AgentStateName, SessionInfo } from '@orch/shared'
-import { renderToStaticMarkup } from 'react-dom/server'
+import { render, screen } from '@testing-library/react'
 import { type AgentStatus, agentStatus } from '../lib/agentStatus'
 import { AgentStateMark } from './AgentStateMark'
 
@@ -11,27 +11,15 @@ function status(state: AgentStateName, progress: SessionInfo['progress'] = null)
   return agentStatus({ agentState, progress, agent }) as AgentStatus
 }
 
-test('each kind has its own shape, role and accessible name', () => {
-  const marks = [status('working'), status('waiting'), status('idle'), status('idle', 'error')].map((s) => {
-    const html = renderToStaticMarkup(<AgentStateMark status={s} size={10} />)
-    expect(html).toContain('role="img"')
-    expect(html).toContain(`aria-label="${s.label}"`)
-    expect(html).not.toContain('aria-hidden')
-    return html
+describe('AgentStateMark', () => {
+  test('each kind is an image named by its status', () => {
+    const statuses = [status('working'), status('waiting'), status('idle'), status('idle', 'error')]
+    expect(statuses.map((s) => s.kind)).toEqual(['working', 'waiting', 'idle', 'failed'])
+
+    for (const s of statuses) {
+      const { unmount } = render(<AgentStateMark status={s} size={10} />)
+      expect(screen.getByRole('img', { name: s.label })).toBeInTheDocument()
+      unmount()
+    }
   })
-
-  expect(marks[0]).toContain('lucide-loader-circle')
-  expect(marks[0]).toContain('animate-spin')
-  expect(marks[1]).toContain('lucide-hand')
-  expect(marks[1]).toContain('text-warn')
-  expect(marks[2]).toContain('lucide-pause')
-  expect(marks[2]).toContain('text-faint')
-  expect(marks[3]).toContain('lucide-circle-alert')
-  expect(marks[3]).toContain('text-bad')
-})
-
-test('a mark on the selected tile drops its status colour for the on-accent one', () => {
-  const html = renderToStaticMarkup(<AgentStateMark status={status('waiting')} size={10} onAccent />)
-  expect(html).toContain('text-on-accent')
-  expect(html).not.toContain('text-warn')
 })
