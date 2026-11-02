@@ -29,6 +29,12 @@ async function until<T>(read: () => T | undefined | null | false, what: string):
   throw new Error(`timed out waiting for ${what}`)
 }
 
+/** Waits for a file's mode. The daemon writes its shim just after binding, so the socket appearing doesn't mean it's there. */
+async function untilMode(path: string, mode: number) {
+  const current = () => statSync(path, { throwIfNoEntry: false })?.mode
+  await until(() => ((current() ?? 0) & 0o777) === mode, `mode ${mode.toString(8)} on ${path}`)
+}
+
 /** Starts a daemon in a fresh short folder. `prepare` runs first, to set the folder up. */
 async function daemon(prepare: (dir: string) => void = () => {}, shellName = 'shell.sh', script = SHELL) {
   // Not `tmpdir()`: on macOS its path can be too long for a Unix socket.
@@ -163,9 +169,9 @@ while IFS= read -r line; do eval "$line"; done
 `
   const { dir, socket } = await daemon(() => {}, 'zsh', script)
   const root = join(dir, 'agent')
-  expect(statSync(root).mode & 0o777).toBe(0o700)
-  expect(statSync(join(root, 'bin', 'orch-agent-hook')).mode & 0o777).toBe(0o700)
-  expect(statSync(join(root, 'claude-settings.json')).mode & 0o777).toBe(0o600)
+  await untilMode(root, 0o700)
+  await untilMode(join(root, 'bin', 'orch-agent-hook'), 0o700)
+  await untilMode(join(root, 'claude-settings.json'), 0o600)
 
   const shellLine = (peer: { output: string }) => /PATH=\[(.*?)\] ZDOTDIR=\[(.*?)\]/.exec(peer.output)
   const off = await attach(socket, 'off', { claude: false, codex: false })
@@ -211,7 +217,7 @@ while IFS= read -r line; do eval "$line"; done
 `
   const { dir, socket } = await daemon(() => {}, 'zsh', script)
   const bin = join(dir, 'agent', 'bin')
-  expect(statSync(join(bin, 'codex')).mode & 0o777).toBe(0o700)
+  await untilMode(join(bin, 'codex'), 0o700)
   const ran = join(dir, 'ran')
   const mine = join(dir, 'my program')
   writeFileSync(mine, `#!/bin/sh\necho "$1|$2|$ORCH_AGENT_TOKEN" >"${ran}"\n`)
@@ -242,8 +248,9 @@ while IFS= read -r line; do eval "$line"; done
   const other = await attach(socket, 'other', { claude: true, codex: false })
   await shellVariables(other)
   other.send({ type: 'input', data: `export PATH="${bin}:${fakes}:/usr/bin:/bin" HOME="${dir}"; codex x\r` })
-  await until(() => existsSync(seen), 'the plain binary')
-  expect(readFileSync(seen, 'utf8')).toBe('[x]\n')
+  // Not just `existsSync`: the shell creates the file before `echo` writes to it.
+  const passed = await until(() => existsSync(seen) && readFileSync(seen, 'utf8'), 'the plain binary')
+  expect(passed).toBe('[x]\n')
 }, 30_000)
 
 test('a daemon that can not write the shim folder still starts terminals that can report', async () => {
