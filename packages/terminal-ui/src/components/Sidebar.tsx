@@ -2,6 +2,7 @@ import { type GitInfo, listPanes, routes, type SessionInfo, type Workspace } fro
 import { ChevronRight, GitBranch, Keyboard, Moon, Palette, Plus, Sun, X } from '@orch/ui/icons'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
+import { agentCounts } from '../lib/agentStatus'
 import { apiQuery } from '../lib/api'
 import { removeWorkspace, renameWorkspace } from '../lib/commands'
 import { connectionCopy } from '../lib/connection'
@@ -11,6 +12,7 @@ import { SIDEBAR_WIDTH, setSidebarWidth, sidebarWidth } from '../lib/sidebarWidt
 import { setOverlay, toggleThemeMode, useApp } from '../lib/store'
 import { useNavigation, WorkspaceLink } from '../navigation'
 import { usePageOptions } from '../pageOptions'
+import { AgentCounts } from './AgentCounts'
 import { SidebarTerminals, terminalIds, useCollapsed } from './SidebarTerminals'
 
 function useGitInfo(cwd: string): GitInfo | null {
@@ -247,6 +249,7 @@ function WorkspaceRow(props: { workspace: Workspace; index: number; active: bool
             {terminalCount}
           </span>
         )}
+        <AgentCounts counts={agentCounts(workspace, sessions)} active={active} />
         {pending.length > 0 && (
           <span
             className={`flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold ${
