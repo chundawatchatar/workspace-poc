@@ -26,6 +26,8 @@ const recordSchema = z.object({
   cwd: z.string().optional(),
   /** The agent running in the terminal, kept so it can be resumed if the daemon loses the session. */
   agent: agentSchema.nullable().optional(),
+  /** The per-session switch: false when the user turned agent tracking off for this terminal. Absent means on. */
+  agentTracking: z.literal(false).optional(),
 })
 
 /**
@@ -97,8 +99,11 @@ export class DaemonRepository {
       })
   }
 
-  /** Saves what is known about a terminal's shell and agent. Writes only when something changed. */
-  update(id: string, patch: Partial<Pick<DaemonRecord, 'cwd' | 'agent'>>): DaemonRecord {
+  /**
+   * Saves what is known about a terminal's shell and agent, and its tracking switch. A field patched to
+   * `undefined` is removed. Writes only when something changed.
+   */
+  update(id: string, patch: Partial<Pick<DaemonRecord, 'cwd' | 'agent' | 'agentTracking'>>): DaemonRecord {
     const current = this.get(id)
     const next = { ...current, ...patch }
     if (JSON.stringify(next) === JSON.stringify(current)) return current

@@ -93,8 +93,10 @@ export interface SessionInfo {
    */
   /** `command` is what Resume runs: the agent on its conversation, or fresh when it had not started one. */
   interrupted: { agent: AgentRef; cwd: string; command: string } | null
-  /** What the agent in the foreground is doing. Null with no agent or the session interrupted or not alive. */
+  /** What the agent in the foreground is doing. Null with no agent, tracking off, or the session interrupted or not alive. */
   agentState: AgentState | null
+  /** The per-session switch. False only when the user turned agent tracking off for this terminal. */
+  agentTracking: boolean
 }
 
 /** Host to client, on the events socket. */

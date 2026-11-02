@@ -43,7 +43,9 @@ test('the routes registry never holds the agent reporting channel, which only th
     Object.values(group as Record<string, { path: string }>).map((route) => route.path),
   )
   expect(paths.length).toBeGreaterThan(5)
-  expect(paths.filter((path) => path.includes('/v1/') || path.includes('agent'))).toEqual([])
+  // The trust answers are the user's own setting, not the channel; nothing else may mention agents.
+  const channel = paths.filter((path) => !path.startsWith('/api/agent-tracking/'))
+  expect(channel.filter((path) => path.includes('/v1/') || path.includes('agent'))).toEqual([])
 })
 
 describe('parseMessage', () => {

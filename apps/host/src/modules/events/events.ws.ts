@@ -1,8 +1,9 @@
-import { type AppState, type HostInfo, listSurfaces, parseMessage, routes } from '@orch/shared'
+import { type AppState, type ClientEvent, type HostInfo, listSurfaces, parseMessage, routes } from '@orch/shared'
 import { SessionManager } from '@orch/terminal'
 import { createRateLimiter } from '../../lib/rateLimit'
 import { type SocketHandler, serveSocket } from '../../lib/socket'
 import type { LayoutRepository } from '../layout/layout.repository'
+import { DaemonSession } from '../terminals/daemon-session.service'
 import type { EventClient, EventHub } from './events.service'
 
 const socket = routes.sockets.events
@@ -21,6 +22,15 @@ function liveSessionIds(state: AppState) {
       .filter((s) => s.kind === 'terminal')
       .map((s) => s.id),
   )
+}
+
+/** Applies a client message about one terminal. A terminal that is gone is ignored. */
+function applyToSession(sessions: SessionManager, message: Exclude<ClientEvent, { type: 'state' }>) {
+  const session = sessions.get(message.sessionId)
+  if (message.type === 'ack') session?.ack()
+  else if (message.type === 'restore') session?.restore(message.mode)
+  // Only the host's daemon sessions have the switch, so `TerminalSession` and the daemon build stay as they are.
+  else if (session instanceof DaemonSession) session.setAgentTracking(message.on)
 }
 
 /** Adds each connection of `routes.sockets.events` to the hub, local or tunneled, and applies its layout changes. */
@@ -58,10 +68,8 @@ export function eventsSocketHandler({ hub, layout, sessions, info }: EventsSocke
           if (sessions.collect(liveSessionIds(layout.state))) {
             setTimeout(() => sessions.collect(liveSessionIds(layout.state)), SessionManager.GRACE + 100)
           }
-        } else if (message.type === 'ack') {
-          sessions.get(message.sessionId)?.ack()
-        } else if (message.type === 'restore') {
-          sessions.get(message.sessionId)?.restore(message.mode)
+        } else {
+          applyToSession(sessions, message)
         }
       },
       close() {

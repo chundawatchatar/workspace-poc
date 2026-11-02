@@ -1,7 +1,18 @@
-import { listPanes, type SessionInfo, type SurfaceKind, type Workspace } from '@orch/shared'
+import {
+  AGENT_LABELS,
+  type AgentTrackingAnswer,
+  type AgentTrackingStatus,
+  listPanes,
+  type SessionInfo,
+  type SurfaceKind,
+  type TrackedAgent,
+  trackedAgent,
+  type Workspace,
+} from '@orch/shared'
 import { THEMES } from '@orch/ui'
 import { ChevronRight, GitPullRequest, KanbanSquare, LayoutGrid, Search, SquareTerminal } from '@orch/ui/icons'
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { SWITCH_SHORT_HINT, useAgentTrackingAnswers, useAnswerAgentTracking } from '../lib/agentTracking'
 import {
   addSurface,
   closeSurface,
@@ -12,7 +23,15 @@ import {
   toggleZoom,
 } from '../lib/commands'
 import { shortPath } from '../lib/paths'
-import { restoreSession, selectTheme, setOverlay, setThemeChoice, toggleSidebar, useApp } from '../lib/store'
+import {
+  restoreSession,
+  selectTheme,
+  setAgentTracking,
+  setOverlay,
+  setThemeChoice,
+  toggleSidebar,
+  useApp,
+} from '../lib/store'
 import { useNavigation } from '../navigation'
 import { usePageOptions } from '../pageOptions'
 import { tidyTitle } from './LayoutView'
@@ -71,12 +90,43 @@ function tabItems(workspace: Workspace, sessions: Record<string, SessionInfo>, g
   )
 }
 
+/**
+ * The tracking switch of the focused terminal, when there is one, and a command per agent kind to change its
+ * stored trust answer, once the answers are known.
+ */
+function trackingCommands(
+  focused: SessionInfo | undefined,
+  answers: AgentTrackingStatus | undefined,
+  answer: (agent: TrackedAgent, answer: AgentTrackingAnswer) => void,
+) {
+  const items: { label: string; run: () => void; hint: string }[] = []
+  if (focused) {
+    const on = focused.agentTracking
+    items.push({
+      label: on ? 'Stop tracking the agent in this terminal' : 'Track the agent in this terminal again',
+      run: () => setAgentTracking(focused.id, !on),
+      hint: SWITCH_SHORT_HINT,
+    })
+  }
+  for (const kind of answers ? trackedAgent.options : []) {
+    const on = answers?.[kind] === 'on'
+    items.push({
+      label: `${on ? 'Stop tracking' : 'Track'} ${AGENT_LABELS[kind]} with hooks`,
+      run: () => answer(kind, on ? 'off' : 'on'),
+      hint: 'Applies to agents started afterwards',
+    })
+  }
+  return items
+}
+
 export function CommandPalette() {
   const { workspaceId, navigate } = useNavigation()
   const { remoteAccessSetting } = usePageOptions()
   const workspaces = useApp((s) => s.state?.workspaces)
   const sessions = useApp((s) => s.sessions)
   const home = useApp((s) => s.info?.home)
+  const answers = useAgentTrackingAnswers()
+  const answer = useAnswerAgentTracking()
   const [query, setQuery] = useState('')
   const [index, setIndex] = useState(0)
   const list = useRef<HTMLDivElement>(null)
@@ -104,8 +154,8 @@ export function CommandPalette() {
       result.push(...tabItems(workspace, sessions, go))
     }
 
-    const command = (label: string, run: () => void, keys?: string) =>
-      result.push({ id: `cmd:${label}`, group: 'Command', icon: <ChevronRight size={14} />, label, keys, run })
+    const command = (label: string, run: () => void, keys?: string, hint?: string) =>
+      result.push({ id: `cmd:${label}`, group: 'Command', icon: <ChevronRight size={14} />, label, keys, hint, run })
 
     if (current) {
       const pane = () => currentPane(current)
@@ -125,6 +175,8 @@ export function CommandPalette() {
         command('Open a plain shell instead', () => restoreSession(activeId, 'shell'))
       }
     }
+    const focused = current && sessions[currentPane(current).activeSurfaceId]
+    for (const item of trackingCommands(focused, answers, answer)) command(item.label, item.run, undefined, item.hint)
     command('New workspace', () => setOverlay('new-workspace'), 'Ctrl+B W')
     command('Toggle sidebar', toggleSidebar, 'Ctrl+B B  ·  ⌘B')
     command('Choose theme…', () => setOverlay('themes'), 'Ctrl+B T')
@@ -135,7 +187,7 @@ export function CommandPalette() {
     command('Show keyboard shortcuts', () => setOverlay('help'), 'Ctrl+B ?')
     if (remoteAccessSetting) command('Remote access…', () => setOverlay('remote-access'))
     return result
-  }, [workspaces, sessions, home, workspaceId, navigate, remoteAccessSetting])
+  }, [workspaces, sessions, home, workspaceId, navigate, remoteAccessSetting, answers, answer])
 
   const visible = useMemo(() => {
     const trimmed = query.trim().toLowerCase()

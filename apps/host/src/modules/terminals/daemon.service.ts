@@ -109,8 +109,13 @@ export function stopDaemon(repository: DaemonRepository): Promise<'stopped' | 'a
   })
 }
 
-/** Creates the one persistent daemon and the terminals that attach to it. */
-export function daemonFactory(hostRoot: string, tracking?: AgentTracking) {
+/** Tells every open terminal's daemon session its tracking again, after a trust answer changed. */
+export function resendTracking(sessions: TerminalSession[]) {
+  for (const session of sessions) if (session instanceof DaemonSession) session.resendTracking()
+}
+
+/** Creates the one persistent daemon and the terminals that attach to it. `tracking` reads the trust answers. */
+export function daemonFactory(hostRoot: string, tracking?: () => AgentTracking) {
   const repository = new DaemonRepository(hostRoot)
   const shared = new SharedDaemon(
     repository,

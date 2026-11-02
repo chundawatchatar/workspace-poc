@@ -5,6 +5,7 @@ import { localOrigin } from './lib/localOrigin'
 import { tunnelPrincipal } from './lib/principal'
 import { createSocketRouter, type SocketRouter, socketEntry } from './lib/socketRouter'
 import { type AccessDeps, createAccessRoutes } from './modules/access/access.routes'
+import { type AgentTrackingDeps, createAgentTrackingRoutes } from './modules/agent-tracking/agent-tracking.routes'
 import { createEventsSocket, type EventsSocketDeps, eventsSocketHandler } from './modules/events/events.ws'
 import { fsRoutes } from './modules/fs/fs.routes'
 import { gitRoutes } from './modules/git/git.routes'
@@ -13,7 +14,7 @@ import { createSystemRoutes, type SystemDeps } from './modules/system/system.rou
 import { createTerminalSocket, terminalSocketHandler } from './modules/terminals/terminals.ws'
 
 /** Everything the modules need, built once in `index.ts`. Add another module's deps with `&`. */
-export type AppDeps = EventsSocketDeps & SystemDeps & AccessDeps & RemoteAccessDeps
+export type AppDeps = EventsSocketDeps & SystemDeps & AccessDeps & RemoteAccessDeps & AgentTrackingDeps
 
 /** The host's routes: `app` serves HTTP and local sockets, and `sockets` opens the same sockets for the tunnel. */
 export interface HostApp {
@@ -42,6 +43,7 @@ export function createApp(deps: AppDeps): HostApp {
   app.route('/', gitRoutes)
   app.route('/', createAccessRoutes(deps))
   app.route('/', createRemoteAccessRoutes(deps))
+  app.route('/', createAgentTrackingRoutes(deps))
   app.route('/', createEventsSocket(events))
   app.route('/', createTerminalSocket(terminal))
 
