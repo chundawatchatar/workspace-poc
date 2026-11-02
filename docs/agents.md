@@ -1,14 +1,17 @@
 # Agent status
 
-This is the design for tracking what the coding agent in each terminal is doing: AG-1 to AG-5 in
+This describes how the product tracks what the coding agent in each terminal is doing: AG-1 to AG-5 in
 [REQUIREMENTS.md](REQUIREMENTS.md). Each Claude Code and Codex tab shows whether its agent is working, waiting for
 the user or idle (AG-1), the sidebar counts agents per state for each workspace (AG-2), and the user is notified when
 an agent finishes, asks a question or needs permission (AG-3). Tracking never edits the user's agent settings, asks
-once where the agent wants the user to trust it (AG-4), and can be turned off for one terminal (AG-5).
+once before adding hooks to an agent and never bypasses the agent's own trust checks (AG-4), and can be turned off
+for one terminal (AG-5).
 
-It is a proposal for the eight jobs listed under [Build order](#build-order). Where it depends on agent behaviour
-that has not been checked yet (exact settings keys, payloads, prompts), it says so and lists the point under
-[Open questions](#open-questions). Those are checked in the hooks jobs, and this document is corrected then.
+The state comes from terminal signals for every agent the product recognises, and from agent hooks for Claude Code
+and Codex once the user has answered Track for that agent. What it can't do yet is under
+[Known limits](#known-limits), and what is still undecided under [Open questions](#open-questions). The agent
+behaviour it relies on was checked against the versions in the [Claude Code](#claude-code-check-record) and
+[Codex](#codex-check-record) check records. It was built in jobs 037 to 046.
 
 It builds on the [terminal daemon](terminal-daemon.md): shells run in the shared daemon (`apps/ptyd-bun`), which
 outlives the host, and the host inspects each shell's foreground program to detect agents.
@@ -243,7 +246,7 @@ last answer. `-c notify=...` replaces the configured value, so a plain flag woul
 **Candidates for later.** Codex's real hook system (`PermissionRequest`, `Stop` and others) would give precise events
 and leave `notify` alone, but hooks need review: Codex shows a "Hooks need review" dialog and stores trust in
 `hooks.state` in `config.toml`. `--dangerously-bypass-hook-trust` must never be used (AG-4), and whether `-c` can declare
-hooks is unknown, so this belongs after step 8, which owns the ask-once question. Codex also sends
+hooks is unknown (see [Open questions](#open-questions)). Codex also sends
 `OSC 7501;state=working|idle|done:app=codex` and `state=blocked:app=codex:kind=permission`, which `TerminalCore`
 ignores today: a terminal-side source of the states `notify` can't give, needing no shim. It is undocumented, so reading
 it would be a job of its own.
@@ -311,7 +314,7 @@ user declines, the agent runs without the hooks and the tab falls back to the ba
 web UI: "Track Claude Code's status with hooks? This adds hooks to Claude Code sessions started in this app, for
 those sessions only. Your settings are not changed." with **Track** and **Not now**. The notice goes on to say that
 it applies to agents started after the answer, and that a terminal already open gets it once its shell starts again
-or in a new tab (see the gap below). It is a strip above the terminal (`TrustNotice` in `packages/terminal-ui`),
+or in another tab (see the gap below). It is a strip above the terminal (`TrustNotice` in `packages/terminal-ui`),
 not a modal or an overlay: the terminal gives up rows for it, so the agent's own prompts stay visible and usable. Codex gets the same question
 with its own name.
 
@@ -337,9 +340,8 @@ with its own name.
 **Known gap: a running shell gets no token.** The daemon issues a shell its token only when some kind is tracked at
 the shell's start, and turning tracking on never gives a running shell one. So the terminal where the user first
 answers Track, any shell started while every answer was off or unasked, and any shell started with its switch off get
-hooks only after the shell starts again (exit and press Enter) or in a new tab. The notice and the switch's tooltip
-say so. Open question: issue a token whenever the switch is on and let `GET /v1/session` gate per kind, which needs a
-daemon change and a daemon restart.
+hooks only after the shell starts again (exit and press Enter) or in another tab. The notice and the switch's tooltip
+say so (see [Open questions](#open-questions)).
 
 ## Local reporting channel
 
@@ -527,23 +529,25 @@ host warns about the running daemon as usual.
   `attention` and receives events while the host is down.
 - **The host** computes `agentState` in `apps/host/src/modules/terminals/daemon-session.service.ts` when it builds
   `SessionInfo`, from the daemon's status (`agentHook`, `progress`, `attention`), its own `agent`, `interrupted`,
-  `alive` and the switch. The derivation is one pure function, `deriveAgentState`, in a new
+  `alive` and the switch. The derivation is one pure function, `deriveAgentState`, in
   `packages/terminal/src/agent-state.ts`, with tests for the precedence rules. The host keeps the previous result to
-  keep `since` stable while the state doesn't change.
+  keep `since` stable while the state doesn't change, and `ProgressWatch`
+  (`apps/host/src/modules/terminals/agent-interrupt.service.ts`) runs the timer for the interrupt rule.
 - **The web** only renders `agentState`; it derives nothing except the sidebar counts.
 
-Files that must change together:
+Where the code lives:
 
 | Side | Files |
 | --- | --- |
 | Shared | `packages/shared/src/protocol.ts` (`SessionInfo`, `AgentState`, `attention.from`), `packages/shared/src/contracts/events.ts` (`agentTracking`) |
-| Terminal package | `packages/terminal/src/daemon-protocol.ts` (`daemonStatus.agentHook`, `attention.from`), `packages/terminal/src/core.ts` (`shellEnv`, `TerminalCore.notify`), `packages/terminal/src/attention.ts` (the attention merge), new `packages/terminal/src/agent-state.ts`, and `packages/terminal/src/agent-channel.ts` (tokens, requests, rate limit, hook state), which lives here because `daemonBuild` hashes this folder and only `main.ts` of the daemon |
+| Terminal package | `packages/terminal/src/daemon-protocol.ts` (`daemonStatus.agentHook`, `attention.from`), `packages/terminal/src/core.ts` (`shellEnv`, `TerminalCore.notify`), `packages/terminal/src/attention.ts` (the attention merge), `packages/terminal/src/agent-state.ts`, and `packages/terminal/src/agent-channel.ts` (tokens, requests, rate limit, hook state), which lives here because `daemonBuild` hashes this folder and only `main.ts` of the daemon |
 | Daemon | `apps/ptyd-bun/src/main.ts` (request schema, `agent.sock`, the shim folder, `onNotify` to the session's core) |
 | Host | `apps/host/src/modules/terminals/daemon-session.service.ts`, `daemon.repository.ts` (the switch in each record), `apps/host/src/modules/events/events.ws.ts` (`agentTracking`) |
 | Web | `packages/terminal-ui` (tab state, sidebar counts, trust notice, switch) |
 
-Host and web change in the same job, because `SessionInfo` is shared and every place that builds one must set the
-new fields. The daemon side may land first, since a host that never sends `tracking` gets no hook state.
+`SessionInfo` is shared, so a change to its agent fields changes the host and the web together, and every place that
+builds one sets them. A host that never sends `tracking` gets no hook state, so a daemon change can ship ahead of
+the host that uses it.
 
 ## Turning tracking off for one session (AG-5)
 
@@ -618,8 +622,7 @@ For Codex (`turnEndOnly`), whose `notify` only ever reports `idle`/`finished`, e
 except the first one of an agent run: after a new token (a shell start), `agentExited`, the hook state being dropped,
 or tracking being turned back on. That one is the title turn's early report (see "An early `finished`" under
 [Codex](#codex)), which can come while the real turn still runs. The cost: a resumed Codex session, which may have no
-title turn, gets no notification for its first finished turn. A rule based on time since the agent started could
-avoid that; it is an open question whether it is worth it.
+title turn, gets no notification for its first finished turn (see [Open questions](#open-questions)).
 
 Nothing else notifies:
 
@@ -684,23 +687,67 @@ This merge lives in `AttentionSlot` (`packages/terminal/src/attention.ts`), whic
 - Events are rate limited per session and overall, and the shim and hook folder is written by the daemon from fixed
   contents in a private folder.
 
+## Known limits
+
+- **Hooks exist only for Claude Code and Codex.** OpenCode, Cursor Agent, pi and Command Code get terminal signals
+  only (see [Other agents](#other-agents)).
+- **Hooks need Track and a new shell.** The shim adds hooks only once the user has answered Track for that agent, and
+  only in a shell started after that answer, since a running shell gets no token (see [Trust](#trust-ag-4)).
+- **No idle without hooks.** Terminal signals derive `idle` even mid-turn, so without hooks there is no idle mark and
+  no idle count, and no new notification beyond the bell and OSC 9 attention.
+- **Codex reports only finished turns.** Its `notify` has no turn start and Codex sends no OSC 9;4, so a Codex tab shows
+  no `working`, and its `waiting` comes from the approval bell (see [Codex](#codex)). An approval bell within 2 seconds
+  of a "Codex finished" notification is dropped.
+- **The first finished turn of a Codex run raises no notification,** because it can be the title turn's early report.
+  For a resumed run that has no title turn, the real first turn goes unannounced.
+- **The shim can be missed:** an absolute path, an alias or function, `npx`/`bunx`, a startup file that reorders `PATH`
+  in a shell other than zsh, `ssh`, `tmux`, `screen`, a container, an agent version without `--settings` or `-c`, or
+  settings that turn hooks off. The tab then shows terminal signals (see [When the shim is missed](#when-the-shim-is-missed)).
+- **An interrupted Claude Code turn keeps showing `working`.** Esc fires no hook, and Claude Code sends no OSC 9;4
+  here, so the interrupt rule has nothing to act on. The next prompt or event puts it right.
+- **Some Claude Code moments are missed.** `StopFailure` and `PostToolUseFailure` are not hooked, so a failed API call
+  can leave `working` and a tool failing after a granted permission can leave `waiting`, until the next event. An
+  answer within 1 second of `waiting`, or declining a prompt with Esc, also keeps `waiting`.
+- **Hook state is lost when the daemon restarts.** A resumed agent starts from terminal signals with a new token.
+- **The full UI path of the trust notice was not run end to end.** Its pieces have tests, but the notice, Track, hook
+  states in a fresh tab and the switch were not checked together by hand.
+
 ## Open questions
 
-These are assumptions to check in the hooks jobs. Each answer is written back into this document.
+The questions the hooks jobs had to answer about Claude Code and Codex are answered below. The rest are still open.
 
-1. **Claude Code `--settings`.** Answered: it accepts a file path and its hooks add to the user's and the project's.
+Answered:
+
+1. **Claude Code `--settings`.** It accepts a file path and its hooks add to the user's and the project's.
    The version that introduced it was not found, so the shim checks `--help` instead of a version number.
-2. **Hook approval.** Answered: no separate review of hooks from `--settings`. They wait for workspace trust.
-3. **Matchers.** Answered: `permission_prompt`, `idle_prompt` and the tool name `AskUserQuestion` fired as expected.
+2. **Hook approval.** Claude Code asks for no separate review of hooks from `--settings`. They wait for workspace trust.
+3. **Matchers.** `permission_prompt`, `idle_prompt` and the tool name `AskUserQuestion` fired as expected.
    `elicitation_dialog` is in the binary but needs an MCP server to fire, so it was not seen. Excluding one tool
    wasn't tried, because it isn't needed.
-4. **Interrupt.** Answered: Esc fires no `Stop`, and Claude Code sends no OSC 9;4 here, so there is nothing to clear.
-5. **Codex `notify`.** Answered: `-c notify=[...]` takes a TOML array, and `notify` reported only
+4. **Interrupt.** Esc fires no `Stop`, and Claude Code sends no OSC 9;4 here, so there is nothing to clear.
+5. **Codex `notify`.** `-c notify=[...]` takes a TOML array, and `notify` reported only
    `agent-turn-complete`, for the session's title turn as well. It has no event for approvals or a turn start. Codex
    sends no OSC 9;4. `tui.notifications=["approval-requested"]` with `bel` works and is worth passing.
-6. **`PATH` order.** Answered: a default macOS zsh setup does put the real agent first, so the `ZDOTDIR` wrapper is built.
-7. **Notification channel.** Answered: nothing. No bell, OSC 9 or OSC 777 reached a terminal with
-   `TERM_PROGRAM=workspace-poc` in a whole session, so the 2-second merge is rarely needed for Claude Code.
+6. **`PATH` order.** A default macOS zsh setup does put the real agent first, so the `ZDOTDIR` wrapper is built.
+7. **Notification channel.** No bell, OSC 9 or OSC 777 reached a terminal with `TERM_PROGRAM=workspace-poc` in a whole
+   Claude Code session, so the 2-second merge is rarely needed for Claude Code.
+
+Still open:
+
+- **Giving a running shell a token.** Issue a token whenever the switch is on, and let `GET /v1/session` gate per
+  agent, so answering Track works in the terminal where it was asked. It needs a daemon change and a daemon restart.
+- **Codex's own hook system.** `PermissionRequest`, `Stop` and the others would give Codex precise states and leave
+  `notify` alone. It needs a check of whether `-c` can declare hooks, and a way through Codex's "Hooks need review"
+  trust step that keeps to AG-4: never `--dangerously-bypass-hook-trust`, never writing `hooks.state`.
+- **Reading OSC 7501.** Codex sends `state=working|idle|done` and `state=blocked` with `kind=permission`, which would
+  give Codex `working` and `waiting` with no shim. It is undocumented, so it needs its own job: parsing in
+  `TerminalCore`, a check record across Codex versions, and a decision on how it ranks against `notify`.
+- **Notifying a resumed Codex run's first turn.** A rule based on time since the agent started could tell the title
+  turn's report from a real one. It needs a measure of how long title turns take, and a test that the early report
+  still raises nothing.
+- **Hooking `StopFailure` and `PostToolUseFailure`.** They would clear a stuck `working` or `waiting` after a failure.
+  It needs a check of their payloads and matchers on a current Claude Code, a state and reason for each, and the
+  matching rows in `CLAUDE_HOOKS` and the table above.
 
 ### Claude Code check record
 
@@ -746,23 +793,3 @@ trust entry and a `notify` of `"<dir>/My Notify/record", "turn-ended"`, and with
 - A project's `notify` is not honoured: with a trusted project's `.codex/config.toml` naming another program and
   `--no-daemon`, the `CODEX_HOME` one ran and the project's didn't. Whether the project file was loaded at all wasn't
   checked, so the shim's project check stays, as it can only cost tracking.
-
-## Build order
-
-Each step is one job and leaves the product working:
-
-1. **Terminal and protocol state.** `AgentState` and `agentState` on `SessionInfo`, `deriveAgentState` from the
-   baseline signals only, computed by the host. Host and web change together; the UI shows nothing yet.
-2. **Host reporting channel.** The daemon's `agent.sock`, per-session tokens in `shellEnv`, the strict schema, the
-   rate limit, `daemonStatus.agentHook`, `tracking` on `hello` and the `tracking`/`agentExited` requests, and the
-   hook precedence in `deriveAgentState`. Hooks were off for everyone until step 8, except with a development flag on
-   the host, removed in step 8.
-3. **Claude Code hooks.** The shim folder, the `claude` shim, the generated settings, `orch-agent-hook`, the version
-   check, and answers to open questions 1 to 4, 6 and 7.
-4. **Codex notify.** The `codex` shim and its `notify` mapping, and an answer to open question 5.
-5. **Tab state.** The tab shows `working`, `waiting` or, from hooks only, `idle`, with the reason and source in its
-   tooltip.
-6. **Sidebar counts.** Per-workspace counts per state.
-7. **Notifications.** Hook transitions raise attention in the daemon, with the 2-second merge in `AttentionSlot`.
-8. **Off switch and trust prompt.** The per-session switch in the record, the `agentTracking` client message, the
-   ask-once notice and `agent-tracking.json`. This turns hook tracking on for users who say yes. Done.
