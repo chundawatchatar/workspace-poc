@@ -1,0 +1,10 @@
+language js
+
+// A count of assertions says nothing about behavior, and with `waitFor` retries it makes tests flaky.
+`expect.$count($args)` where {
+  $count <: or {
+    `assertions`,
+    `hasAssertions`
+  },
+  register_diagnostic(span=$count, message="Assert on results instead of counting assertions.")
+}

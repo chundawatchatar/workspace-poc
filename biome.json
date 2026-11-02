@@ -114,6 +114,22 @@
       }
     },
     {
+      "includes": ["**/*.test.ts", "**/*.test.tsx"],
+      "plugins": [
+        "./biome-plugins/no-snapshots.grit",
+        "./biome-plugins/no-fire-event.grit",
+        "./biome-plugins/no-dom-queries.grit",
+        "./biome-plugins/no-assertion-count.grit"
+      ],
+      "linter": {
+        "rules": {
+          "complexity": { "noExcessiveNestedTestSuites": "error" },
+          "style": { "noDoneCallback": "error" },
+          "suspicious": { "noDuplicateTestHooks": "error" }
+        }
+      }
+    },
+    {
       "includes": ["**/*.astro"],
       "linter": { "rules": { "correctness": { "noUnusedVariables": "off", "noUnusedImports": "off" } } }
     }

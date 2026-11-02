@@ -1,0 +1,6 @@
+language js
+
+// `fireEvent` sends one synthetic event; `user-event` sends the full sequence a browser would (pointer, focus, keys).
+`fireEvent` as $use where {
+  register_diagnostic(span=$use, message="Use `user-event` (`userEvent.setup()`, then `await user.click(…)`) instead of `fireEvent`.")
+}

@@ -1,0 +1,23 @@
+language js
+
+// Tests find elements the way a user does: by role, label or text, not by test id or DOM structure.
+or {
+  `$screen.$query($args)` where {
+    $query <: or {
+      `getByTestId`,
+      `getAllByTestId`,
+      `queryByTestId`,
+      `queryAllByTestId`,
+      `findByTestId`,
+      `findAllByTestId`
+    },
+    register_diagnostic(span=$query, message="Query by role, label or text instead of a test id (see the write-tests skill).")
+  },
+  `container.$query($args)` where {
+    $query <: or {
+      `querySelector`,
+      `querySelectorAll`
+    },
+    register_diagnostic(span=$query, message="Query through `screen` by role, label or text instead of the DOM structure.")
+  }
+}

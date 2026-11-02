@@ -1,0 +1,12 @@
+language js
+
+// Snapshots assert "nothing changed", not a behavior, and get updated without being read.
+`$subject.$matcher($args)` where {
+  $matcher <: or {
+    `toMatchSnapshot`,
+    `toMatchInlineSnapshot`,
+    `toThrowErrorMatchingSnapshot`,
+    `toThrowErrorMatchingInlineSnapshot`
+  },
+  register_diagnostic(span=$matcher, message="No snapshots: assert the behavior instead (see the write-tests skill).")
+}
