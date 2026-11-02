@@ -1,8 +1,7 @@
-import { afterAll, beforeEach, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { formatConnectFragment } from '@orch/shared'
 import { acceptConnectLink, type ConnectWindow, forgetMachine, loadMachines } from './machines'
 import { readPendingMachineLink } from './pendingLink'
-import { installMemoryStorage, uninstallMemoryStorage } from './testStorage'
 
 /** A window at `url`, whose `replaceState` moves it like a browser's would. */
 function fakeWindow(url: string) {
@@ -18,9 +17,6 @@ function fakeWindow(url: string) {
   }
   return { win, current }
 }
-
-beforeEach(() => installMemoryStorage())
-afterAll(() => uninstallMemoryStorage())
 
 describe('connect links', () => {
   test('a valid fragment saves the machine, records it to link without its key, and leaves the URL', () => {

@@ -1,6 +1,5 @@
-import { afterAll, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { acceptEmailLinkToken, type EmailLinkWindow, takeEmailLinkToken } from './emailLink'
-import { installMemoryStorage, uninstallMemoryStorage } from './testStorage'
 
 /** A window at `url` that records each `replaceState` and moves like a browser's would. */
 function fakeWindow(url: string) {
@@ -20,14 +19,8 @@ function fakeWindow(url: string) {
   return { win, current, calls, state }
 }
 
-afterAll(() => {
-  uninstallMemoryStorage()
-  uninstallMemoryStorage('sessionStorage')
-})
-
 describe('emailed link tokens', () => {
   test('a link page drops the fragment, keeps path, search and state, and hands the token to that page once', () => {
-    const stores = [installMemoryStorage(), installMemoryStorage('sessionStorage')]
     for (const page of ['verify-email', 'reset-password'] as const) {
       const { win, current, calls, state } = fakeWindow(`https://app.test/auth/${page}?x=1#token=abc`)
       acceptEmailLinkToken(win)
@@ -39,7 +32,7 @@ describe('emailed link tokens', () => {
       expect(takeEmailLinkToken(page)).toBe('abc')
       expect(takeEmailLinkToken(page)).toBeNull()
     }
-    expect(stores.map((store) => store.length)).toEqual([0, 0])
+    expect([localStorage.length, sessionStorage.length]).toEqual([0, 0])
   })
 
   test('other paths, other fragments and connect links are left alone', () => {
