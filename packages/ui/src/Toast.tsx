@@ -23,6 +23,7 @@ export function Toast({ message, kind, placement = 'bottom' }: Props) {
     <div className={`pointer-events-none fixed z-[60] flex ${placementClass[placement]}`}>
       <div
         role={kind === 'error' ? 'alert' : 'status'}
+        data-placement={placement}
         aria-live={kind === 'error' ? 'assertive' : 'polite'}
         className={`anim-pop flex max-w-full items-center gap-2 rounded-md border bg-raised px-3 py-1.5 text-xs shadow-xl ${
           kind === 'error' ? 'border-bad/50 text-bad' : 'border-line text-ink'

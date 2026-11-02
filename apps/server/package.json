@@ -7,7 +7,9 @@
     "dev:client": "SERVER_ALLOWED_ORIGINS=http://127.0.0.1:3220 bun --watch src/index.ts",
     "sessions:revoke-user": "bun scripts/revoke-user-sessions.ts",
     "start": "bun src/index.ts",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "bun test",
+    "test:coverage": "bun test --coverage"
   },
   "dependencies": {
     "@hono/bun": "^1.0.1",

@@ -150,7 +150,7 @@ nothing else on `main`.
 
 1. In the main checkout: `git switch main`. Check that `git status --porcelain` lists nothing outside `factory/`. If
    it does, stop and ask the user.
-2. Run `git merge --no-ff --no-commit factory/<id>`, then `bun run typecheck` and `bun test`.
+2. Run `git merge --no-ff --no-commit factory/<id>`, then `bun run typecheck` and `bun run test`.
 3. If both pass, commit with `git commit -m "merge: factory/<id> <title>"`, plus the attribution trailer if your
    instructions require one. Then run `git worktree remove .worktrees/<id>`. Keep the branch.
 4. If there is a conflict or a check fails, run `git merge --abort`, set `stage: "needs-human"` with the reason in

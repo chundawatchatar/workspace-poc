@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import type { ReactElement } from 'react'
-import { renderToStaticMarkup } from 'react-dom/server'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import { Button } from './Button'
 import { FormError } from './FormError'
 import { PasswordField } from './PasswordField'
@@ -8,17 +9,10 @@ import { TextField } from './TextField'
 
 const noop = () => {}
 
-/** Renders `element` to HTML, with a reader for the first matching tag's attribute. */
-function render(element: ReactElement) {
-  const html = renderToStaticMarkup(element)
-  const attr = (tag: string, name: string) => html.match(new RegExp(`<${tag}\\b[^>]*\\b${name}="([^"]*)"`))?.[1]
-  return { html, attr }
-}
-
 describe('TextField and PasswordField', () => {
-  test('an error marks the input invalid and describes it; the label names the input', () => {
+  test('the label names the field, and an error marks it invalid and describes it with the hint', () => {
     for (const Field of [TextField, PasswordField]) {
-      const { html, attr } = render(
+      const { rerender, unmount } = render(
         <Field
           label="Email"
           name="email"
@@ -28,54 +22,72 @@ describe('TextField and PasswordField', () => {
           error="Enter an email."
         />,
       )
-      const id = attr('input', 'id')
-      expect(id).toBeTruthy()
-      expect(attr('label', 'for')).toBe(id)
-      expect(attr('input', 'aria-invalid')).toBe('true')
-      const describedBy = attr('input', 'aria-describedby')?.split(' ') ?? []
-      const errorId = html.match(/<p id="([^"]+)"[^>]*>Enter an email\.<\/p>/)?.[1]
-      expect(errorId).toBeTruthy()
-      expect(describedBy).toContain(errorId as string)
-      expect(describedBy).toHaveLength(2)
+      const input = screen.getByLabelText('Email')
+      expect(input).toBeInvalid()
+      expect(input).toHaveAccessibleDescription('We never share it. Enter an email.')
 
-      const valid = render(<Field label="Email" name="email" value="" onChange={noop} error={null} />)
-      expect(valid.html).not.toContain('aria-invalid')
-      expect(valid.html).not.toContain('aria-describedby')
+      rerender(<Field label="Email" name="email" value="" onChange={noop} error={null} />)
+      expect(input).toBeValid()
+      expect(input).not.toHaveAccessibleDescription()
+      unmount()
     }
   })
 
-  test('the password shows only once revealed, and the toggle says what it will do', () => {
-    const hidden = render(<PasswordField label="Password" name="password" value="pw" onChange={noop} />)
-    expect(hidden.attr('input', 'type')).toBe('password')
-    expect(hidden.attr('button', 'type')).toBe('button')
-    expect(hidden.attr('button', 'aria-label')).toBe('Show password')
-    expect(hidden.attr('button', 'aria-pressed')).toBe('false')
+  test('a text field reports what is typed', async () => {
+    const user = userEvent.setup()
+    function Controlled() {
+      const [value, setValue] = useState('')
+      return <TextField label="Name" name="name" value={value} onChange={setValue} />
+    }
+    render(<Controlled />)
 
-    const shown = render(<PasswordField label="Password" name="password" value="pw" onChange={noop} revealed />)
-    expect(shown.attr('input', 'type')).toBe('text')
-    expect(shown.attr('button', 'aria-label')).toBe('Hide password')
-    expect(shown.attr('button', 'aria-pressed')).toBe('true')
+    await user.type(screen.getByLabelText('Name'), 'Ada')
+    expect(screen.getByLabelText('Name')).toHaveValue('Ada')
+  })
+
+  test('the password shows only once revealed, and the toggle says what it will do', async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(<PasswordField label="Password" name="password" value="pw" onChange={noop} />)
+    const show = screen.getByRole('button', { name: 'Show password' })
+    expect(show).toHaveAttribute('type', 'button')
+    expect(show).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByLabelText('Password')).toHaveAttribute('type', 'password')
+
+    rerender(<PasswordField label="Password" name="password" value="pw" onChange={noop} revealed />)
+    expect(screen.getByLabelText('Password')).toHaveAttribute('type', 'text')
+    expect(screen.getByRole('button', { name: 'Hide password' })).toHaveAttribute('aria-pressed', 'true')
+
+    // Without `revealed`, the field keeps the state itself.
+    rerender(<PasswordField label="Password" name="password" value="pw" onChange={noop} />)
+    await user.click(screen.getByRole('button', { name: 'Show password' }))
+    expect(screen.getByLabelText('Password')).toHaveAttribute('type', 'text')
+    expect(screen.getByRole('button', { name: 'Hide password' })).toHaveAttribute('aria-pressed', 'true')
   })
 })
 
 describe('Button and FormError', () => {
   test('a pending button is disabled and busy, and keeps its label', () => {
-    const { html, attr } = render(
+    const { rerender } = render(
       <Button type="submit" pending>
         Sign in
       </Button>,
     )
-    expect(attr('button', 'aria-busy')).toBe('true')
-    expect(html).toMatch(/<button[^>]*\bdisabled=""/)
-    expect(html).toContain('Sign in')
-    expect(render(<Button>Sign in</Button>).html).not.toMatch(/ disabled=| aria-busy=/)
+    const button = screen.getByRole('button', { name: 'Sign in' })
+    expect(button).toBeDisabled()
+    expect(button).toHaveAttribute('aria-busy', 'true')
+
+    rerender(<Button type="submit">Sign in</Button>)
+    expect(button).toBeEnabled()
+    expect(button).not.toHaveAttribute('aria-busy')
   })
 
-  test('a form error is an alert, and nothing without a message', () => {
-    expect(render(<FormError message="Wrong email or password." />).html).toMatch(
-      /^<p role="alert"[^>]*>Wrong email or password\.<\/p>$/,
-    )
-    expect(render(<FormError message={null} />).html).toBe('')
-    expect(render(<FormError message="" />).html).toBe('')
+  test('a form error is an alert with its message, and nothing without one', () => {
+    const { rerender } = render(<FormError message="Wrong email or password." />)
+    expect(screen.getByRole('alert')).toHaveTextContent('Wrong email or password.')
+
+    rerender(<FormError message={null} />)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    rerender(<FormError message="" />)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })

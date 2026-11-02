@@ -59,4 +59,4 @@ Add only the files a feature needs. `system` has just routes, and `events` has n
 3. Handler line in `<feature>.routes.ts`. A new module is mounted in `app.ts` with `app.route('/api', <feature>Routes)`.
 4. Call it from the web app with `apiQuery`/`apiMutation` (or `callApi` outside React).
 5. Tests (follow the `write-tests` skill): service behavior in `<feature>.service.test.ts`. Don't re-test validation, params or 400s per endpoint, since `lib/createRouter.test.ts` covers them once.
-6. `bun test` and `bun run typecheck`. Changing a contract is a protocol change, and the typecheck shows every caller and handler to update. The `bun --watch` dev host restarts on save, which ends open shells.
+6. `bun run test` and `bun run typecheck`. Changing a contract is a protocol change, and the typecheck shows every caller and handler to update. The `bun --watch` dev host restarts on save, which ends open shells.
