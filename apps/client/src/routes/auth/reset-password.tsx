@@ -2,11 +2,11 @@ import { Button, FormError, PasswordField } from '@orch/ui'
 import { useForm } from '@tanstack/react-form'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useRef, useState } from 'react'
-import { AuthCard } from '../components/AuthCard'
-import { linkClass } from '../components/Centered'
-import { EXPIRED_LINK } from '../lib/auth'
-import { focusFirstInvalid, resetPasswordFormOptions, shownError, submitOnce } from '../lib/authForms'
-import { takeEmailLinkToken, useEmailLinkArrivals } from '../lib/emailLink'
+import { AuthCard } from '../../components/AuthCard'
+import { linkClass } from '../../components/Centered'
+import { EXPIRED_LINK } from '../../lib/auth'
+import { focusFirstInvalid, resetPasswordFormOptions, shownError, submitOnce } from '../../lib/authForms'
+import { takeEmailLinkToken, useEmailLinkArrivals } from '../../lib/emailLink'
 
 // No `leaveIfSignedIn`: an emailed link may be opened while signed in, and the reset then signs that session out.
 export const Route = createFileRoute('/auth/reset-password')({ component: ResetPasswordPage })

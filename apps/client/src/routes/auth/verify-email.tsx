@@ -1,11 +1,11 @@
 import { FormError } from '@orch/ui'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
-import { AuthCard } from '../components/AuthCard'
-import { linkClass } from '../components/Centered'
-import { EmailLinkForm } from '../components/EmailLinkForm'
-import { verifyEmailToken } from '../lib/auth'
-import { takeEmailLinkToken, useEmailLinkArrivals } from '../lib/emailLink'
+import { AuthCard } from '../../components/AuthCard'
+import { linkClass } from '../../components/Centered'
+import { EmailLinkForm } from '../../components/EmailLinkForm'
+import { verifyEmailToken } from '../../lib/auth'
+import { takeEmailLinkToken, useEmailLinkArrivals } from '../../lib/emailLink'
 
 // No `leaveIfSignedIn`: an emailed link may be opened while signed in.
 export const Route = createFileRoute('/auth/verify-email')({ component: VerifyEmailPage })

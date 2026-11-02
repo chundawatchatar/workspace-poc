@@ -2,10 +2,10 @@ import { Button, FormError, PasswordField, TextField } from '@orch/ui'
 import { useForm } from '@tanstack/react-form'
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useRef, useState } from 'react'
-import { AuthCard } from '../components/AuthCard'
-import { linkClass } from '../components/Centered'
-import { leaveIfSignedIn, safeRedirect } from '../lib/auth'
-import { focusFirstInvalid, shownError, signInFormOptions, submitOnce } from '../lib/authForms'
+import { AuthCard } from '../../components/AuthCard'
+import { linkClass } from '../../components/Centered'
+import { leaveIfSignedIn, safeRedirect } from '../../lib/auth'
+import { focusFirstInvalid, shownError, signInFormOptions, submitOnce } from '../../lib/authForms'
 
 /** The search params of `/auth/sign-in`: where to go once signed in. */
 interface SignInSearch {

@@ -1,6 +1,6 @@
 import { BrandMark, PRODUCT_FACTS, PRODUCT_HEADLINE, PRODUCT_NAME, PRODUCT_TAGLINE } from '@orch/ui'
 import { createFileRoute, Outlet, useLocation } from '@tanstack/react-router'
-import { AuthWorkspacePreview } from '../components/AuthWorkspacePreview'
+import { AuthWorkspacePreview } from '../../components/AuthWorkspacePreview'
 
 // The frame of every page under `/auth`: the product's mark, name and subtitle above the page's card. Sign-in and
 // sign-up also get the pitch and a picture of the app beside the card on wide screens; the email pages, opened from a

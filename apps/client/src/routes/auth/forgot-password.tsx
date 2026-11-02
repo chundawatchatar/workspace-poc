@@ -1,9 +1,9 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useState } from 'react'
-import { AuthCard } from '../components/AuthCard'
-import { linkClass } from '../components/Centered'
-import { EmailLinkForm } from '../components/EmailLinkForm'
-import { leaveIfSignedIn } from '../lib/auth'
+import { AuthCard } from '../../components/AuthCard'
+import { linkClass } from '../../components/Centered'
+import { EmailLinkForm } from '../../components/EmailLinkForm'
+import { leaveIfSignedIn } from '../../lib/auth'
 
 export const Route = createFileRoute('/auth/forgot-password')({
   // `leaveIfSignedIn` reads a `redirect` this page never has, so a signed-in visit goes home.

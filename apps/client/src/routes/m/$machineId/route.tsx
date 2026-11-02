@@ -1,7 +1,7 @@
 import { NotFound } from '@orch/terminal-ui'
 import { createFileRoute } from '@tanstack/react-router'
-import { MachinePage } from '../components/MachinePage'
-import { requireSession } from '../lib/auth'
+import { MachinePage } from '../../../components/MachinePage'
+import { requireSession } from '../../../lib/auth'
 
 export const Route = createFileRoute('/m/$machineId')({
   // Its child routes inherit the guard.

@@ -149,7 +149,7 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   decoded, lowercased path with trailing slashes removed (dot segments already resolved), so `/AUTH/`, `/./auth` and
   `/%61uth/sign-in` are refused too, a path that fails to decode goes home, and `/authors` is still allowed. The
   prerendered shell never reads the session.
-- The client's auth pages live under the `/auth` layout route (`src/routes/auth.tsx`): it draws the product's mark,
+- The client's auth pages live under the `/auth` layout route (`src/routes/auth/route.tsx`): it draws the product's mark,
   name and subtitle (`BrandMark`, `PRODUCT_NAME` and `PRODUCT_TAGLINE` from `@orch/ui`, which the site and the
   favicon share) above the page's `AuthCard`, whose title is the page's only `h1`, using theme tokens only, so it
   reads in every light and dark theme. `/auth` itself opens `/auth/sign-in`, keeping `redirect`. The layout is

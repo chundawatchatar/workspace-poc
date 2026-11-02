@@ -12,17 +12,17 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SplatRouteImport } from './routes/$'
 import { Route as AccountRouteImport } from './routes/account'
-import { Route as AuthRouteImport } from './routes/auth'
-import { Route as AuthIndexRouteImport } from './routes/auth.index'
-import { Route as AuthForgotPasswordRouteImport } from './routes/auth.forgot-password'
-import { Route as AuthResetPasswordRouteImport } from './routes/auth.reset-password'
-import { Route as AuthSignInRouteImport } from './routes/auth.sign-in'
-import { Route as AuthSignUpRouteImport } from './routes/auth.sign-up'
-import { Route as AuthVerifyEmailRouteImport } from './routes/auth.verify-email'
-import { Route as MMachineIdRouteImport } from './routes/m.$machineId'
-import { Route as MMachineIdIndexRouteImport } from './routes/m.$machineId.index'
-import { Route as MMachineIdSplatRouteImport } from './routes/m.$machineId.$'
-import { Route as MMachineIdWWorkspaceIdRouteImport } from './routes/m.$machineId.w.$workspaceId'
+import { Route as AuthRouteRouteImport } from './routes/auth/route'
+import { Route as AuthIndexRouteImport } from './routes/auth/index'
+import { Route as AuthForgotPasswordRouteImport } from './routes/auth/forgot-password'
+import { Route as AuthResetPasswordRouteImport } from './routes/auth/reset-password'
+import { Route as AuthSignInRouteImport } from './routes/auth/sign-in'
+import { Route as AuthSignUpRouteImport } from './routes/auth/sign-up'
+import { Route as AuthVerifyEmailRouteImport } from './routes/auth/verify-email'
+import { Route as MMachineIdRouteRouteImport } from './routes/m/$machineId/route'
+import { Route as MMachineIdIndexRouteImport } from './routes/m/$machineId/index'
+import { Route as MMachineIdSplatRouteImport } from './routes/m/$machineId/$'
+import { Route as MMachineIdWWorkspaceIdRouteImport } from './routes/m/$machineId/w/$workspaceId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -39,7 +39,7 @@ const AccountRoute = AccountRouteImport.update({
   path: '/account',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AuthRoute = AuthRouteImport.update({
+const AuthRouteRoute = AuthRouteRouteImport.update({
   id: '/auth',
   path: '/auth',
   getParentRoute: () => rootRouteImport,
@@ -47,34 +47,34 @@ const AuthRoute = AuthRouteImport.update({
 const AuthIndexRoute = AuthIndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => AuthRoute,
+  getParentRoute: () => AuthRouteRoute,
 } as any)
 const AuthForgotPasswordRoute = AuthForgotPasswordRouteImport.update({
   id: '/forgot-password',
   path: '/forgot-password',
-  getParentRoute: () => AuthRoute,
+  getParentRoute: () => AuthRouteRoute,
 } as any)
 const AuthResetPasswordRoute = AuthResetPasswordRouteImport.update({
   id: '/reset-password',
   path: '/reset-password',
-  getParentRoute: () => AuthRoute,
+  getParentRoute: () => AuthRouteRoute,
 } as any)
 const AuthSignInRoute = AuthSignInRouteImport.update({
   id: '/sign-in',
   path: '/sign-in',
-  getParentRoute: () => AuthRoute,
+  getParentRoute: () => AuthRouteRoute,
 } as any)
 const AuthSignUpRoute = AuthSignUpRouteImport.update({
   id: '/sign-up',
   path: '/sign-up',
-  getParentRoute: () => AuthRoute,
+  getParentRoute: () => AuthRouteRoute,
 } as any)
 const AuthVerifyEmailRoute = AuthVerifyEmailRouteImport.update({
   id: '/verify-email',
   path: '/verify-email',
-  getParentRoute: () => AuthRoute,
+  getParentRoute: () => AuthRouteRoute,
 } as any)
-const MMachineIdRoute = MMachineIdRouteImport.update({
+const MMachineIdRouteRoute = MMachineIdRouteRouteImport.update({
   id: '/m/$machineId',
   path: '/m/$machineId',
   getParentRoute: () => rootRouteImport,
@@ -82,30 +82,30 @@ const MMachineIdRoute = MMachineIdRouteImport.update({
 const MMachineIdIndexRoute = MMachineIdIndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => MMachineIdRoute,
+  getParentRoute: () => MMachineIdRouteRoute,
 } as any)
 const MMachineIdSplatRoute = MMachineIdSplatRouteImport.update({
   id: '/$',
   path: '/$',
-  getParentRoute: () => MMachineIdRoute,
+  getParentRoute: () => MMachineIdRouteRoute,
 } as any)
 const MMachineIdWWorkspaceIdRoute = MMachineIdWWorkspaceIdRouteImport.update({
   id: '/w/$workspaceId',
   path: '/w/$workspaceId',
-  getParentRoute: () => MMachineIdRoute,
+  getParentRoute: () => MMachineIdRouteRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/auth': typeof AuthRouteRouteWithChildren
   '/$': typeof SplatRoute
   '/account': typeof AccountRoute
-  '/auth': typeof AuthRouteWithChildren
+  '/m/$machineId': typeof MMachineIdRouteRouteWithChildren
   '/auth/forgot-password': typeof AuthForgotPasswordRoute
   '/auth/reset-password': typeof AuthResetPasswordRoute
   '/auth/sign-in': typeof AuthSignInRoute
   '/auth/sign-up': typeof AuthSignUpRoute
   '/auth/verify-email': typeof AuthVerifyEmailRoute
-  '/m/$machineId': typeof MMachineIdRouteWithChildren
   '/auth/': typeof AuthIndexRoute
   '/m/$machineId/$': typeof MMachineIdSplatRoute
   '/m/$machineId/': typeof MMachineIdIndexRoute
@@ -128,15 +128,15 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/auth': typeof AuthRouteRouteWithChildren
   '/$': typeof SplatRoute
   '/account': typeof AccountRoute
-  '/auth': typeof AuthRouteWithChildren
+  '/m/$machineId': typeof MMachineIdRouteRouteWithChildren
   '/auth/forgot-password': typeof AuthForgotPasswordRoute
   '/auth/reset-password': typeof AuthResetPasswordRoute
   '/auth/sign-in': typeof AuthSignInRoute
   '/auth/sign-up': typeof AuthSignUpRoute
   '/auth/verify-email': typeof AuthVerifyEmailRoute
-  '/m/$machineId': typeof MMachineIdRouteWithChildren
   '/auth/': typeof AuthIndexRoute
   '/m/$machineId/$': typeof MMachineIdSplatRoute
   '/m/$machineId/': typeof MMachineIdIndexRoute
@@ -146,15 +146,15 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/auth'
     | '/$'
     | '/account'
-    | '/auth'
+    | '/m/$machineId'
     | '/auth/forgot-password'
     | '/auth/reset-password'
     | '/auth/sign-in'
     | '/auth/sign-up'
     | '/auth/verify-email'
-    | '/m/$machineId'
     | '/auth/'
     | '/m/$machineId/$'
     | '/m/$machineId/'
@@ -176,15 +176,15 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/auth'
     | '/$'
     | '/account'
-    | '/auth'
+    | '/m/$machineId'
     | '/auth/forgot-password'
     | '/auth/reset-password'
     | '/auth/sign-in'
     | '/auth/sign-up'
     | '/auth/verify-email'
-    | '/m/$machineId'
     | '/auth/'
     | '/m/$machineId/$'
     | '/m/$machineId/'
@@ -193,10 +193,10 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AuthRouteRoute: typeof AuthRouteRouteWithChildren
   SplatRoute: typeof SplatRoute
   AccountRoute: typeof AccountRoute
-  AuthRoute: typeof AuthRouteWithChildren
-  MMachineIdRoute: typeof MMachineIdRouteWithChildren
+  MMachineIdRouteRoute: typeof MMachineIdRouteRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
@@ -226,7 +226,7 @@ declare module '@tanstack/react-router' {
       id: '/auth'
       path: '/auth'
       fullPath: '/auth'
-      preLoaderRoute: typeof AuthRouteImport
+      preLoaderRoute: typeof AuthRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/auth/': {
@@ -234,48 +234,48 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/auth/'
       preLoaderRoute: typeof AuthIndexRouteImport
-      parentRoute: typeof AuthRoute
+      parentRoute: typeof AuthRouteRoute
     }
     '/auth/forgot-password': {
       id: '/auth/forgot-password'
       path: '/forgot-password'
       fullPath: '/auth/forgot-password'
       preLoaderRoute: typeof AuthForgotPasswordRouteImport
-      parentRoute: typeof AuthRoute
+      parentRoute: typeof AuthRouteRoute
     }
     '/auth/reset-password': {
       id: '/auth/reset-password'
       path: '/reset-password'
       fullPath: '/auth/reset-password'
       preLoaderRoute: typeof AuthResetPasswordRouteImport
-      parentRoute: typeof AuthRoute
+      parentRoute: typeof AuthRouteRoute
     }
     '/auth/sign-in': {
       id: '/auth/sign-in'
       path: '/sign-in'
       fullPath: '/auth/sign-in'
       preLoaderRoute: typeof AuthSignInRouteImport
-      parentRoute: typeof AuthRoute
+      parentRoute: typeof AuthRouteRoute
     }
     '/auth/sign-up': {
       id: '/auth/sign-up'
       path: '/sign-up'
       fullPath: '/auth/sign-up'
       preLoaderRoute: typeof AuthSignUpRouteImport
-      parentRoute: typeof AuthRoute
+      parentRoute: typeof AuthRouteRoute
     }
     '/auth/verify-email': {
       id: '/auth/verify-email'
       path: '/verify-email'
       fullPath: '/auth/verify-email'
       preLoaderRoute: typeof AuthVerifyEmailRouteImport
-      parentRoute: typeof AuthRoute
+      parentRoute: typeof AuthRouteRoute
     }
     '/m/$machineId': {
       id: '/m/$machineId'
       path: '/m/$machineId'
       fullPath: '/m/$machineId'
-      preLoaderRoute: typeof MMachineIdRouteImport
+      preLoaderRoute: typeof MMachineIdRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/m/$machineId/': {
@@ -283,26 +283,26 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/m/$machineId/'
       preLoaderRoute: typeof MMachineIdIndexRouteImport
-      parentRoute: typeof MMachineIdRoute
+      parentRoute: typeof MMachineIdRouteRoute
     }
     '/m/$machineId/$': {
       id: '/m/$machineId/$'
       path: '/$'
       fullPath: '/m/$machineId/$'
       preLoaderRoute: typeof MMachineIdSplatRouteImport
-      parentRoute: typeof MMachineIdRoute
+      parentRoute: typeof MMachineIdRouteRoute
     }
     '/m/$machineId/w/$workspaceId': {
       id: '/m/$machineId/w/$workspaceId'
       path: '/w/$workspaceId'
       fullPath: '/m/$machineId/w/$workspaceId'
       preLoaderRoute: typeof MMachineIdWWorkspaceIdRouteImport
-      parentRoute: typeof MMachineIdRoute
+      parentRoute: typeof MMachineIdRouteRoute
     }
   }
 }
 
-interface AuthRouteChildren {
+interface AuthRouteRouteChildren {
   AuthForgotPasswordRoute: typeof AuthForgotPasswordRoute
   AuthResetPasswordRoute: typeof AuthResetPasswordRoute
   AuthSignInRoute: typeof AuthSignInRoute
@@ -311,7 +311,7 @@ interface AuthRouteChildren {
   AuthIndexRoute: typeof AuthIndexRoute
 }
 
-const AuthRouteChildren: AuthRouteChildren = {
+const AuthRouteRouteChildren: AuthRouteRouteChildren = {
   AuthForgotPasswordRoute: AuthForgotPasswordRoute,
   AuthResetPasswordRoute: AuthResetPasswordRoute,
   AuthSignInRoute: AuthSignInRoute,
@@ -320,30 +320,32 @@ const AuthRouteChildren: AuthRouteChildren = {
   AuthIndexRoute: AuthIndexRoute,
 }
 
-const AuthRouteWithChildren = AuthRoute._addFileChildren(AuthRouteChildren)
+const AuthRouteRouteWithChildren = AuthRouteRoute._addFileChildren(
+  AuthRouteRouteChildren,
+)
 
-interface MMachineIdRouteChildren {
+interface MMachineIdRouteRouteChildren {
   MMachineIdSplatRoute: typeof MMachineIdSplatRoute
   MMachineIdIndexRoute: typeof MMachineIdIndexRoute
   MMachineIdWWorkspaceIdRoute: typeof MMachineIdWWorkspaceIdRoute
 }
 
-const MMachineIdRouteChildren: MMachineIdRouteChildren = {
+const MMachineIdRouteRouteChildren: MMachineIdRouteRouteChildren = {
   MMachineIdSplatRoute: MMachineIdSplatRoute,
   MMachineIdIndexRoute: MMachineIdIndexRoute,
   MMachineIdWWorkspaceIdRoute: MMachineIdWWorkspaceIdRoute,
 }
 
-const MMachineIdRouteWithChildren = MMachineIdRoute._addFileChildren(
-  MMachineIdRouteChildren,
+const MMachineIdRouteRouteWithChildren = MMachineIdRouteRoute._addFileChildren(
+  MMachineIdRouteRouteChildren,
 )
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AuthRouteRoute: AuthRouteRouteWithChildren,
   SplatRoute: SplatRoute,
   AccountRoute: AccountRoute,
-  AuthRoute: AuthRouteWithChildren,
-  MMachineIdRoute: MMachineIdRouteWithChildren,
+  MMachineIdRouteRoute: MMachineIdRouteRouteWithChildren,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -24,7 +24,7 @@ export const Route = createRootRouteWithContext<RouterContext>()({
   }),
   shellComponent: RootDocument,
   component: RootLayout,
-  // Unknown paths go to the catch-all routes (`$.tsx`, `m.$machineId.$.tsx`); this covers a route throwing `notFound()`.
+  // Unknown paths go to the catch-all routes (`$.tsx`, `m/$machineId/$.tsx`); this covers a route throwing `notFound()`.
   notFoundComponent: PageNotFound,
 })
 
