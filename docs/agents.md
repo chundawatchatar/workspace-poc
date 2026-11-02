@@ -535,15 +535,21 @@ new fields. The daemon side may land first, since a host that never sends `track
 
 ## Per-workspace counts (AG-2)
 
-The sidebar shows, for each workspace, how many agents are in each state, for example "2 working · 1 waiting".
+The sidebar shows, for each workspace, how many agents are in each state, as an icon and a number per state in the
+workspace's title row, since a sidebar at its minimum width has no room for words there. The icons are those of the
+tab mark, and they don't spin. The words are in the accessible text and the tooltip, for example
+"2 agents working, 1 waiting".
 
 - Counted in `packages/terminal-ui` by one pure function over the workspace's layout and the sessions map: every
-  terminal surface in every page and pane of the workspace, including tabs that are not active, counted once each.
+  terminal surface in every pane of the workspace, including tabs that are not active, counted once each.
 - A session counts in the bucket of its `agentState.state`. Sessions are excluded when `agentState` is null: no agent
-  in the foreground, tracking off, interrupted, or the shell not alive.
-- Zero counts are hidden, and the counts appear in the order waiting, working, idle, since waiting needs the user.
-  The waiting count uses the same accent as attention. A workspace with no counted agents shows nothing new.
-- Both sources count the same way; the source only shows in the tab's tooltip.
+  in the foreground, tracking off, interrupted, or the shell not alive. A hook `idle` whose program reports an error
+  counts as idle, though its row shows failed: there is no failed bucket.
+- Zero counts are hidden, and the icons appear in the order waiting, working, idle, since waiting needs the user. The
+  accessible text reads working, waiting, idle. The waiting count uses the same accent as attention. A workspace with no counted agents shows nothing new.
+- `working` and `waiting` count the same way from both sources, but `idle` counts only from hooks. Terminal signals
+  report `idle` even mid-turn, and such a terminal shows no mark, so an agent seen only through signals shows no count
+  while idle. "No agents" here means no agents the UI can state.
 
 ## Notifications (AG-3)
 
