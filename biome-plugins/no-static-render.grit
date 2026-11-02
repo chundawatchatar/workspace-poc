@@ -1,0 +1,10 @@
+language js
+
+// A string of HTML runs no effects or events and can only be matched with regexes; render into the DOM instead.
+`$name` as $use where {
+  $name <: or {
+    `renderToStaticMarkup`,
+    `renderToString`
+  },
+  register_diagnostic(span=$use, message="Render with Testing Library's `render` (or `renderWithProviders` in apps/client) and query by role, label or text, instead of rendering to an HTML string.")
+}
