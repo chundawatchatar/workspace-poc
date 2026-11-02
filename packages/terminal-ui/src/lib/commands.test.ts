@@ -27,8 +27,15 @@ describe('copyWorkingFolder', () => {
     const rejected = getToast()
     expect(rejected).toMatchObject({ message: 'Could not copy folder', kind: 'error' })
 
-    // Bun's `navigator` has no clipboard, like a browser on an insecure origin.
-    await copyWorkingFolder('unknown-session', '/tmp/project')
+    // No clipboard, like a browser on an insecure origin. The own property hides happy-dom's, and deleting it
+    // brings that back.
+    Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true })
+    try {
+      await copyWorkingFolder('unknown-session', '/tmp/project')
+    } finally {
+      Reflect.deleteProperty(navigator, 'clipboard')
+    }
+    expect(navigator.clipboard).toBeDefined()
     expect(getToast()).toMatchObject({ message: 'Could not copy folder', kind: 'error' })
     expect(getToast()?.id).not.toBe(rejected?.id)
   })
