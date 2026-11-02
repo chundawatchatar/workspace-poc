@@ -299,15 +299,18 @@ function PaneView({ workspace, pane }: { workspace: Workspace; pane: PaneNode })
           return (
             <div key={surface.id} className={`absolute inset-0 ${visible ? '' : 'pointer-events-none invisible'}`}>
               {surface.kind === 'terminal' ? (
-                <>
-                  <TerminalView
-                    sessionId={surface.id}
-                    cwd={workspace.cwd}
-                    active={visible && focused && !overlayOpen}
-                  />
-                  <Interrupted sessionId={surface.id} />
+                // The notice takes rows from the terminal rather than covering its top, where agents ask their own questions.
+                <div className="flex h-full flex-col">
                   <TrustNotice sessionId={surface.id} />
-                </>
+                  <div className="relative min-h-0 flex-1">
+                    <TerminalView
+                      sessionId={surface.id}
+                      cwd={workspace.cwd}
+                      active={visible && focused && !overlayOpen}
+                    />
+                    <Interrupted sessionId={surface.id} />
+                  </div>
+                </div>
               ) : surface.kind === 'pulls' ? (
                 <PullsView />
               ) : (

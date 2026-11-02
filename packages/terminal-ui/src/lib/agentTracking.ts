@@ -19,14 +19,15 @@ export function isTrackedAgent(kind: string | undefined): kind is TrackedAgent {
 
 /**
  * The agent kind to ask about in a terminal: its agent, when hooks can track it and the user has not answered for
- * that kind yet. Null while the answers are unknown, so nothing flashes before they load.
+ * that kind yet. Null while the answers are unknown, so nothing flashes before they load, and in a terminal whose
+ * switch is off, where Track would change nothing.
  */
 export function unansweredAgent(
-  session: Pick<SessionInfo, 'agent'> | undefined,
+  session: Pick<SessionInfo, 'agent' | 'agentTracking'> | undefined,
   answers: AgentTrackingStatus | undefined,
 ): TrackedAgent | null {
   const kind = session?.agent?.kind
-  if (!answers || !isTrackedAgent(kind)) return null
+  if (!answers || !session?.agentTracking || !isTrackedAgent(kind)) return null
   return answers[kind] === null ? kind : null
 }
 
@@ -54,7 +55,10 @@ export function useAgentTrackingAnswers(enabled = true) {
   return useQuery({ ...apiQuery(routes.agentTracking.status, {}), enabled }).data
 }
 
-/** Stores a trust answer. Every view of the answers reloads once the host has it. */
+/**
+ * Stores a trust answer with `answer`. Every view of the answers reloads once the host has it. `pending` is true
+ * while one is on its way.
+ */
 export function useAnswerAgentTracking() {
   const queryClient = useQueryClient()
   const mutation = useMutation({
@@ -64,5 +68,9 @@ export function useAnswerAgentTracking() {
     onSettled: () => queryClient.invalidateQueries({ queryKey: apiKey(routes.agentTracking.status, {}) }),
   })
   const { mutate } = mutation
-  return useCallback((agent: TrackedAgent, answer: AgentTrackingAnswer) => mutate({ agent, answer }), [mutate])
+  const answer = useCallback(
+    (agent: TrackedAgent, value: AgentTrackingAnswer) => mutate({ agent, answer: value }),
+    [mutate],
+  )
+  return { answer, pending: mutation.isPending }
 }

@@ -311,12 +311,12 @@ user declines, the agent runs without the hooks and the tab falls back to the ba
 web UI: "Track Claude Code's status with hooks? This adds hooks to Claude Code sessions started in this app, for
 those sessions only. Your settings are not changed." with **Track** and **Not now**. The notice goes on to say that
 it applies to agents started after the answer, and that a terminal already open gets it once its shell starts again
-or in a new tab (see the gap below). It is a strip across the top of the terminal pane (`TrustNotice` in
-`packages/terminal-ui`), not a modal, so the agent's own prompts below it stay usable. Codex gets the same question
+or in a new tab (see the gap below). It is a strip above the terminal (`TrustNotice` in `packages/terminal-ui`),
+not a modal or an overlay: the terminal gives up rows for it, so the agent's own prompts stay visible and usable. Codex gets the same question
 with its own name.
 
 - It shows on every terminal whose `SessionInfo.agent.kind` is `claude` or `codex` while that kind's answer is null,
-  and never for other agents or an answered kind. It has no separate dismiss: closing it means answering.
+  and never for other agents, an answered kind or a terminal whose switch is off. It has no separate dismiss: closing it means answering.
 - The answer is remembered per machine and per agent kind in the host's data folder, in
   `apps/host/.data/agent-tracking.json` (`0600`, written aside and renamed): `{ "claude": "on" | "off", "codex":
   "on" | "off" }`. A missing entry means not asked yet, which behaves as off; a missing or damaged file reads as all

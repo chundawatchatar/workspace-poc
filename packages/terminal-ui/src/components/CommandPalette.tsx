@@ -126,7 +126,7 @@ export function CommandPalette() {
   const sessions = useApp((s) => s.sessions)
   const home = useApp((s) => s.info?.home)
   const answers = useAgentTrackingAnswers()
-  const answer = useAnswerAgentTracking()
+  const { answer } = useAnswerAgentTracking()
   const [query, setQuery] = useState('')
   const [index, setIndex] = useState(0)
   const list = useRef<HTMLDivElement>(null)
