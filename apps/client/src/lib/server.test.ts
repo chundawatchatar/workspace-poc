@@ -1,6 +1,8 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { type CommonServerErrorCode, defineServerContract, serverRoutes } from '@orch/shared'
+import { HttpResponse, http } from 'msw'
 import { z } from 'zod'
+import { server } from '../test/msw'
 import { callServer, ServerError, serverMutation, serverQuery } from './server'
 
 const contract = defineServerContract({
@@ -14,45 +16,45 @@ const contract = defineServerContract({
   },
 })
 
-const realFetch = globalThis.fetch
-const calls: { url: string; init: RequestInit }[] = []
-
-/** Replaces `fetch` with one that records the call and answers `body` with `status`. */
-function answer(status: number, body: unknown) {
-  globalThis.fetch = (async (url: string, init: RequestInit) => {
-    calls.push({ url, init })
-    return Response.json(body, { status })
-  }) as typeof fetch
-}
-
-afterEach(() => {
-  globalThis.fetch = realFetch
-  calls.length = 0
-})
-
 describe('callServer', () => {
   test('GETs a same-origin path without a body, and sends JSON for other methods', async () => {
-    answer(200, { ok: true })
+    const requests: Request[] = []
+    server.use(
+      http.get(`*${serverRoutes.system.health.path}`, ({ request }) => {
+        requests.push(request)
+        return HttpResponse.json({ ok: true })
+      }),
+      http.patch(`*${contract.rename.path}`, ({ request }) => {
+        requests.push(request)
+        return HttpResponse.json({ name: 'x' })
+      }),
+    )
     expect(await callServer(serverRoutes.system.health, {})).toEqual({ ok: true })
-    expect(calls[0]).toMatchObject({ url: '/api/health', init: { method: 'GET', body: undefined } })
-
-    answer(200, { name: 'x' })
     await callServer(contract.rename, { id: 'a', name: 'x' })
-    expect(calls[1]).toMatchObject({
-      url: '/api/items/a',
-      init: { method: 'PATCH', body: '{"name":"x"}', headers: { 'content-type': 'application/json' } },
-    })
+
+    const [health, rename] = requests
+    expect(health?.url).toBe(`${location.origin}/api/health`)
+    expect(health?.method).toBe('GET')
+    expect(await health?.text()).toBe('')
+    expect(rename?.url).toBe(`${location.origin}/api/items/a`)
+    expect(rename?.method).toBe('PATCH')
+    expect(rename?.headers.get('content-type')).toBe('application/json')
+    expect(await rename?.text()).toBe('{"name":"x"}')
   })
 
   test('throws a ServerError with the code from an error body', async () => {
-    answer(409, { error: { code: 'name_taken', message: 'Taken.' } })
+    server.use(
+      http.patch(`*${contract.rename.path}`, () =>
+        HttpResponse.json({ error: { code: 'name_taken', message: 'Taken.' } }, { status: 409 }),
+      ),
+    )
     const error = await callServer(contract.rename, { id: 'a', name: 'x' }).catch((e: unknown) => e)
     expect(error).toBeInstanceOf(ServerError)
     expect(error).toMatchObject({ code: 'name_taken', status: 409, message: 'Taken.' })
   })
 
   test('throws an `internal` ServerError for a response outside the contract', async () => {
-    answer(200, { ok: 'yes' })
+    server.use(http.get(`*${serverRoutes.system.health.path}`, () => HttpResponse.json({ ok: 'yes' })))
     await expect(callServer(serverRoutes.system.health, {})).rejects.toMatchObject({ code: 'internal' })
   })
 })

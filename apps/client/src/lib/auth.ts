@@ -20,11 +20,7 @@ function createClient() {
     // The page's own origin, where the server mounts Better Auth under `/api/auth`. Passing it keeps Better Auth
     // from guessing the URL from environment variables.
     baseURL: location.origin,
-    fetchOptions: {
-      credentials: 'same-origin',
-      // Look `fetch` up on every call rather than once, so a test can swap it.
-      customFetchImpl: (input, init) => fetch(input, init),
-    },
+    fetchOptions: { credentials: 'same-origin' },
   })
 }
 

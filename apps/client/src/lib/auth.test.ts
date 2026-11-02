@@ -1,6 +1,10 @@
-import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'bun:test'
 import { serverRoutes } from '@orch/shared'
 import { focusManager, QueryClient, QueryObserver } from '@tanstack/react-query'
+import { waitFor } from '@testing-library/react'
+import { HttpResponse, http } from 'msw'
+import { authError, authSession, authUser, rateLimited } from '../test/betterAuth'
+import { server } from '../test/msw'
 import {
   accountKey,
   accountQuery,
@@ -21,92 +25,47 @@ import {
 } from './auth'
 import { readPendingMachineLink, setPendingMachineLink } from './pendingLink'
 import { serverQuery } from './server'
-import { installMemoryStorage, uninstallMemoryStorage } from './testStorage'
 
 const userA: SessionUser = { id: 'user-a', email: 'a@example.com', name: 'Ada' }
 const userB: SessionUser = { id: 'user-b', email: 'b@example.com', name: 'Bob' }
 
-/** The fake server's state: who the cookie belongs to, and every request it got. */
-const server = { user: null as SessionUser | null, requests: [] as { url: string; init?: RequestInit }[] }
-
-const realFetch = globalThis.fetch
-const realLocation = globalThis.location
-
-/** Answers Better Auth's endpoints the way the cloud server would for `server.user`. */
-async function fakeFetch(input: RequestInfo | URL, init?: RequestInit) {
-  const url = String(input instanceof Request ? input.url : input)
-  server.requests.push({ url, init })
-  const path = new URL(url, location.origin).pathname
-  if (path === '/api/auth/get-session') {
-    const user = server.user
-    return Response.json(user && { user: { ...user, emailVerified: true }, session: { token: `token-${user.id}` } })
-  }
-  if (path === '/api/auth/sign-out') {
-    server.user = null
-    return Response.json({ success: true })
-  }
-  if (path === '/api/auth/sign-in/email') {
-    const { email } = JSON.parse(String(init?.body))
-    if (email === 'unverified@example.com') return Response.json({ code: 'EMAIL_NOT_VERIFIED' }, { status: 403 })
-    server.user = [userA, userB].find((u) => u.email === email) ?? null
-    return server.user ? Response.json({ token: 't', user: server.user }) : Response.json({}, { status: 401 })
-  }
-  if (path === '/api/auth/sign-up/email') {
-    // Like the cloud server: a new and a taken address get the same answer, and no session either way.
-    const { email } = JSON.parse(String(init?.body))
-    if (email === 'busy@example.com') return Response.json({ message: 'Too many requests' }, { status: 429 })
-    if (email === 'broken@example.com') return Response.json({ message: 'Oops' }, { status: 500 })
-    return Response.json({ token: null, user: { id: 'new', email, name: 'New' } })
-  }
-  if (path === '/api/me') {
-    if (server.user) return Response.json(server.user)
-    return Response.json({ error: { code: 'unauthorized', message: 'Sign in first.' } }, { status: 401 })
-  }
-  const emailAnswer = answerEmailLink(path, url, init)
-  if (emailAnswer) return emailAnswer
-  if (path === '/api/auth/list-sessions') {
-    return Response.json(server.user ? [{ token: `token-${server.user.id}`, userAgent: 'test' }] : [])
-  }
-  return Response.json({ error: { code: 'not_found', message: 'Not found.' } }, { status: 404 })
-}
-
-/** Answers the endpoints behind emailed links, or null for any other path. */
-function answerEmailLink(path: string, url: string, init?: RequestInit): Response | null {
-  if (path === '/api/auth/send-verification-email' || path === '/api/auth/request-password-reset') {
-    // Like the cloud server: the same answer whether or not the address has an account.
-    const { email } = JSON.parse(String(init?.body))
-    if (email === 'busy@example.com') return Response.json({ code: 'TOO_MANY_REQUESTS' }, { status: 429 })
-    return Response.json({ status: true })
-  }
-  if (path === '/api/auth/verify-email') {
-    const token = new URL(url).searchParams.get('token')
-    if (token === 'good') return Response.json({ status: true, user: null })
-    return Response.json({ code: 'TOKEN_EXPIRED', message: 'Expired' }, { status: 401 })
-  }
-  if (path === '/api/auth/reset-password') {
-    const { token } = JSON.parse(String(init?.body))
-    if (token !== 'good') return Response.json({ code: 'INVALID_TOKEN', message: 'Invalid' }, { status: 400 })
-    // A reset ends every session of the account.
-    server.user = null
-    return Response.json({ status: true })
-  }
-  return null
-}
-
-/** Resolves once `check` holds, or fails after a second. */
-async function until(check: () => boolean) {
-  for (let i = 0; i < 100 && !check(); i++) await new Promise((resolve) => setTimeout(resolve, 10))
-  expect(check()).toBe(true)
+/**
+ * Answers Better Auth's session, sign-in and sign-out endpoints the way the cloud server does for whoever the cookie
+ * belongs to, which is `account.user`. It records every `get-session` request.
+ */
+function fakeAccount(user: SessionUser | null) {
+  const account = { user, sessionReads: [] as Request[] }
+  server.use(
+    http.get('*/api/auth/get-session', ({ request }) => {
+      account.sessionReads.push(request)
+      const current = account.user
+      return HttpResponse.json(
+        current && { user: authUser(current), session: authSession(`s-${current.id}`, current.id) },
+      )
+    }),
+    http.post('*/api/auth/sign-in/email', async ({ request }) => {
+      const { email } = (await request.json()) as { email: string }
+      if (email === 'unverified@example.com') return authError(403, 'EMAIL_NOT_VERIFIED', 'Email not verified')
+      account.user = [userA, userB].find((u) => u.email === email) ?? null
+      if (!account.user) return authError(401, 'INVALID_EMAIL_OR_PASSWORD', 'Invalid email or password')
+      return HttpResponse.json({ redirect: false, token: 't1', user: authUser(account.user) })
+    }),
+    http.post('*/api/auth/sign-out', () => {
+      account.user = null
+      return HttpResponse.json({ success: true })
+    }),
+  )
+  return account
 }
 
 /** A query client with the identity watcher, signed in as `user`. */
 async function setup(user: SessionUser | null) {
-  server.user = user
+  const account = fakeAccount(user)
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   let changes = 0
   watchIdentity(queryClient, () => changes++)
   await refetchSession(queryClient)
-  return { queryClient, changes: () => changes }
+  return { queryClient, account, changes: () => changes }
 }
 
 /** Everything the cache holds, keys and data, as one string to search. */
@@ -119,38 +78,31 @@ function cacheDump(queryClient: QueryClient) {
   )
 }
 
-beforeAll(() => {
-  installMemoryStorage()
-  globalThis.location = { origin: 'http://localhost:3220' } as Location
-  globalThis.fetch = fakeFetch as typeof fetch
-})
-
-afterAll(() => {
-  uninstallMemoryStorage()
-  globalThis.location = realLocation
-  globalThis.fetch = realFetch
-})
+/** A request as method, query and JSON body, to compare in one `expect`. */
+async function sent(request: Request) {
+  const text = await request.text()
+  return { method: request.method, search: new URL(request.url).search, body: text ? JSON.parse(text) : null }
+}
 
 afterEach(() => {
-  server.requests.length = 0
   focusManager.setFocused(undefined)
 })
 
 describe('sessionQuery', () => {
   test('reads the user or null from the page origin with the cookie, and refetches on focus', async () => {
-    const { queryClient } = await setup(userA)
+    const { queryClient, account } = await setup(userA)
     expect(queryClient.getQueryData(sessionQuery.queryKey)).toEqual(userA)
-    expect(server.requests[0]?.url).toBe('http://localhost:3220/api/auth/get-session')
-    expect(server.requests[0]?.init?.credentials).toBe('same-origin')
+    expect(account.sessionReads[0]?.url).toBe('http://localhost:3220/api/auth/get-session')
+    expect(account.sessionReads[0]?.credentials).toBe('same-origin')
 
     // An observer stands in for the page that keeps the session on screen.
     queryClient.mount()
     const observer = new QueryObserver(queryClient, sessionQuery)
     const stop = observer.subscribe(() => {})
-    await until(() => !observer.getCurrentResult().isFetching)
-    server.user = null
+    await waitFor(() => expect(observer.getCurrentResult().isFetching).toBe(false))
+    account.user = null
     focusManager.setFocused(true)
-    await until(() => queryClient.getQueryData(sessionQuery.queryKey) === null)
+    await waitFor(() => expect(queryClient.getQueryData(sessionQuery.queryKey)).toBeNull())
     stop()
     queryClient.unmount()
   })
@@ -159,6 +111,7 @@ describe('sessionQuery', () => {
 describe('watchIdentity', () => {
   test('switching users leaves nothing of the previous one in the cache or the pending link', async () => {
     const { queryClient, changes } = await setup(userA)
+    server.use(http.get('*/api/auth/list-sessions', () => HttpResponse.json([authSession('s-a', userA.id)])))
     await queryClient.fetchQuery({ queryKey: accountKey(userA.id, 'machines'), queryFn: () => ['A laptop'] })
     await queryClient.fetchQuery({
       queryKey: accountKey(userA.id, 'sessions'),
@@ -173,7 +126,7 @@ describe('watchIdentity', () => {
       })
       .catch(() => undefined)
     setPendingMachineLink({ machineId: 'm1', name: 'Machine m1' })
-    expect(cacheDump(queryClient)).toContain('token-user-a')
+    expect(cacheDump(queryClient)).toContain('token-s-a')
 
     await signOut(queryClient)
     answerLate(['A desktop'])
@@ -185,7 +138,7 @@ describe('watchIdentity', () => {
     })
 
     const dump = cacheDump(queryClient)
-    for (const secret of [userA.id, 'A laptop', 'A desktop', 'token-user-a']) expect(dump).not.toContain(secret)
+    for (const secret of [userA.id, 'A laptop', 'A desktop', 'token-s-a']) expect(dump).not.toContain(secret)
     expect(bMachines).toEqual(['B laptop'])
     expect(queryClient.getQueryData(sessionQuery.queryKey)).toEqual(userB)
     expect(readPendingMachineLink()).toBeNull()
@@ -201,13 +154,18 @@ describe('watchIdentity', () => {
   })
 
   test('an unauthorized answer rereads the session and clears the cache when it ended', async () => {
-    const { queryClient, changes } = await setup(userA)
+    const { queryClient, account, changes } = await setup(userA)
     setPendingMachineLink({ machineId: 'm1', name: 'Machine m1' })
     // The session was revoked elsewhere, so the server now refuses it.
-    server.user = null
+    account.user = null
+    server.use(
+      http.get(`*${serverRoutes.account.me.path}`, () =>
+        HttpResponse.json({ error: { code: 'unauthorized', message: 'Sign in first.' } }, { status: 401 }),
+      ),
+    )
     await queryClient.fetchQuery(accountQuery(userA.id, serverRoutes.account.me, {})).catch(() => {})
 
-    await until(() => queryClient.getQueryData(sessionQuery.queryKey) === null)
+    await waitFor(() => expect(queryClient.getQueryData(sessionQuery.queryKey)).toBeNull())
     expect(
       queryClient
         .getQueryCache()
@@ -232,12 +190,22 @@ describe('signInWithEmail', () => {
 describe('signUpWithEmail', () => {
   test('posts the name, email and password and stays signed out, alike for a taken address', async () => {
     const { queryClient } = await setup(null)
+    const signUps: Request[] = []
+    server.use(
+      http.post('*/api/auth/sign-up/email', async ({ request }) => {
+        signUps.push(request.clone())
+        // Like the cloud server: a new and a taken address get the same answer, and no session either way.
+        const { email, name } = (await request.json()) as { email: string; name: string }
+        if (email === 'busy@example.com') return rateLimited()
+        if (email === 'broken@example.com') return authError(500, 'INTERNAL_SERVER_ERROR', 'Internal Server Error')
+        return HttpResponse.json({ token: null, user: authUser({ id: 'u1', email, name }) })
+      }),
+    )
     for (const email of ['new@example.com', userA.email]) {
-      server.requests.length = 0
       expect(await signUpWithEmail(email, 'long enough', 'Ada')).toBeNull()
-      const request = server.requests.find((r) => r.url.endsWith('/api/auth/sign-up/email'))
-      expect(request?.init?.method).toBe('POST')
-      expect(JSON.parse(String(request?.init?.body))).toMatchObject({ email, password: 'long enough', name: 'Ada' })
+      const request = signUps.at(-1)
+      expect(request?.method).toBe('POST')
+      expect(await request?.json()).toMatchObject({ email, password: 'long enough', name: 'Ada' })
     }
     expect(await refetchSession(queryClient)).toBeNull()
 
@@ -251,24 +219,24 @@ describe('signUpWithEmail', () => {
 })
 
 describe('the email link functions', () => {
-  /** The requests to `path`, as method, query and JSON body. */
-  const sentTo = (path: string) =>
-    server.requests
-      .filter((r) => new URL(r.url).pathname === path)
-      .map((r) => ({
-        method: r.init?.method ?? 'GET',
-        search: new URL(r.url).search,
-        body: r.init?.body ? JSON.parse(String(r.init.body)) : null,
-      }))
-
   test('resend and forgot password post the address, answer alike for any account, and report a rate limit', async () => {
     for (const [send, path] of [
       [resendVerificationEmail, '/api/auth/send-verification-email'],
       [requestPasswordReset, '/api/auth/request-password-reset'],
     ] as const) {
+      const requests: Request[] = []
+      server.use(
+        http.post(`*${path}`, async ({ request }) => {
+          requests.push(request.clone())
+          // Like the cloud server: the same answer whether or not the address has an account.
+          const { email } = (await request.json()) as { email: string }
+          if (email === 'busy@example.com') return rateLimited()
+          return HttpResponse.json({ status: true })
+        }),
+      )
       expect(await send('new@example.com')).toBeNull()
       expect(await send(userA.email)).toBeNull()
-      expect(sentTo(path)).toEqual([
+      expect(await Promise.all(requests.map(sent))).toEqual([
         { method: 'POST', search: '', body: { email: 'new@example.com' } },
         { method: 'POST', search: '', body: { email: userA.email } },
       ])
@@ -277,18 +245,38 @@ describe('the email link functions', () => {
   })
 
   test('verifying sends the token once in the query and reports any refusal as an expired link', async () => {
+    const requests: Request[] = []
+    server.use(
+      http.get('*/api/auth/verify-email', ({ request }) => {
+        requests.push(request)
+        if (new URL(request.url).searchParams.get('token') === 'good')
+          return HttpResponse.json({ status: true, user: null })
+        return authError(401, 'TOKEN_EXPIRED', 'Token expired')
+      }),
+    )
     expect(await verifyEmailToken('good')).toBeNull()
-    expect(sentTo('/api/auth/verify-email')).toEqual([{ method: 'GET', search: '?token=good', body: null }])
+    expect(await Promise.all(requests.map(sent))).toEqual([{ method: 'GET', search: '?token=good', body: null }])
     expect(await verifyEmailToken('old')).toBe(EXPIRED_LINK)
   })
 
   test('a reset posts the token and password, then rereads the session, which the reset ended', async () => {
-    const { queryClient, changes } = await setup(userA)
+    const { queryClient, account, changes } = await setup(userA)
+    const requests: Request[] = []
+    server.use(
+      http.post('*/api/auth/reset-password', async ({ request }) => {
+        requests.push(request.clone())
+        const { token } = (await request.json()) as { token: string }
+        if (token !== 'good') return authError(400, 'INVALID_TOKEN', 'Invalid token')
+        // A reset ends every session of the account.
+        account.user = null
+        return HttpResponse.json({ status: true })
+      }),
+    )
     expect(await resetPassword(queryClient, 'stale', 'a brand new passphrase')).toBe(EXPIRED_LINK)
     expect(queryClient.getQueryData(sessionQuery.queryKey)).toEqual(userA)
 
     expect(await resetPassword(queryClient, 'good', 'a brand new passphrase')).toBeNull()
-    expect(sentTo('/api/auth/reset-password').at(-1)).toEqual({
+    expect(await sent(requests[1] as Request)).toEqual({
       method: 'POST',
       search: '',
       body: { token: 'good', newPassword: 'a brand new passphrase' },
