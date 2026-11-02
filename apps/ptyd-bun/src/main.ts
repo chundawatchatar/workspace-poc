@@ -121,10 +121,9 @@ interface SessionEntry {
 const MAX_QUEUE = 4 * 1024 * 1024
 const peers = new Map<Bun.Socket<unknown>, Peer>()
 const sessions = new Map<string, SessionEntry>()
-const agents = new AgentChannel((id) => {
-  const entry = sessions.get(id)
-  if (entry) broadcast(entry, statusMessage(entry))
-})
+const sendStatus = (entry: SessionEntry | undefined) => entry && broadcast(entry, statusMessage(entry))
+const notify = (id: string, message: string) => sessions.get(id)?.core.notify(message)
+const agents = new AgentChannel((id) => sendStatus(sessions.get(id)), notify)
 
 function statusMessage(entry: SessionEntry) {
   const info = entry.core.info()
