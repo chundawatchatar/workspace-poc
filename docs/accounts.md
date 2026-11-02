@@ -140,7 +140,7 @@ A signed-in user has Better Auth's four session endpoints:
 `SESSION_NOT_FRESH`; the revoke endpoints need only a valid session. The revoke endpoints go through the same origin
 check as every other `POST`. A password reset also ends every session of the account.
 
-The client's `/account` page uses them. It is reached from the account menu
+The client's `/settings/security` page uses them. It is reached from the account menu
 (`apps/client/src/components/account/AccountMenu.tsx`), shown in the home page's title row and in the machine page's sidebar
 header. It changes the password with `change-password` and `revokeOtherSessions: true`, so every other session ends and
 this browser stays signed in under a new session. It lists the sessions in a table, marks this browser's as

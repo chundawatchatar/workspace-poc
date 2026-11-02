@@ -86,7 +86,7 @@ export function MenuItem({ icon, className, children, ...props }: ItemProps) {
 type LinkItemProps = Omit<BaseMenu.LinkItem.Props, 'className'> & { icon?: ReactNode; className?: string }
 
 /**
- * A link in a menu. Pass the app's router link in `render` (`render={<Link to="/account" />}`). Unlike Base UI's
+ * A link in a menu. Pass the app's router link in `render` (`render={<Link to="/settings/account" />}`). Unlike Base UI's
  * default, it closes the menu, since a client-side navigation may keep the menu on screen.
  */
 export function MenuLinkItem({ icon, className, children, ...props }: LinkItemProps) {

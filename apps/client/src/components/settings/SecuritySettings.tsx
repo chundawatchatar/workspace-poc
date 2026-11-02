@@ -1,52 +1,46 @@
 import { Button, FormError } from '@orch/ui'
-import { ArrowLeft } from '@orch/ui/icons'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link, useNavigate } from '@tanstack/react-router'
-import { type ReactNode, useEffect, useRef, useState } from 'react'
+import { useNavigate } from '@tanstack/react-router'
+import { useEffect, useId, useRef, useState } from 'react'
 import { signOutEverywhere } from '../../lib/accountSessions'
 import { sessionQuery } from '../../lib/auth'
-import { linkClass } from '../Centered'
-import { AccountMenu } from './AccountMenu'
-import { ChangePasswordForm } from './ChangePasswordForm'
-import { SessionsTable } from './SessionsTable'
+import { ChangePasswordForm } from '../account/ChangePasswordForm'
+import { SessionsTable } from '../account/SessionsTable'
+import { SettingsCard, SettingsRow, SettingsSection, SettingsTitle } from './SettingsSection'
 
-/** The account page: change the password, and see and end the sessions the account is signed in with. */
-export function AccountPage() {
+/** The security settings page: change the password, and see and end the sessions the account is signed in with. */
+export function SecuritySettings() {
   const user = useQuery(sessionQuery).data
   return (
-    <div className="mx-auto flex h-full max-w-3xl flex-col gap-6 overflow-y-auto p-8">
-      <div className="flex flex-col gap-3">
-        <Link to="/" className={`flex items-center gap-1.5 self-start text-xs ${linkClass}`}>
-          <ArrowLeft size={13} />
-          Your machines
-        </Link>
-        <div className="flex items-center gap-3">
-          <h1 className="flex-1 text-base font-semibold text-ink">Account</h1>
-          <AccountMenu className="min-w-0" />
-        </div>
-        {user && (
-          <p className="text-dim">
-            Signed in as <span className="text-ink">{user.name}</span> ({user.email})
-          </p>
-        )}
-      </div>
-      <Section title="Change password">
-        <ChangePasswordForm />
-      </Section>
-      <Section title="Devices">
+    <>
+      <SettingsTitle>Security</SettingsTitle>
+      <SettingsSection title="Password">
+        <PasswordCard />
+      </SettingsSection>
+      <SettingsSection title="Where you're signed in" action={<SignOutEverywhere />}>
         {user ? <SessionsTable userId={user.id} /> : null}
-        <SignOutEverywhere />
-      </Section>
-    </div>
+      </SettingsSection>
+    </>
   )
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+/** A row like the other settings, whose button opens the change-password form inside the card. */
+function PasswordCard() {
+  const [open, setOpen] = useState(false)
+  const formId = useId()
   return (
-    <section className="flex flex-col gap-3">
-      <h2 className="text-sm font-semibold text-ink">{title}</h2>
-      {children}
-    </section>
+    <SettingsCard>
+      <SettingsRow label="Password" description="Changing it signs you out on every other device.">
+        <Button variant="secondary" aria-expanded={open} aria-controls={formId} onClick={() => setOpen(!open)}>
+          {open ? 'Cancel' : 'Change password'}
+        </Button>
+      </SettingsRow>
+      {open && (
+        <div id={formId} className="py-4">
+          <ChangePasswordForm />
+        </div>
+      )}
+    </SettingsCard>
   )
 }
 
@@ -84,9 +78,9 @@ function SignOutEverywhere() {
     }
   }
   return (
-    <div ref={root} className="flex flex-col items-start gap-2">
+    <div ref={root} className="flex shrink-0 flex-col items-end gap-2">
       {confirming ? (
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <p className="text-dim">Sign out on every device, this one included?</p>
           <Button data-focus="confirm" pending={pending} onClick={() => void confirm()}>
             Confirm

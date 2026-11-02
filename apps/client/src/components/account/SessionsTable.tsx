@@ -146,7 +146,7 @@ function NotFresh() {
     setFailed(false)
     try {
       await signOut(queryClient)
-      await navigate({ to: '/auth/sign-in', search: { redirect: '/account' } })
+      await navigate({ to: '/auth/sign-in', search: { redirect: '/settings/security' } })
     } catch {
       setFailed(true)
       setPending(false)

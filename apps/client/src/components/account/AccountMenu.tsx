@@ -36,7 +36,7 @@ export function AccountMenu({ className = '' }: { className?: string }) {
         <ChevronDown size={12} className="shrink-0" />
       </MenuTrigger>
       <MenuPopup aria-label="Account">
-        <MenuLinkItem render={<Link to="/account" />}>Account</MenuLinkItem>
+        <MenuLinkItem render={<Link to="/settings/account" />}>Settings</MenuLinkItem>
         <MenuItem onClick={() => void onSignOut()}>Sign out</MenuItem>
       </MenuPopup>
     </Menu>

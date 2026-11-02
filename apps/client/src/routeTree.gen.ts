@@ -11,8 +11,8 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SplatRouteImport } from './routes/$'
-import { Route as AccountRouteImport } from './routes/account'
 import { Route as AuthRouteRouteImport } from './routes/auth/route'
+import { Route as SettingsRouteRouteImport } from './routes/settings/route'
 import { Route as AuthIndexRouteImport } from './routes/auth/index'
 import { Route as AuthForgotPasswordRouteImport } from './routes/auth/forgot-password'
 import { Route as AuthResetPasswordRouteImport } from './routes/auth/reset-password'
@@ -20,6 +20,11 @@ import { Route as AuthSignInRouteImport } from './routes/auth/sign-in'
 import { Route as AuthSignUpRouteImport } from './routes/auth/sign-up'
 import { Route as AuthVerifyEmailRouteImport } from './routes/auth/verify-email'
 import { Route as MMachineIdRouteRouteImport } from './routes/m/$machineId/route'
+import { Route as SettingsIndexRouteImport } from './routes/settings/index'
+import { Route as SettingsAccountRouteImport } from './routes/settings/account'
+import { Route as SettingsAppearanceRouteImport } from './routes/settings/appearance'
+import { Route as SettingsNotificationsRouteImport } from './routes/settings/notifications'
+import { Route as SettingsSecurityRouteImport } from './routes/settings/security'
 import { Route as MMachineIdIndexRouteImport } from './routes/m/$machineId/index'
 import { Route as MMachineIdSplatRouteImport } from './routes/m/$machineId/$'
 import { Route as MMachineIdWWorkspaceIdRouteImport } from './routes/m/$machineId/w/$workspaceId'
@@ -34,14 +39,14 @@ const SplatRoute = SplatRouteImport.update({
   path: '/$',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AccountRoute = AccountRouteImport.update({
-  id: '/account',
-  path: '/account',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const AuthRouteRoute = AuthRouteRouteImport.update({
   id: '/auth',
   path: '/auth',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsRouteRoute = SettingsRouteRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthIndexRoute = AuthIndexRouteImport.update({
@@ -79,6 +84,31 @@ const MMachineIdRouteRoute = MMachineIdRouteRouteImport.update({
   path: '/m/$machineId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingsIndexRoute = SettingsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsAccountRoute = SettingsAccountRouteImport.update({
+  id: '/account',
+  path: '/account',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsAppearanceRoute = SettingsAppearanceRouteImport.update({
+  id: '/appearance',
+  path: '/appearance',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsNotificationsRoute = SettingsNotificationsRouteImport.update({
+  id: '/notifications',
+  path: '/notifications',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
+const SettingsSecurityRoute = SettingsSecurityRouteImport.update({
+  id: '/security',
+  path: '/security',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
 const MMachineIdIndexRoute = MMachineIdIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -98,15 +128,20 @@ const MMachineIdWWorkspaceIdRoute = MMachineIdWWorkspaceIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRouteRouteWithChildren
+  '/settings': typeof SettingsRouteRouteWithChildren
   '/$': typeof SplatRoute
-  '/account': typeof AccountRoute
   '/m/$machineId': typeof MMachineIdRouteRouteWithChildren
   '/auth/forgot-password': typeof AuthForgotPasswordRoute
   '/auth/reset-password': typeof AuthResetPasswordRoute
   '/auth/sign-in': typeof AuthSignInRoute
   '/auth/sign-up': typeof AuthSignUpRoute
   '/auth/verify-email': typeof AuthVerifyEmailRoute
+  '/settings/account': typeof SettingsAccountRoute
+  '/settings/appearance': typeof SettingsAppearanceRoute
+  '/settings/notifications': typeof SettingsNotificationsRoute
+  '/settings/security': typeof SettingsSecurityRoute
   '/auth/': typeof AuthIndexRoute
+  '/settings/': typeof SettingsIndexRoute
   '/m/$machineId/$': typeof MMachineIdSplatRoute
   '/m/$machineId/': typeof MMachineIdIndexRoute
   '/m/$machineId/w/$workspaceId': typeof MMachineIdWWorkspaceIdRoute
@@ -114,13 +149,17 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
-  '/account': typeof AccountRoute
   '/auth/forgot-password': typeof AuthForgotPasswordRoute
   '/auth/reset-password': typeof AuthResetPasswordRoute
   '/auth/sign-in': typeof AuthSignInRoute
   '/auth/sign-up': typeof AuthSignUpRoute
   '/auth/verify-email': typeof AuthVerifyEmailRoute
+  '/settings/account': typeof SettingsAccountRoute
+  '/settings/appearance': typeof SettingsAppearanceRoute
+  '/settings/notifications': typeof SettingsNotificationsRoute
+  '/settings/security': typeof SettingsSecurityRoute
   '/auth': typeof AuthIndexRoute
+  '/settings': typeof SettingsIndexRoute
   '/m/$machineId/$': typeof MMachineIdSplatRoute
   '/m/$machineId': typeof MMachineIdIndexRoute
   '/m/$machineId/w/$workspaceId': typeof MMachineIdWWorkspaceIdRoute
@@ -129,15 +168,20 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/auth': typeof AuthRouteRouteWithChildren
+  '/settings': typeof SettingsRouteRouteWithChildren
   '/$': typeof SplatRoute
-  '/account': typeof AccountRoute
   '/m/$machineId': typeof MMachineIdRouteRouteWithChildren
   '/auth/forgot-password': typeof AuthForgotPasswordRoute
   '/auth/reset-password': typeof AuthResetPasswordRoute
   '/auth/sign-in': typeof AuthSignInRoute
   '/auth/sign-up': typeof AuthSignUpRoute
   '/auth/verify-email': typeof AuthVerifyEmailRoute
+  '/settings/account': typeof SettingsAccountRoute
+  '/settings/appearance': typeof SettingsAppearanceRoute
+  '/settings/notifications': typeof SettingsNotificationsRoute
+  '/settings/security': typeof SettingsSecurityRoute
   '/auth/': typeof AuthIndexRoute
+  '/settings/': typeof SettingsIndexRoute
   '/m/$machineId/$': typeof MMachineIdSplatRoute
   '/m/$machineId/': typeof MMachineIdIndexRoute
   '/m/$machineId/w/$workspaceId': typeof MMachineIdWWorkspaceIdRoute
@@ -147,15 +191,20 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/auth'
+    | '/settings'
     | '/$'
-    | '/account'
     | '/m/$machineId'
     | '/auth/forgot-password'
     | '/auth/reset-password'
     | '/auth/sign-in'
     | '/auth/sign-up'
     | '/auth/verify-email'
+    | '/settings/account'
+    | '/settings/appearance'
+    | '/settings/notifications'
+    | '/settings/security'
     | '/auth/'
+    | '/settings/'
     | '/m/$machineId/$'
     | '/m/$machineId/'
     | '/m/$machineId/w/$workspaceId'
@@ -163,13 +212,17 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/$'
-    | '/account'
     | '/auth/forgot-password'
     | '/auth/reset-password'
     | '/auth/sign-in'
     | '/auth/sign-up'
     | '/auth/verify-email'
+    | '/settings/account'
+    | '/settings/appearance'
+    | '/settings/notifications'
+    | '/settings/security'
     | '/auth'
+    | '/settings'
     | '/m/$machineId/$'
     | '/m/$machineId'
     | '/m/$machineId/w/$workspaceId'
@@ -177,15 +230,20 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/auth'
+    | '/settings'
     | '/$'
-    | '/account'
     | '/m/$machineId'
     | '/auth/forgot-password'
     | '/auth/reset-password'
     | '/auth/sign-in'
     | '/auth/sign-up'
     | '/auth/verify-email'
+    | '/settings/account'
+    | '/settings/appearance'
+    | '/settings/notifications'
+    | '/settings/security'
     | '/auth/'
+    | '/settings/'
     | '/m/$machineId/$'
     | '/m/$machineId/'
     | '/m/$machineId/w/$workspaceId'
@@ -194,8 +252,8 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthRouteRoute: typeof AuthRouteRouteWithChildren
+  SettingsRouteRoute: typeof SettingsRouteRouteWithChildren
   SplatRoute: typeof SplatRoute
-  AccountRoute: typeof AccountRoute
   MMachineIdRouteRoute: typeof MMachineIdRouteRouteWithChildren
 }
 
@@ -215,18 +273,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SplatRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/account': {
-      id: '/account'
-      path: '/account'
-      fullPath: '/account'
-      preLoaderRoute: typeof AccountRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/auth': {
       id: '/auth'
       path: '/auth'
       fullPath: '/auth'
       preLoaderRoute: typeof AuthRouteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/auth/': {
@@ -278,6 +336,41 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MMachineIdRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/settings/': {
+      id: '/settings/'
+      path: '/'
+      fullPath: '/settings/'
+      preLoaderRoute: typeof SettingsIndexRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/account': {
+      id: '/settings/account'
+      path: '/account'
+      fullPath: '/settings/account'
+      preLoaderRoute: typeof SettingsAccountRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/appearance': {
+      id: '/settings/appearance'
+      path: '/appearance'
+      fullPath: '/settings/appearance'
+      preLoaderRoute: typeof SettingsAppearanceRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/notifications': {
+      id: '/settings/notifications'
+      path: '/notifications'
+      fullPath: '/settings/notifications'
+      preLoaderRoute: typeof SettingsNotificationsRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/security': {
+      id: '/settings/security'
+      path: '/security'
+      fullPath: '/settings/security'
+      preLoaderRoute: typeof SettingsSecurityRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
     '/m/$machineId/': {
       id: '/m/$machineId/'
       path: '/'
@@ -324,6 +417,26 @@ const AuthRouteRouteWithChildren = AuthRouteRoute._addFileChildren(
   AuthRouteRouteChildren,
 )
 
+interface SettingsRouteRouteChildren {
+  SettingsAccountRoute: typeof SettingsAccountRoute
+  SettingsAppearanceRoute: typeof SettingsAppearanceRoute
+  SettingsNotificationsRoute: typeof SettingsNotificationsRoute
+  SettingsSecurityRoute: typeof SettingsSecurityRoute
+  SettingsIndexRoute: typeof SettingsIndexRoute
+}
+
+const SettingsRouteRouteChildren: SettingsRouteRouteChildren = {
+  SettingsAccountRoute: SettingsAccountRoute,
+  SettingsAppearanceRoute: SettingsAppearanceRoute,
+  SettingsNotificationsRoute: SettingsNotificationsRoute,
+  SettingsSecurityRoute: SettingsSecurityRoute,
+  SettingsIndexRoute: SettingsIndexRoute,
+}
+
+const SettingsRouteRouteWithChildren = SettingsRouteRoute._addFileChildren(
+  SettingsRouteRouteChildren,
+)
+
 interface MMachineIdRouteRouteChildren {
   MMachineIdSplatRoute: typeof MMachineIdSplatRoute
   MMachineIdIndexRoute: typeof MMachineIdIndexRoute
@@ -343,8 +456,8 @@ const MMachineIdRouteRouteWithChildren = MMachineIdRouteRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthRouteRoute: AuthRouteRouteWithChildren,
+  SettingsRouteRoute: SettingsRouteRouteWithChildren,
   SplatRoute: SplatRoute,
-  AccountRoute: AccountRoute,
   MMachineIdRouteRoute: MMachineIdRouteRouteWithChildren,
 }
 export const routeTree = rootRouteImport

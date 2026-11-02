@@ -119,8 +119,8 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   <email>`), which deletes the user's `session` rows through `skipAuthorization` and prints only the count.
 - Accepted risk, freshness: `list-sessions` refuses a session older than `session.freshAge` (one day, set in
   `createAuth`) with 403 `SESSION_NOT_FRESH`, while the revoke endpoints only need a valid session. The client's
-  `/account` page then says a recent sign-in is needed to see devices, and its "Sign in again" button signs out and
-  opens `/auth/sign-in?redirect=%2Faccount`. Changing the password and signing out from all devices still work there.
+  `/settings/security` page then says a recent sign-in is needed to see devices, and its "Sign in again" button signs out and
+  opens `/auth/sign-in?redirect=%2Fsettings%2Fsecurity`. Changing the password and signing out from all devices still work there.
   Revoking one session needs a fresh session too, since it lists the sessions again to find the token, but the table
   only shows once a list succeeded.
 - Resolved for now, tokens: Better Auth's `list-sessions` answers each session's `token`, which `revoke-session`
@@ -142,7 +142,7 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   (`src/lib/pendingLink.ts`) on a sign-out or an account switch but keeps it when a signed-out session signs in, and
   invalidates the router so the guards run again. A query or
   mutation that fails with `unauthorized` reads the session again, so a session revoked elsewhere takes the same
-  path. Guarded routes (`/`, `/account` and `/m/$machineId` with its children) use `requireSession` as `beforeLoad`, which sends
+  path. Guarded routes (`/`, `/settings` with its children and `/m/$machineId` with its children) use `requireSession` as `beforeLoad`, which sends
   a signed-out user to `/auth/sign-in?redirect=<path and search>`. `/auth/sign-in` itself is never guarded, and
   after signing in it goes to `safeRedirect(redirect)`: the value only when it is a path on this origin (one leading
   `/`, not `//` or `/\`, no control characters) and not a page under `/auth`, else `/`. The `/auth` check runs on the
@@ -195,8 +195,9 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   with remote access off. Rename (an inline TanStack Form with `machineNameSchema`) and unlink invalidate the list;
   unlink also forgets the machine's local key, since the list no longer shows local-only machines and a key left
   behind could never be seen or removed. Open question: whether unlink should ask for confirmation.
-- The client's `/account` page is reached from the account menu (`src/components/account/AccountMenu.tsx`: the user's email
-  as a button opening "Account" and "Sign out"), shown in the home page's title row and in the machine page's sidebar
+- The client's settings (`/settings`, a left nav of sections; password and sessions on `/settings/security`) are reached
+  from the account menu (`src/components/account/AccountMenu.tsx`: the user's email as a button opening "Settings" and
+  "Sign out"), shown in the home page's title row and in the machine page's sidebar
   `header`. It changes the password with Better Auth's `change-password` and `revokeOtherSessions: true`: Better Auth
   1.7.14 deletes every session of the user and starts a new one for this browser, so the user stays signed in under a
   new session id (the user id is unchanged, so the identity watcher does nothing), and the token it answers is
