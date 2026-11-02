@@ -1,4 +1,11 @@
-import { AGENT_LABELS, type AgentReason, type AgentState, type SessionInfo } from '@orch/shared'
+import {
+  AGENT_LABELS,
+  type AgentReason,
+  type AgentState,
+  listPanes,
+  type SessionInfo,
+  type Workspace,
+} from '@orch/shared'
 
 export type AgentStatusKind = 'working' | 'waiting' | 'idle' | 'failed'
 
@@ -83,4 +90,40 @@ export function sidebarSignal(
   if (session?.interrupted) return 'interrupted'
   if (session?.process) return 'running'
   return session && !session.alive ? 'exited' : 'shell'
+}
+
+/** How many agents in a workspace are in each state the UI can state. */
+export interface AgentStateCounts {
+  waiting: number
+  working: number
+  idle: number
+}
+
+/**
+ * Counts the agents in every terminal of a workspace, in active tabs or not.
+ * It reads `agentState`, not `agentStatus`, since progress alone can come from
+ * any program. An idle from terminal signals is left out, as `statusKind` does.
+ */
+export function agentCounts(workspace: Workspace, sessions: Record<string, SessionInfo>): AgentStateCounts {
+  const counts: AgentStateCounts = { waiting: 0, working: 0, idle: 0 }
+  const surfaces = listPanes(workspace.root).flatMap((pane) => pane.surfaces)
+  for (const surface of surfaces) {
+    if (surface.kind !== 'terminal') continue
+    const state = sessions[surface.id]?.agentState
+    if (!state || (state.state === 'idle' && state.source !== 'hooks')) continue
+    counts[state.state] += 1
+  }
+  return counts
+}
+
+/** The counts in words, such as `2 agents working, 1 waiting`. Null means there is nothing to count. */
+export function agentCountsLabel(counts: AgentStateCounts) {
+  const parts = (['working', 'waiting', 'idle'] as const).filter((state) => counts[state] > 0)
+  if (parts.length === 0) return null
+  return parts
+    .map((state, index) => {
+      if (index > 0) return `${counts[state]} ${state}`
+      return `${counts[state]} ${counts[state] === 1 ? 'agent' : 'agents'} ${state}`
+    })
+    .join(', ')
 }

@@ -1,6 +1,23 @@
 import { describe, expect, test } from 'bun:test'
-import type { AgentReason, AgentState, AgentStateName, SessionInfo } from '@orch/shared'
-import { type AgentStatusKind, agentStatus, type SidebarSignal, sidebarSignal, withStatus } from './agentStatus'
+import {
+  type AgentReason,
+  type AgentState,
+  type AgentStateName,
+  makePane,
+  makeSurface,
+  makeWorkspace,
+  type SessionInfo,
+  type Surface,
+} from '@orch/shared'
+import {
+  type AgentStatusKind,
+  agentCounts,
+  agentCountsLabel,
+  agentStatus,
+  type SidebarSignal,
+  sidebarSignal,
+  withStatus,
+} from './agentStatus'
 
 const claude = { kind: 'claude', sessionId: null, cwd: '/w' } as const
 const codex = { kind: 'codex', sessionId: null, cwd: '/w' } as const
@@ -103,5 +120,69 @@ describe('sidebarSignal', () => {
 
   test.each(rows)('%s', (_name, row, status, signal) => {
     expect(sidebarSignal(row, status)).toBe(signal)
+  })
+})
+
+describe('agentCounts', () => {
+  const session = (agentState: AgentState | null | undefined, progress: SessionInfo['progress'] = null) =>
+    ({ agentState, progress }) as SessionInfo
+
+  const cases: [string, SessionInfo | undefined, 'waiting' | 'working' | 'idle' | null][] = [
+    ['working from hooks', session(agentState('working', 'tool')), 'working'],
+    ['working from signals', session(agentState('working', 'progress', 'signals')), 'working'],
+    ['waiting from hooks', session(agentState('waiting', 'permission')), 'waiting'],
+    ['waiting from signals', session(agentState('waiting', 'attention', 'signals')), 'waiting'],
+    ['idle from hooks', session(agentState('idle', 'finished')), 'idle'],
+    ['failed idle from hooks', session(agentState('idle', 'error'), 'error'), 'idle'],
+    ['idle from signals', session(agentState('idle', 'detected', 'signals')), null],
+    ['null state, busy', session(null, 'busy'), null],
+    ['null state, error', session(null, 'error'), null],
+    ['undefined state, busy', session(undefined, 'busy'), null],
+    ['no session', undefined, null],
+  ]
+
+  test.each(cases)('%s', (_name, info, bucket) => {
+    const surface = makeSurface()
+    const sessions = info ? { [surface.id]: info } : {}
+    const expected = { waiting: 0, working: 0, idle: 0, ...(bucket && { [bucket]: 1 }) }
+    expect(agentCounts(makeWorkspace('ws', '/w', makePane([surface])), sessions)).toEqual(expected)
+  })
+
+  test('counts each terminal in every pane once, active tab or not, and nothing else', () => {
+    const background = makeSurface()
+    const active = makeSurface()
+    const split = makeSurface()
+    const pulls: Surface = makeSurface('pulls')
+    const elsewhere = makeSurface()
+    const root = {
+      type: 'split',
+      id: 'split',
+      direction: 'row',
+      ratio: 0.5,
+      a: makePane([active, background]),
+      b: makePane([split, pulls]),
+    } as const
+    const working = session(agentState('working', 'tool'))
+
+    const counts = agentCounts(makeWorkspace('ws', '/w', root), {
+      [background.id]: working,
+      [active.id]: working,
+      [split.id]: session(agentState('waiting', 'question')),
+      [pulls.id]: working,
+      [elsewhere.id]: working,
+    })
+
+    expect(counts).toEqual({ waiting: 1, working: 2, idle: 0 })
+  })
+})
+
+describe('agentCountsLabel', () => {
+  test.each([
+    [{ working: 2, waiting: 1, idle: 0 }, '2 agents working, 1 waiting'],
+    [{ working: 1, waiting: 0, idle: 0 }, '1 agent working'],
+    [{ working: 0, waiting: 1, idle: 3 }, '1 agent waiting, 3 idle'],
+    [{ working: 0, waiting: 0, idle: 0 }, null],
+  ])('words %j', (counts, label) => {
+    expect(agentCountsLabel(counts)).toBe(label)
   })
 })

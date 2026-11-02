@@ -1,7 +1,8 @@
 import { CircleAlert, Hand, LoaderCircle, type LucideIcon, Pause } from '@orch/ui/icons'
 import type { AgentStatus, AgentStatusKind } from '../lib/agentStatus'
 
-const MARKS: Record<AgentStatusKind, { Icon: LucideIcon; colour: string }> = {
+/** The shape and status colour of each kind. */
+export const AGENT_MARKS: Record<AgentStatusKind, { Icon: LucideIcon; colour: string }> = {
   working: { Icon: LoaderCircle, colour: '' },
   waiting: { Icon: Hand, colour: 'text-warn' },
   idle: { Icon: Pause, colour: 'text-faint' },
@@ -13,7 +14,7 @@ const MARKS: Record<AgentStatusKind, { Icon: LucideIcon; colour: string }> = {
  * selected sidebar tile, where the theme's status colours would not show.
  */
 export function AgentStateMark(props: { status: AgentStatus; size: number; onAccent?: boolean }) {
-  const { Icon, colour } = MARKS[props.status.kind]
+  const { Icon, colour } = AGENT_MARKS[props.status.kind]
   const spin = props.status.kind === 'working' ? 'animate-spin' : ''
   return (
     <Icon
