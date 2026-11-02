@@ -24,10 +24,13 @@ export interface AgentSignals {
 
 type Derived = { state: AgentStateName; reason: AgentReason; source: AgentState['source'] }
 
-/** The state from the terminal's signals alone (see "Baseline" in `docs/agents.md`). */
+/**
+ * The state from the terminal's signals alone (see "Baseline" in `docs/agents.md`). Attention the agent's hooks
+ * raised is a notification of the hook state, not a signal of its own.
+ */
 function baseline({ progress, attention }: AgentSignals): Derived {
   if (progress === 'busy') return { state: 'working', reason: 'progress', source: 'signals' }
-  if (attention) return { state: 'waiting', reason: 'attention', source: 'signals' }
+  if (attention && attention.from !== 'agent') return { state: 'waiting', reason: 'attention', source: 'signals' }
   if (progress === 'error') return { state: 'idle', reason: 'error', source: 'signals' }
   return { state: 'idle', reason: 'detected', source: 'signals' }
 }

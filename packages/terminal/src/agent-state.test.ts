@@ -87,6 +87,15 @@ describe('deriveAgentState', () => {
     expect(derive({ agent: codex, agentHook: finished, progress: 'error' })).toEqual(['idle', 'finished', 'hooks'])
   })
 
+  test('attention the agent raised is a notification, never a waiting state by itself', () => {
+    const codex: AgentRef = { ...agent, kind: 'codex' }
+    const finished = hook({ agent: 'codex', state: 'idle', reason: 'finished' })
+    const notified = { at: 1, message: 'Codex finished', from: 'agent' as const }
+    expect(derive({ agent: codex, agentHook: finished, attention: notified })).toEqual(['idle', 'finished', 'hooks'])
+    expect(derive({ attention: notified })).toEqual(['idle', 'detected', 'signals'])
+    expect(derive({ attention })).toEqual(['waiting', 'attention', 'signals'])
+  })
+
   test('a working hook gives way to interrupted only after progress ended and hooks stayed silent', () => {
     const agentHook = hook({ state: 'working', reason: 'tool', at: 100 })
     const ended = 200

@@ -60,6 +60,7 @@ function setup(tracking: AgentTracking) {
   const channel = new AgentChannel(
     () => {},
     () => {},
+    () => {},
     Date.now,
     agents,
   )

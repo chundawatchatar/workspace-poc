@@ -5,6 +5,7 @@ import { SerializeAddon } from '@xterm/addon-serialize'
 import { Terminal } from '@xterm/headless'
 import type { AgentShellEnv } from './agent-channel'
 import { isShimFolder, zshWrapperFor } from './agent-shim'
+import { AttentionSlot } from './attention'
 import type { Foreground } from './processes'
 
 /** One attached browser terminal. Output is held back until its snapshot is sent. */
@@ -292,10 +293,10 @@ export class TerminalCore {
   readonly createdAt = Date.now()
   title = 'Terminal'
   alive = false
-  attention: SessionInfo['attention'] = null
   progress: SessionInfo['progress'] = null
 
   private readonly term: Terminal
+  private readonly attentionSlot = new AttentionSlot()
   private readonly serializer = new SerializeAddon()
   private proc: Bun.Subprocess | null = null
   private cols: number
@@ -408,15 +409,23 @@ export class TerminalCore {
     return { id: this.id, title: this.title, alive: this.alive, attention: this.attention, progress: this.progress }
   }
 
+  /** Set when the session needs to be looked at, until a view acknowledges it. */
+  get attention(): SessionInfo['attention'] {
+    return this.attentionSlot.current
+  }
+
   ack() {
-    if (!this.attention) return
-    this.attention = null
+    if (this.attentionSlot.clear()) this.onChange()
+  }
+
+  /** Raises attention for a moment the agent's hooks reported, with a fixed message. */
+  notify(message: string) {
+    this.attentionSlot.agent(message, Date.now())
     this.onChange()
   }
 
   private raise(message: string) {
-    this.attention = { at: Date.now(), message }
-    this.onChange()
+    if (this.attentionSlot.signal(message, Date.now())) this.onChange()
   }
 
   private spawn() {

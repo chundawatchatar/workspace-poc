@@ -74,8 +74,11 @@ export interface SessionInfo {
   id: string
   title: string
   alive: boolean
-  /** Set when the session rang the bell or sent a notification nobody has seen. */
-  attention: { at: number; message: string } | null
+  /**
+   * Set when the session rang the bell, sent a notification or its agent reported a moment that needs the user, and
+   * nobody has seen it yet. `from: 'agent'` marks the agent's own report; absent means a terminal signal.
+   */
+  attention: { at: number; message: string; from?: 'agent' } | null
   /** Null while the shell waits at its prompt. */
   process: ProcessInfo | null
   /** The working directory of the foreground program, or of the shell when idle. */

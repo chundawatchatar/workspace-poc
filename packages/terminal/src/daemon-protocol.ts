@@ -25,7 +25,8 @@ export const daemonStatus = z.object({
   pid: z.number().int().positive().nullable(),
   alive: z.boolean(),
   title: z.string(),
-  attention: z.object({ at: z.number(), message: z.string() }).nullable(),
+  /** `from: 'agent'` marks attention the agent's hooks raised; absent means a terminal signal. */
+  attention: z.object({ at: z.number(), message: z.string(), from: z.literal('agent').optional() }).nullable(),
   progress: z.enum(['busy', 'error']).nullable(),
   cols: z.number().int().min(2).max(500),
   rows: z.number().int().min(2).max(200),

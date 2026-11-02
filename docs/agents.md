@@ -44,7 +44,8 @@ The baseline derivation, in order:
 1. `agent` is null, tracking is off, `interrupted` is set or `alive` is false: no state.
 2. `progress` is `busy`: `working`, reason `progress`.
 3. `attention` is set: `waiting`, reason `attention`. The baseline can't tell a question from a permission prompt or
-   a finished turn, so it uses this one reason for all three.
+   a finished turn, so it uses this one reason for all three. Attention with `from: 'agent'` doesn't count: it is a notification
+   the hooks raised (see [Notifications](#notifications-ag-3)).
 4. `progress` is `error`: `idle`, reason `error`.
 5. Otherwise: `idle`, reason `detected`.
 
@@ -180,8 +181,9 @@ arguments and a 2-second hook timeout:
 
 `idle_prompt` is the reminder that Claude Code is waiting for input, about a minute after a finished turn, so an
 unattended tab goes from `idle` to `waiting` then. It uses reason `question` because a reason of its own would change
-`agentEvent`, `daemonStatus` and `AgentReason`. Step 7 must exclude it, or it would say "has a question" after every
-finished turn. To drop it, remove its row here and in `CLAUDE_HOOKS`.
+`agentEvent`, `daemonStatus` and `AgentReason`. Notifications exclude it: a `question` entered from `idle` raises
+nothing, so a finished turn isn't announced a second time as "has a question". To drop it, remove its row here and in
+`CLAUDE_HOOKS`.
 
 No matcher excludes a tool, so both `PreToolUse` hooks fire for `AskUserQuestion`, in either order. The daemon's rule
 that `tool` never replaces a fresh `waiting` keeps the right state. Known gaps: `StopFailure` and `PostToolUseFailure`
@@ -220,7 +222,8 @@ last answer. `-c notify=...` replaces the configured value, so a plain flag woul
   config sets any `notifications`, `notification_method` or `notification_condition` key. The list is approvals only
   because a bell after each finished turn would read as `waiting`, and `always` because the default may skip a focused
   terminal. A bell carries no text, and the baseline already turns it into `waiting`/`attention` until the user looks.
-  This costs Codex's default finished-turn notification in that terminal, and nothing shows "finished" until step 7.
+  This costs Codex's default finished-turn notification in that terminal; "Codex finished" comes from `notify` instead
+  (see [Notifications](#notifications-ag-3)).
 - **Any `-c` keeps the session off the shared server.** Interactive Codex connects to a long-lived shared app server,
   where a `notify` would run with the server's environment and no token. With any `-c` flag it runs in-process instead,
   even when the server is up, so `notify` runs in the terminal's own Codex, with the token. No `--no-daemon` is needed,
@@ -234,7 +237,8 @@ last answer. `-c notify=...` replaces the configured value, so a plain flag woul
 - **An early `finished`.** The title Codex generates for a new session is a turn of its own, which fires `notify` too,
   so the first prompt reports `finished` twice and the first of them can come while the real turn is still running.
   The hook can't tell them apart without reading the JSON, which it never does. A bell still wins (`combine` prefers a
-  baseline `waiting`). Step 7 has to keep this in mind for "Codex finished".
+  baseline `waiting`). So the first `finished` of an agent run never notifies (see
+  [Notifications](#notifications-ag-3)).
 
 **Candidates for later.** Codex's real hook system (`PermissionRequest`, `Stop` and others) would give precise events
 and leave `notify` alone, but hooks need review: Codex shows a "Hooks need review" dialog and stores trust in
@@ -444,8 +448,13 @@ export interface SessionInfo {
   agentState: AgentState | null
   /** The per-session switch (AG-5). False only when the user turned tracking off for this terminal. */
   agentTracking: boolean
+  /** `from: 'agent'` marks attention the agent's hooks raised; absent means a terminal signal. */
+  attention: { at: number; message: string; from?: 'agent' } | null
 }
 ```
+
+The host copies `attention` from the daemon's status unchanged. An older daemon never sends `from`, so its
+attention is always a signal's.
 
 The events socket's client messages (`packages/shared/src/contracts/events.ts`) gain
 `{ type: 'agentTracking', sessionId: string, on: boolean }`. This is the user's own control, sent by the UI like
@@ -453,7 +462,8 @@ The events socket's client messages (`packages/shared/src/contracts/events.ts`) 
 
 ### Daemon protocol (host to daemon)
 
-In `packages/terminal/src/daemon-protocol.ts`, `daemonStatus` gains one optional field:
+In `packages/terminal/src/daemon-protocol.ts`, `daemonStatus` gains one optional field, and its `attention` an
+optional origin:
 
 ```ts
   /** The last hook event of the current agent run. Absent from daemons started by an older build. */
@@ -466,6 +476,8 @@ In `packages/terminal/src/daemon-protocol.ts`, `daemonStatus` gains one optional
     })
     .nullable()
     .optional(),
+  /** `from: 'agent'` marks attention the agent's hooks raised; absent means a terminal signal. */
+  attention: z.object({ at: z.number(), message: z.string(), from: z.literal('agent').optional() }).nullable(),
 ```
 
 The daemon's request schema (`apps/ptyd-bun/src/main.ts`) gains:
@@ -504,9 +516,9 @@ Files that must change together:
 
 | Side | Files |
 | --- | --- |
-| Shared | `packages/shared/src/protocol.ts` (`SessionInfo`, `AgentState`), `packages/shared/src/contracts/events.ts` (`agentTracking`) |
-| Terminal package | `packages/terminal/src/daemon-protocol.ts` (`daemonStatus.agentHook`), `packages/terminal/src/core.ts` (`shellEnv`, attention merge), new `packages/terminal/src/agent-state.ts`, and `packages/terminal/src/agent-channel.ts` (tokens, requests, rate limit, hook state), which lives here because `daemonBuild` hashes this folder and only `main.ts` of the daemon |
-| Daemon | `apps/ptyd-bun/src/main.ts` (request schema, `agent.sock`, the shim folder) |
+| Shared | `packages/shared/src/protocol.ts` (`SessionInfo`, `AgentState`, `attention.from`), `packages/shared/src/contracts/events.ts` (`agentTracking`) |
+| Terminal package | `packages/terminal/src/daemon-protocol.ts` (`daemonStatus.agentHook`, `attention.from`), `packages/terminal/src/core.ts` (`shellEnv`, `TerminalCore.notify`), `packages/terminal/src/attention.ts` (the attention merge), new `packages/terminal/src/agent-state.ts`, and `packages/terminal/src/agent-channel.ts` (tokens, requests, rate limit, hook state), which lives here because `daemonBuild` hashes this folder and only `main.ts` of the daemon |
+| Daemon | `apps/ptyd-bun/src/main.ts` (request schema, `agent.sock`, the shim folder, `onNotify` to the session's core) |
 | Host | `apps/host/src/modules/terminals/daemon-session.service.ts`, `daemon.repository.ts` (the switch in each record), `apps/host/src/modules/events/events.ws.ts` (`agentTracking`) |
 | Web | `packages/terminal-ui` (tab state, sidebar counts, trust notice, switch) |
 
@@ -557,17 +569,51 @@ Notifications reuse the existing attention path: an unseen `attention` gives the
 the workspace its count and message in the sidebar (NOTE-1), it is listed with the others (NOTE-2), and looking at
 the terminal clears it with `ack` (NOTE-3). Nothing new is added on the web side.
 
-Hook transitions that notify, each raised once by the daemon with a fixed message:
+Notifications follow hook state, so they need hook tracking (`ORCH_AGENT_HOOKS=1` on the host until the trust
+prompt ships, and the session's switch on). Without it nothing new happens: the bell or OSC 9 attention that already
+exists is the notification.
+
+`AgentChannel` decides, for each hook event it accepts and applies, whether it is a notifying transition, comparing it
+with the session's hook state before it (from the same agent; none counts as no state), and calls `onNotify(id,
+message)`. The daemon passes that to the session's `TerminalCore.notify`, which raises attention with `from: 'agent'`.
+The daemon raises it rather than the host because it owns `attention`, receives hook events while the host is down,
+and so the notification survives a host restart. Messages are fixed strings built from `AGENT_LABELS`, never from
+anything in the agent's payload.
+
+For Claude Code:
 
 | Transition | Message |
 | --- | --- |
-| `working` to `idle` with reason `finished` | "Claude Code finished" / "Codex finished" |
-| any to `waiting` with reason `permission` | "Claude Code needs permission" |
-| any to `waiting` with reason `question` | "Claude Code has a question" |
+| `working` or `waiting` to `idle` with reason `finished` | "Claude Code finished" |
+| anything else to `waiting` with reason `permission` | "Claude Code needs permission" |
+| `working` or `waiting`/`permission` to `waiting` with reason `question` | "Claude Code has a question" |
 
-Nothing else notifies: not `idle` to `working`, not `waiting` to `working`, not `started`, `exited` or
-`interrupted`, and no baseline-only change. On the baseline the attention that a bell or OSC 9 already raises is the
-notification, so there is never a second one for the same signal.
+A repeated event with the same state and reason raises nothing, so each transition notifies once.
+
+For Codex (`turnEndOnly`), whose `notify` only ever reports `idle`/`finished`, every report raises "Codex finished",
+except the first one of an agent run: after a new token (a shell start), `agentExited`, the hook state being dropped,
+or tracking being turned back on. That one is the title turn's early report (see "An early `finished`" under
+[Codex](#codex)), which can come while the real turn still runs. The cost: a resumed Codex session, which may have no
+title turn, gets no notification for its first finished turn. A rule based on time since the agent started could
+avoid that; it is an open question whether it is worth it.
+
+Nothing else notifies:
+
+- not `idle` or `waiting` to `working`, and not `started`, `exited` or `interrupted`;
+- not an event the channel drops: inside the exit window after `agentExited`, a late `tool` held off by a fresh
+  `waiting`, one refused by the rate limit and never applied, or one for an agent the session doesn't track;
+- not `waiting`/`question` entered from `idle` or with no hook state before it. That is Claude Code's `idle_prompt`,
+  about a minute after `Stop`, which would repeat "finished" as "has a question";
+- no change derived from the baseline alone. On the baseline the attention that a bell or OSC 9 already raises is the
+  notification, so there is never a second one for the same signal.
+
+Attention the agent raised is a notification of the hook state, not a signal of its own: the baseline ignores
+attention with `from: 'agent'`, so it never turns into `waiting`/`attention` by itself. A Codex `finished` with its
+notification unseen still shows `idle`/`finished`.
+
+Clearing is unchanged: the `ack` the UI sends when the pane is focused in a focused window clears agent attention like
+any other. A notification raised while the user is looking at the terminal is cleared at once, and one raised while
+they look elsewhere stays until they look.
 
 ### One attention, not two
 
@@ -575,13 +621,19 @@ Claude Code may also ring the bell or send OSC 9 for the same moment a hook repo
 session, so the rule is about which message it shows and not raising again after the user has seen it:
 
 - When a hook transition raises attention and a bell, OSC 9 or OSC 777 attention arrived less than 2 seconds
-  earlier and is still unseen, the hook's message replaces the signal's and `at` keeps the earlier time. It is one
-  attention.
+  earlier and is still unseen, the hook's message replaces the signal's, `at` keeps the earlier time and the origin
+  stays the signal's (no `from`). It is one attention, and a Codex approval bell merged with a `finished` report
+  still derives `waiting`, as `combine` prefers.
 - A bell, OSC 9 or OSC 777 that arrives less than 2 seconds after a hook transition raised attention is dropped,
   even if the user has already looked at the terminal in between, so it doesn't come back.
-- The hook source is preferred because its message says why. Outside the 2-second window both behave as today.
+- The hook source is preferred because its message says why. Outside the 2-second window both behave as today: the
+  newer one replaces the older.
 
-This merge lives in `TerminalCore.raise` in `core.ts`, which is where the bell, OSC 9 and OSC 777 already arrive.
+Known risk: a Codex approval bell that arrives within 2 seconds of a "Codex finished" notification is dropped, so that
+approval shows no `waiting` until the next signal. It is accepted for now.
+
+This merge lives in `AttentionSlot` (`packages/terminal/src/attention.ts`), which `TerminalCore` keeps as its
+`attention`: `raise` (bell, OSC 9, OSC 777) and `notify` (hooks) both go through it.
 
 ## Security summary
 
@@ -687,6 +739,6 @@ Each step is one job and leaves the product working:
 5. **Tab state.** The tab shows `working`, `waiting` or, from hooks only, `idle`, with the reason and source in its
    tooltip.
 6. **Sidebar counts.** Per-workspace counts per state.
-7. **Notifications.** Hook transitions raise attention in the daemon, with the 2-second merge in `TerminalCore.raise`.
+7. **Notifications.** Hook transitions raise attention in the daemon, with the 2-second merge in `AttentionSlot`.
 8. **Off switch and trust prompt.** The per-session switch in the record, the `agentTracking` client message, the
    ask-once notice and `agent-tracking.json`. This turns hook tracking on for users who say yes.

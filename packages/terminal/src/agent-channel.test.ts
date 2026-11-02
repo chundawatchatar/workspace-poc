@@ -11,9 +11,11 @@ const permission = { agent: 'claude', state: 'waiting', reason: 'permission' }
 function setup() {
   const clock = { now: 1000 }
   const changes: string[] = []
+  const notes: string[] = []
   const logs: string[] = []
   const channel = new AgentChannel(
     (id) => changes.push(id),
+    (id, message) => notes.push(`${id}: ${message}`),
     (message) => logs.push(message),
     () => clock.now,
   )
@@ -35,7 +37,7 @@ function setup() {
     channel.handle(
       new Request('http://agent/v1/session', { headers: token ? { authorization: `Bearer ${token}` } : {} }),
     )
-  return { clock, changes, logs, channel, start, post, session }
+  return { clock, changes, notes, logs, channel, start, post, session }
 }
 
 /** Sends `count` events and gives their statuses. */
@@ -54,7 +56,10 @@ describe('tokens', () => {
     channel.setTracking('off', none)
     expect(channel.issue('off')).toBeNull()
 
-    const unbound = new AgentChannel(() => {})
+    const unbound = new AgentChannel(
+      () => {},
+      () => {},
+    )
     unbound.setTracking('a', both)
     expect(unbound.issue('a')).toBeNull()
     expect(agentSocketPath('/tmp/x/host.sock')).toBe('/tmp/x/agent.sock')
@@ -133,6 +138,87 @@ describe('events', () => {
     clock.now += 1000
     await post(token, finished)
     expect(channel.hook('a')?.reason).toBe('finished')
+  })
+})
+
+describe('notifications', () => {
+  const event = (state: string, reason: string, agent = 'claude') => ({ agent, state, reason })
+
+  test('Claude Code notifies once per finished, permission or question transition, and for nothing else', async () => {
+    const { clock, notes, start, post } = setup()
+    const token = start('a')
+    const steps: [ReturnType<typeof event>, string | null][] = [
+      [event('idle', 'started'), null],
+      [event('idle', 'finished'), null],
+      [event('working', 'prompt'), null],
+      [event('waiting', 'permission'), 'needs permission'],
+      [event('waiting', 'permission'), null],
+      [event('working', 'tool'), null],
+      [event('waiting', 'question'), 'has a question'],
+      [event('waiting', 'question'), null],
+      [event('waiting', 'permission'), 'needs permission'],
+      [event('waiting', 'question'), 'has a question'],
+      [event('idle', 'finished'), 'finished'],
+      [event('idle', 'finished'), null],
+      // `idle_prompt`, about a minute after `Stop`.
+      [event('waiting', 'question'), null],
+      [event('working', 'prompt'), null],
+      [event('idle', 'finished'), 'finished'],
+      [event('waiting', 'permission'), 'needs permission'],
+      [event('idle', 'finished'), 'finished'],
+      [event('idle', 'exited'), null],
+    ]
+    for (const [body, expected] of steps) {
+      clock.now += 2000
+      const before = notes.length
+      expect((await post(token, body)).status).toBe(204)
+      expect(notes.slice(before)).toEqual(expected ? [`a: Claude Code ${expected}`] : [])
+    }
+  })
+
+  test('an event the channel drops raises nothing', async () => {
+    const { clock, notes, channel, start, post } = setup()
+    const token = start('a')
+    await post(token, tool)
+    channel.agentExited('a')
+    await post(token, permission)
+    await post(token, finished)
+
+    clock.now += 1000
+    await post(token, tool)
+    await burst(post, token, 19)
+    expect((await post(token, permission)).status).toBe(429)
+    expect((await post(token, tool)).status).toBe(429)
+    clock.now += 1000
+    channel.tick()
+    expect(channel.hook('a')?.state).toBe('working')
+
+    channel.setTracking('a', { claude: false, codex: true })
+    expect((await post(token, permission)).status).toBe(400)
+    expect(notes).toEqual([])
+  })
+
+  test('Codex notifies each finished turn except the first of an agent run, the title turn', async () => {
+    const { clock, notes, channel, start, post } = setup()
+    const codex = event('idle', 'finished', 'codex')
+    const finishes = async (token: string, count: number) => {
+      const before = notes.length
+      for (let i = 0; i < count; i++) await post(token, codex)
+      return notes.slice(before)
+    }
+    const token = start('a')
+    expect(await finishes(token, 3)).toEqual(['a: Codex finished', 'a: Codex finished'])
+
+    channel.agentExited('a')
+    clock.now += 1000
+    expect(await finishes(token, 2)).toEqual(['a: Codex finished'])
+
+    channel.setTracking('a', { claude: true, codex: false })
+    channel.setTracking('a', both)
+    expect(await finishes(token, 2)).toEqual(['a: Codex finished'])
+
+    const renewed = start('a')
+    expect(await finishes(renewed, 2)).toEqual(['a: Codex finished'])
   })
 })
 

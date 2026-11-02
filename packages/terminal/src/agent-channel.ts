@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { dirname, join } from 'node:path'
+import { AGENT_LABELS } from '@orch/shared'
 import { z } from 'zod'
 import type { AgentHook } from './agent-state'
 import { AGENTS, type AgentAdapter, type TrackedAgentKind, trackedKinds } from './agents'
@@ -88,6 +89,8 @@ interface SessionState {
   held: { event: AgentEvent; at: number } | null
   /** When the host last said the agent run ended. */
   exitedAt: number
+  /** True once a turn-end-only agent reported `finished` in this agent run, so its next one is a real turn. */
+  finishedOnce: boolean
 }
 
 function failure(status: number, error: string) {
@@ -137,6 +140,8 @@ export class AgentChannel {
   constructor(
     /** Called after a session's hook state changes. */
     private readonly onChange: (id: string) => void,
+    /** Called when a hook event is a moment the user should be told about, with a fixed message. */
+    private readonly onNotify: (id: string, message: string) => void,
     private readonly log: (message: string) => void = console.warn,
     private readonly now: () => number = Date.now,
     private readonly agents: readonly AgentAdapter[] = AGENTS,
@@ -172,8 +177,13 @@ export class AgentChannel {
         bucket: new Bucket(SESSION_BURST, SESSION_REFILL_PER_SECOND, this.now()),
         held: null,
         exitedAt: Number.NEGATIVE_INFINITY,
+        finishedOnce: false,
       })
       return
+    }
+    // Turning an agent back on starts a new agent run as far as the early `finished` goes.
+    if (trackedKinds(this.agents).some((kind) => tracking[kind] && !session.tracking[kind])) {
+      session.finishedOnce = false
     }
     session.tracking = tracking
     if (!anyTracked(tracking)) {
@@ -297,6 +307,33 @@ export class AgentChannel {
     if (late && at - hook.at < WAITING_HOLD_MS) return
     session.hook = { agent, state, reason, at }
     this.onChange(id)
+    const message = this.notification(session, hook?.agent === agent ? hook : null, event)
+    if (message) this.onNotify(id, message)
+  }
+
+  /**
+   * The message for an event that is a moment the user should be told about,
+   * or null. `previous` is the hook state before it, from the same agent. See
+   * "Notifications (AG-3)" in `docs/agents.md`.
+   */
+  private notification(session: SessionState, previous: AgentHook | null, event: AgentEvent): string | null {
+    const { agent, state, reason } = event
+    const label = AGENT_LABELS[agent]
+    if (this.agents.find((adapter) => adapter.kind === agent)?.tracking?.turnEndOnly) {
+      if (state !== 'idle' || reason !== 'finished') return null
+      // The first report of a run is the title turn's, which can come while the real turn still runs.
+      const first = !session.finishedOnce
+      session.finishedOnce = true
+      return first ? null : `${label} finished`
+    }
+    if (previous?.state === state && previous.reason === reason) return null
+    const fromTurn = previous !== null && previous.state !== 'idle'
+    if (state === 'idle' && reason === 'finished') return fromTurn ? `${label} finished` : null
+    if (state === 'waiting' && reason === 'permission') return `${label} needs permission`
+    // A question that follows `idle` is the agent's reminder that it is still waiting, not a new moment.
+    const asking = previous?.state === 'working' || previous?.reason === 'permission'
+    if (state === 'waiting' && reason === 'question' && asking) return `${label} has a question`
+    return null
   }
 
   private forget(id: string, session: SessionState) {
@@ -307,6 +344,7 @@ export class AgentChannel {
   }
 
   private clearHook(id: string, session: SessionState) {
+    session.finishedOnce = false
     if (!session.hook) return
     session.hook = null
     this.onChange(id)
