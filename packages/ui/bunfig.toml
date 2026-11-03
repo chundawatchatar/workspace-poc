@@ -4,3 +4,5 @@
 preload = ["./test/happydom.ts", "./test/testing-library.ts"]
 # `bun test --coverage` reports on source files only, not the tests themselves.
 coverageSkipTestFiles = true
+# The test setup isn't code under test.
+coveragePathIgnorePatterns = ["test/**"]

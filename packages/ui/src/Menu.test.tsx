@@ -2,7 +2,16 @@ import { describe, expect, mock, test } from 'bun:test'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Copy, Trash2 } from './icons'
-import { ContextMenu, ContextMenuPopup, ContextMenuTrigger, Menu, MenuItem, MenuPopup, MenuTrigger } from './Menu'
+import {
+  ContextMenu,
+  ContextMenuPopup,
+  ContextMenuTrigger,
+  Menu,
+  MenuItem,
+  MenuLinkItem,
+  MenuPopup,
+  MenuTrigger,
+} from './Menu'
 
 describe('Menu', () => {
   test('a trigger opens the menu, arrows and Enter choose an item, and Escape closes it back onto the trigger', async () => {
@@ -43,6 +52,35 @@ describe('Menu', () => {
     await waitForMenuToClose()
     expect(trigger).toHaveFocus()
     expect(onDelete).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('MenuLinkItem', () => {
+  test('a link closes the menu when chosen, and clicks in the menu never reach the component that owns it', async () => {
+    const user = userEvent.setup()
+    const onOwnerClick = mock()
+    const onOwnerContextMenu = mock()
+    render(
+      // Stands in for a clickable owner, such as a tab.
+      <div onClick={onOwnerClick} onContextMenu={onOwnerContextMenu}>
+        <Menu>
+          <MenuTrigger>Account</MenuTrigger>
+          <MenuPopup aria-label="Account actions">
+            <MenuLinkItem render={<a href="#settings" />}>Settings</MenuLinkItem>
+          </MenuPopup>
+        </Menu>
+      </div>,
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Account' }))
+    await screen.findByRole('menu', { name: 'Account actions' })
+    onOwnerClick.mockClear()
+
+    await user.pointer({ keys: '[MouseRight]', target: screen.getByRole('menuitem', { name: 'Settings' }) })
+    expect(onOwnerContextMenu).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('menuitem', { name: 'Settings' }))
+    await waitForMenuToClose()
+    expect(onOwnerClick).not.toHaveBeenCalled()
   })
 })
 
