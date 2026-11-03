@@ -41,8 +41,11 @@ export function authClient(): ReturnType<typeof createClient> {
  */
 export const sessionQuery = queryOptions<SessionUser | null>({
   queryKey: ['session'],
-  queryFn: async ({ signal }) => {
-    const { data, error } = await authClient().getSession({ fetchOptions: { signal } })
+  // No abort `signal`: using it lets TanStack Query abort the read when its last observer unmounts, which happens
+  // while the page first renders, and `requireSession`, waiting on the same read, would then fail with a
+  // `CancelledError` instead of getting the session.
+  queryFn: async () => {
+    const { data, error } = await authClient().getSession()
     if (error) {
       if (error.status === 401 || error.status === 404) return null
       throw new Error(`Reading the session failed with ${error.status}.`)

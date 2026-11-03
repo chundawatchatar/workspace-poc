@@ -12,6 +12,7 @@ import {
   EXPIRED_LINK,
   refetchSession,
   requestPasswordReset,
+  requireSession,
   resendVerificationEmail,
   resetPassword,
   type SessionUser,
@@ -105,6 +106,17 @@ describe('sessionQuery', () => {
     await waitFor(() => expect(queryClient.getQueryData(sessionQuery.queryKey)).toBeNull())
     stop()
     queryClient.unmount()
+  })
+
+  test('a guard waiting on the first read still gets the session when the page watching it unmounts', async () => {
+    fakeAccount(userA)
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    // On a cold load the page starts the read, the guard waits on it, and the page unmounts while it is in flight.
+    const stop = new QueryObserver(queryClient, sessionQuery).subscribe(() => {})
+    const guard = requireSession({ context: { queryClient }, location: { href: '/settings/security' } })
+    stop()
+    await guard
+    expect(queryClient.getQueryData(sessionQuery.queryKey)).toEqual(userA)
   })
 })
 
