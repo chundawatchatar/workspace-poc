@@ -9,6 +9,7 @@ function setup(deps: ConnectionLimiterDeps = {}) {
     perMachine: { capacity: 3, refillEveryMs: 1000 },
     tunnelPerIp: { capacity: 1, refillEveryMs: 10_000 },
     badKeysPerIp: { capacity: 2, refillEveryMs: 60_000 },
+    enrollPerMachine: { capacity: 2, refillEveryMs: 30_000 },
     now: () => clock.now,
     ...deps,
   })
@@ -50,17 +51,31 @@ describe('ConnectionLimiter', () => {
     expect(limiter.admitBrowser('a', 'm').ok).toBe(true)
   })
 
+  test('refuses enrollment frames per machine id, whatever the IP, and leaves browser traffic alone', () => {
+    const { limiter, clock } = setup()
+    expect(limiter.admitEnrollment('m')).toEqual({ ok: true })
+    expect(limiter.admitEnrollment('m')).toEqual({ ok: true })
+    expect(limiter.admitEnrollment('m')).toEqual({ ok: false, retryAfterSeconds: 30 })
+    expect(limiter.admitEnrollment('n')).toEqual({ ok: true })
+    expect(limiter.admitBrowser('a', 'm')).toEqual({ ok: true })
+
+    clock.now = 30_000
+    expect(limiter.admitEnrollment('m')).toEqual({ ok: true })
+    expect(limiter.admitEnrollment('m').ok).toBe(false)
+  })
+
   test('the sweep empties every map once each IP and machine goes idle, and keeps buckets still refilling', () => {
     const { limiter, clock } = setup()
     limiter.admitBrowser('a', 'm')
     limiter.admitBrowser('b', 'n')
     limiter.admitTunnel('a')
     limiter.badKey('c')
-    expect(limiter.size).toBe(6)
+    limiter.admitEnrollment('m')
+    expect(limiter.size).toBe(7)
 
     clock.now = 10_000
     limiter.sweep()
-    expect(limiter.size).toBe(1)
+    expect(limiter.size).toBe(2)
     clock.now = 60_000
     limiter.sweep()
     expect(limiter.size).toBe(0)
