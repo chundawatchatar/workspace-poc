@@ -1,4 +1,4 @@
-import { markSvg } from './brand'
+import { markSvg } from '@orch/brand'
 import { cn } from './lib/utils'
 
 /**

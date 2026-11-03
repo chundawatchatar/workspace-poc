@@ -8,7 +8,6 @@
     "./icons": "./src/icons.ts",
     "./styles.css": "./src/styles.css",
     "./themes": "./src/themes.ts",
-    "./brand": "./src/brand.ts",
     "./Modal": "./src/Modal.tsx",
     "./ThemePicker": "./src/ThemePicker.tsx",
     "./Toast": "./src/Toast.tsx"
@@ -20,6 +19,7 @@
   },
   "dependencies": {
     "@base-ui/react": "1.9.0",
+    "@orch/brand": "workspace:*",
     "@orch/shared": "workspace:*",
     "@tanstack/react-table": "^9.3.1",
     "@xterm/addon-fit": "^0.11.0",

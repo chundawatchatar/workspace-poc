@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from 'bun:test'
+import { PRODUCT_NAME, PRODUCT_TAGLINE } from '@orch/brand'
 import { routes } from '@orch/shared'
-import { PRODUCT_NAME, PRODUCT_TAGLINE } from '@orch/ui/brand'
 import { QueryClientProvider, useQueryClient } from '@tanstack/react-query'
 import { createMemoryHistory, RouterProvider } from '@tanstack/react-router'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'

@@ -14,6 +14,7 @@
       "name": "@orch/client",
       "version": "0.0.0",
       "dependencies": {
+        "@orch/brand": "workspace:*",
         "@orch/shared": "workspace:*",
         "@orch/terminal-ui": "workspace:*",
         "@orch/ui": "workspace:*",
@@ -82,6 +83,7 @@
       "dependencies": {
         "@astrojs/mdx": "^8.1.2",
         "@astrojs/react": "^7.1.2",
+        "@orch/brand": "workspace:*",
         "@orch/terminal-ui": "workspace:*",
         "@orch/ui": "workspace:*",
         "@tailwindcss/vite": "^4.3.3",
@@ -100,6 +102,7 @@
       "name": "@orch/web",
       "version": "0.0.0",
       "dependencies": {
+        "@orch/brand": "workspace:*",
         "@orch/shared": "workspace:*",
         "@orch/terminal-ui": "workspace:*",
         "@orch/ui": "workspace:*",
@@ -117,6 +120,10 @@
         "@vitejs/plugin-react": "^6.0.1",
         "vite": "^8.0.0",
       },
+    },
+    "packages/brand": {
+      "name": "@orch/brand",
+      "version": "0.0.0",
     },
     "packages/domain": {
       "name": "@orch/domain",
@@ -177,6 +184,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@base-ui/react": "1.9.0",
+        "@orch/brand": "workspace:*",
         "@orch/shared": "workspace:*",
         "@tanstack/react-table": "^9.3.1",
         "@xterm/addon-fit": "^0.11.0",
@@ -579,6 +587,8 @@
     "@open-draft/logger": ["@open-draft/logger@0.3.0", "", { "dependencies": { "is-node-process": "^1.2.0", "outvariant": "^1.4.0" } }, "sha512-X2g45fzhxH238HKO4xbSr7+wBS8Fvw6ixhTDuvLd5mqh6bJJCFAPwU9mPDxbcrRtfxv4u5IHCEH77BmxvXmmxQ=="],
 
     "@open-draft/until": ["@open-draft/until@2.1.0", "", {}, "sha512-U69T3ItWHvLwGg5eJ0n3I62nWuE6ilHlmz7zM0npLBRvPRd7e6NYmg54vvRtP5mZG7kZqZCFVdsTWo7BPtBujg=="],
+
+    "@orch/brand": ["@orch/brand@workspace:packages/brand"],
 
     "@orch/client": ["@orch/client@workspace:apps/client"],
 

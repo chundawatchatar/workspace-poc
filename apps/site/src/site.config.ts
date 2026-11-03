@@ -1,7 +1,7 @@
-import { PRODUCT_NAME, PRODUCT_TAGLINE } from '@orch/ui/brand'
+import { PRODUCT_NAME, PRODUCT_TAGLINE } from '@orch/brand'
 
 // Everything a launch will change lives here: the links and prices. The URLs are placeholders. The name and tagline
-// come from `@orch/ui/brand`, which the apps share.
+// come from `@orch/brand`, which the apps share.
 
 export const SITE = {
   name: PRODUCT_NAME,

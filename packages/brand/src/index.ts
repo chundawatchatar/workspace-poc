@@ -22,6 +22,16 @@ export function markSvg(options: { color: string; fill?: string; size?: number; 
   const { color, fill = 'none', size = 24, title, intro = false } = options
   // `pathLength="1"` lets the CSS draw each stroke with a dash of length 1, whatever its real length.
   const part = (name: string) => (intro ? ` class="mark-${name}" pathLength="1"` : '')
+  console.log(
+    [
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none"${title ? '' : ' aria-hidden="true"'}${intro ? ' class="mark-intro"' : ''}>`,
+      title ? `<title>${title}</title>` : '',
+      `<rect x="1.5" y="1.5" width="21" height="21" rx="5" fill="${fill}" stroke="${color}" stroke-width="2"${part('frame')}/>`,
+      `<path d="M11 2.5v19M11 12h10.5" stroke="${color}" stroke-width="2"${part('split')}/>`,
+      `<circle cx="16.25" cy="7" r="2.25" fill="${color}"${intro ? ' class="mark-dot"' : ''}/>`,
+      '</svg>',
+    ].join(''),
+  )
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none"${title ? '' : ' aria-hidden="true"'}${intro ? ' class="mark-intro"' : ''}>`,
     title ? `<title>${title}</title>` : '',

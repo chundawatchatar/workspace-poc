@@ -1,3 +1,4 @@
+import { FAVICON_HREF } from '@orch/brand'
 import { HOST_PORT } from '@orch/shared'
 import {
   createLocalTransport,
@@ -6,7 +7,7 @@ import {
   TerminalUI,
   type TerminalUIProps,
 } from '@orch/terminal-ui'
-import { FAVICON_HREF, THEME_BOOT_SCRIPT, Toaster } from '@orch/ui'
+import { THEME_BOOT_SCRIPT, Toaster } from '@orch/ui'
 import { createRootRoute, HeadContent, Outlet, Scripts, useNavigate, useParams } from '@tanstack/react-router'
 import { type ReactNode, useCallback } from 'react'
 import appCss from '../styles.css?url'

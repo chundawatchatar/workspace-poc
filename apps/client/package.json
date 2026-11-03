@@ -11,6 +11,7 @@
     "test:coverage": "bun test --coverage"
   },
   "dependencies": {
+    "@orch/brand": "workspace:*",
     "@orch/shared": "workspace:*",
     "@orch/terminal-ui": "workspace:*",
     "@orch/ui": "workspace:*",

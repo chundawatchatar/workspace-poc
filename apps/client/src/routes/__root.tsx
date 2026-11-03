@@ -1,5 +1,6 @@
+import { FAVICON_HREF, PRODUCT_NAME } from '@orch/brand'
 import { SIDEBAR_BOOT_SCRIPT } from '@orch/terminal-ui'
-import { FAVICON_HREF, PRODUCT_NAME, THEME_BOOT_SCRIPT, Toaster } from '@orch/ui'
+import { THEME_BOOT_SCRIPT, Toaster } from '@orch/ui'
 import { QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createRootRouteWithContext, HeadContent, Outlet, Scripts, useNavigate } from '@tanstack/react-router'
 import { type ReactNode, useEffect } from 'react'

@@ -1,4 +1,5 @@
-import { BrandMark, PRODUCT_FACTS, PRODUCT_HEADLINE, PRODUCT_NAME, PRODUCT_TAGLINE } from '@orch/ui'
+import { PRODUCT_FACTS, PRODUCT_HEADLINE, PRODUCT_NAME, PRODUCT_TAGLINE } from '@orch/brand'
+import { BrandMark } from '@orch/ui'
 import { createFileRoute, Outlet, useLocation } from '@tanstack/react-router'
 import { AuthWorkspacePreview } from '../../components/auth/AuthWorkspacePreview'
 
