@@ -239,6 +239,23 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   can't be guessed, but they do appear in `/m/<id>` URLs and connect links. The host's access-key check still guards
   every request to the machine, and the account list never replaces it. Open question: a cap on linked machines per
   user would limit probing; there is none yet.
+- Enrollment keys are the stronger way to link a machine. A signed-in user creates one with
+  `serverRoutes.machines.createEnrollment` (`modules/machines/enrollment.service.ts`): `oek_` plus 32 random bytes,
+  shown once with its last 4 characters as a fingerprint. The `machine_enrollments` table stores only the key's
+  SHA-256 hash, and a key works once, for 15 minutes. The machine sends it over its own tunnel as `enroll.preview`
+  (which account the key belongs to, with the email masked as `a***@example.com`, without using it) and
+  `enroll.redeem` (links the machine). The machine id is always the tunnel's own, derived from its `hello` proof,
+  never a field of the frame, so a machine can only enroll itself. Redeeming is one conditional
+  `UPDATE … WHERE usedAt IS NULL AND expiresAt > now RETURNING userId`, so of two racing redeems exactly one wins,
+  and linking then goes through the owner's `forUser` repositories, keeping an existing name. The lookups start from
+  a key, not a principal, so they go through `skipAuthorization` with one fixed reason, behind a closure built in
+  `index.ts`. Each machine gets 10 enrollment frames, refilling 1 per 30 s (`enrollPerMachine`, keyed by machine id,
+  not IP), and a refused frame touches no database. An unknown, used, expired or malformed key all get the same
+  `enroll.failed { code: 'invalid_key' }`, which names no account; `rate_limited` and `unavailable` (accounts off, or
+  a database error) describe the machine or the server. Nothing on this path logs the key, its hash, the email or the
+  account name. Accepted risk: the server is trusted to say who is signed in, and so who owns a key; the job that lets
+  an account's browsers open its enrolled machines records the access-model risk that adds. Expired rows are not
+  cleaned up yet, and there is no cap on outstanding keys per user.
 - Better Auth checks the `Origin` of non-GET requests against `SERVER_TRUSTED_ORIGINS` plus the origin of
   `BETTER_AUTH_URL`, and rate limits by client IP in memory (per process, reset on restart). The IP comes from the
   `x-orch-client-ip` header the auth routes set from the server's own client IP reader, replacing any value a client
