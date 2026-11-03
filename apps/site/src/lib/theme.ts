@@ -1,4 +1,4 @@
-import { applyThemeToDocument, MODE_KEY, type ThemeChoice, type ThemeMode, themeFor, themeKey } from '@orch/ui/themes'
+import { applyThemeToDocument, MODE_KEY, type ThemeChoice, type ThemeMode, themeFor, themeKey } from '@orch/ui'
 
 // The same choice and per-mode theme the app keeps, under the same keys. THEME_BOOT_SCRIPT applies them before paint.
 

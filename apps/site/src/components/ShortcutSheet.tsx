@@ -1,4 +1,4 @@
-import { Modal } from '@orch/ui/Modal'
+import { Modal } from '@orch/ui'
 
 const SITE_ROWS = [
   { label: 'Command palette', leader: '', direct: '⌘P  ·  Ctrl+Shift+P' },

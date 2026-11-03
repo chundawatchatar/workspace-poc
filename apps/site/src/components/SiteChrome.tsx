@@ -1,7 +1,5 @@
 import { LEADER_LABEL } from '@orch/terminal-ui/shortcut-rows'
-import { ThemePicker } from '@orch/ui/ThemePicker'
-import { Toast } from '@orch/ui/Toast'
-import { themeById } from '@orch/ui/themes'
+import { ThemePicker, Toast, themeById } from '@orch/ui'
 import { useEffect, useRef, useState } from 'react'
 import type { PaletteAction, PaletteItem } from '../lib/palette'
 import { chooseMode, readTheme, selectTheme, type ThemeState, toggleMode, watchSystemTheme } from '../lib/theme'
