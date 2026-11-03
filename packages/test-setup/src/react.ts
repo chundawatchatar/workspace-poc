@@ -3,6 +3,8 @@ import { format } from 'node:util'
 import * as matchers from '@testing-library/jest-dom/matchers'
 import { cleanup } from '@testing-library/react'
 
+// The React Testing Library setup every browser workspace preloads after its own happy-dom (see its `bunfig.toml`).
+
 expect.extend(matchers)
 
 // Collected here and thrown after the test, so a React warning (`act(…)`, a missing key, a bad prop) fails the test

@@ -1,5 +1,5 @@
 {
   "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "types": ["vite/client", "bun"] },
+  "compilerOptions": { "types": ["vite/client", "bun", "@orch/test-setup"] },
   "include": ["src", "test", "vite.config.ts"]
 }

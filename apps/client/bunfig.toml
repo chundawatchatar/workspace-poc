@@ -1,7 +1,16 @@
 [test]
-# Registers happy-dom, then Testing Library, then the MSW server. Only this browser app loads them: happy-dom replaces
-# `fetch`, `Request`, `Response` and `WebSocket`, and MSW intercepts requests, which the server-side workspaces' tests
-# need real.
-preload = ["./test/happydom.ts", "./test/testing-library.ts", "./test/network.ts"]
-# `bun test --coverage` reports on source files only, not the tests themselves.
+# Keep the settings in step with every other React workspace's bunfig.toml (AGENTS.md says which they are). Bun
+# has no `extends`, so change a shared setting in all of them and in `packages/test-setup/src/bunfig.test.ts`,
+# which fails when the copies differ. A workspace may add its own preloads or ignores after the shared ones.
+# happy-dom first (this workspace's own setup, see the file), then the shared React Testing Library setup, then the
+# MSW server. Only the browser workspaces load them: happy-dom replaces `fetch`, `Request`, `Response` and
+# `WebSocket`, and MSW intercepts requests, which the server-side workspaces' tests need real.
+preload = ["./test/happydom.ts", "@orch/test-setup/react", "./test/network.ts"]
+# Coverage covers this workspace's own source only: not its tests or test setup, and not the other workspaces, whose
+# raw TS loads with it and which report their own. The test helpers and the generated route tree aren't code under
+# test either.
 coverageSkipTestFiles = true
+coveragePathIgnorePatterns = ["../**", "test/**", "src/test/**", "src/routeTree.gen.ts"]
+# `lcov.info` in the workspace's `coverage/` (gitignored) for CI and editors, beside the table in the terminal.
+coverageReporter = ["text", "lcov"]
+coverageDir = "coverage"

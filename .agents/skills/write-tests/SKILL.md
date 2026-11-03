@@ -76,7 +76,7 @@ Don't test:
 
 ## React components
 
-The workspace's preload (`test/happydom.ts`, then `test/testing-library.ts`) registers happy-dom, adds the `jest-dom` matchers to `expect`, runs `cleanup()` after each test, and **fails any test that logs to `console.error` or `console.warn`**, so React warnings (`act(…)`, missing keys, bad props) are fixed, not ignored. A test file needs no setup of its own.
+The workspace's preload (its own `test/happydom.ts`, then the shared `@orch/test-setup/react` from `packages/test-setup`) registers happy-dom, adds the `jest-dom` matchers to `expect`, runs `cleanup()` after each test, and **fails any test that logs to `console.error` or `console.warn`**, so React warnings (`act(…)`, missing keys, bad props) are fixed, not ignored. A test file needs no setup of its own.
 
 ```tsx
 import { describe, expect, test } from 'bun:test'

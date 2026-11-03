@@ -1,1 +1,5 @@
-{ "extends": "../../tsconfig.base.json", "compilerOptions": { "types": ["bun"] }, "include": ["src", "test"] }
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "types": ["bun", "@orch/test-setup"] },
+  "include": ["src", "test"]
+}

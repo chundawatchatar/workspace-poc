@@ -1,0 +1,11 @@
+[test]
+# Keep the settings in step with every other server-side workspace's bunfig.toml (AGENTS.md says which they are). Bun
+# has no `extends`, so change a shared setting in all of them and in `packages/test-setup/src/bunfig.test.ts`,
+# which fails when the copies differ. A workspace may add its own ignores after the shared ones, but no preload.
+# Its one test starts `src/main.ts` as its own process, which Bun's coverage can't see, so this workspace always
+# reports 0%.
+coverageSkipTestFiles = true
+coveragePathIgnorePatterns = ["../**"]
+# `lcov.info` in the workspace's `coverage/` (gitignored) for CI and editors, beside the table in the terminal.
+coverageReporter = ["text", "lcov"]
+coverageDir = "coverage"
