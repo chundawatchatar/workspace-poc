@@ -1,15 +1,43 @@
-import { afterEach, describe, expect, test } from 'bun:test'
-import { CLOSE_ACCESS_DENIED, CLOSE_MACHINE_OFFLINE, makeWorkspace, type ServerEvent } from '@orch/shared'
+import { afterEach, describe, expect, mock, spyOn, test } from 'bun:test'
+import {
+  CLOSE_ACCESS_DENIED,
+  CLOSE_MACHINE_OFFLINE,
+  type ClientEvent,
+  makeWorkspace,
+  type ServerEvent,
+  type SessionInfo,
+} from '@orch/shared'
+import { MODE_KEY, themeKey } from '@orch/ui'
 import type { HostTransport } from '../transport'
-import { type ConnectTimer, connect, getSnapshot, reconnect, type Snapshot } from './store'
+import {
+  ackSession,
+  type ConnectTimer,
+  connect,
+  dispatch,
+  getSnapshot,
+  initTheme,
+  mutate,
+  pushState,
+  reconnect,
+  restoreSession,
+  type Snapshot,
+  selectTheme,
+  setAgentTracking,
+  setThemeChoice,
+} from './store'
 
 /** A transport whose events sockets the test opens, messages and closes. */
 function fakeTransport() {
   const sockets: WebSocket[] = []
+  const sent: ClientEvent[] = []
   const transport: HostTransport = {
     request: async () => Response.json({}),
     openSocket: () => {
-      const socket = { close: () => {} } as unknown as WebSocket
+      const socket = {
+        readyState: 1,
+        send: (data: string) => sent.push(JSON.parse(data)),
+        close: () => {},
+      } as unknown as WebSocket
       sockets.push(socket)
       return socket
     },
@@ -18,6 +46,8 @@ function fakeTransport() {
   return {
     transport,
     sockets,
+    sent,
+    emit: (event: ServerEvent) => last().onmessage?.({ data: JSON.stringify(event) } as MessageEvent),
     open: () => last().onopen?.({} as Event),
     hello: (name = 'main') => {
       const event: ServerEvent = {
@@ -122,6 +152,121 @@ describe('connection status', () => {
     watch.poll()
     watch.stop()
     expect(watch.seen).toEqual(['connecting', 'offline'])
+  })
+})
+
+describe('host updates and local edits', () => {
+  test('receives session changes and removal, and sends terminal actions over the connection', () => {
+    const fake = fakeTransport()
+    disconnect = connect(fake.transport, fakeTimer().timer)
+    fake.hello()
+    const session: SessionInfo = {
+      id: 't1',
+      title: 'Terminal',
+      alive: true,
+      attention: null,
+      process: null,
+      cwd: '/tmp',
+      progress: null,
+      agent: null,
+      interrupted: null,
+      agentState: null,
+      agentTracking: true,
+    }
+    fake.emit({ type: 'session', session })
+    expect(getSnapshot().sessions.t1).toEqual(session)
+    fake.emit({ type: 'session', session: { ...session, title: 'Changed', alive: false } })
+    expect(getSnapshot().sessions.t1).toMatchObject({ title: 'Changed', alive: false })
+    ackSession('t1')
+    restoreSession('t1', 'agent')
+    restoreSession('t1', 'shell')
+    setAgentTracking('t1', false)
+    expect(fake.sent).toEqual([
+      { type: 'ack', sessionId: 't1' },
+      { type: 'restore', sessionId: 't1', mode: 'agent' },
+      { type: 'restore', sessionId: 't1', mode: 'shell' },
+      { type: 'agentTracking', sessionId: 't1', on: false },
+    ])
+    fake.emit({ type: 'session.gone', id: 't1' })
+    expect(getSnapshot().sessions).toEqual({})
+    const remote = { rev: 20, workspaces: [makeWorkspace('remote', '/remote')] }
+    fake.emit({ type: 'state', state: remote })
+    expect(getSnapshot().state).toEqual(remote)
+  })
+
+  test('ignores edits before hello and no-op changes, and defers drag synchronization until pushState', () => {
+    const fake = fakeTransport()
+    disconnect = connect(fake.transport, fakeTimer().timer)
+    mutate(() => {
+      throw new Error('No layout yet')
+    })
+    dispatch({ type: 'workspace.rename', workspaceId: 'missing', name: 'ignored' })
+    pushState()
+    expect(fake.sent).toEqual([])
+    fake.hello()
+    const original = getSnapshot()
+    mutate((state) => state)
+    dispatch({ type: 'workspace.rename', workspaceId: 'missing', name: 'ignored' })
+    expect(getSnapshot()).toBe(original)
+    const id = original.state?.workspaces[0].id
+    if (!id) throw new Error('Expected a workspace')
+    dispatch({ type: 'workspace.rename', workspaceId: id, name: 'dragging' }, false)
+    expect(getSnapshot().state?.workspaces[0].name).toBe('dragging')
+    expect(fake.sent).toEqual([])
+    pushState()
+    const pushed = getSnapshot().state
+    if (!pushed) throw new Error('Expected a layout')
+    expect(fake.sent).toEqual([{ type: 'state', state: pushed }])
+    mutate((state) => ({ ...state, rev: state.rev + 1 }), false)
+    expect(fake.sent).toHaveLength(1)
+    mutate((state) => ({ ...state, rev: state.rev + 1 }))
+    expect(fake.sent).toHaveLength(2)
+    const updated = getSnapshot().state
+    if (!updated) throw new Error('Expected a layout')
+    expect(fake.sent[1]).toEqual({ type: 'state', state: updated })
+  })
+})
+
+describe('theme preferences', () => {
+  let stop = () => {}
+  afterEach(() => {
+    stop()
+    mock.restore()
+    localStorage.clear()
+    // Puts the store back on the default theme for the tests after this one.
+    initTheme()()
+  })
+
+  test('restores saved themes, follows system changes only in system mode, and saves a selected theme', () => {
+    const media = window.matchMedia('(prefers-color-scheme: light)')
+    let light = false
+    Object.defineProperty(media, 'matches', { configurable: true, get: () => light })
+    spyOn(window, 'matchMedia').mockReturnValue(media)
+    localStorage.setItem(MODE_KEY, 'invalid')
+    localStorage.setItem(themeKey('dark'), 'dracula')
+    localStorage.setItem(themeKey('light'), 'invalid')
+    stop = initTheme()
+    expect(getSnapshot()).toMatchObject({ themeChoice: 'system', theme: 'dark', themeId: 'dracula' })
+    light = true
+    media.dispatchEvent(new Event('change'))
+    expect(getSnapshot()).toMatchObject({ themeChoice: 'system', theme: 'light', themeId: 'daylight' })
+    selectTheme('solarized-light')
+    expect(getSnapshot()).toMatchObject({ themeChoice: 'system', themeId: 'solarized-light' })
+    expect(localStorage.getItem(themeKey('light'))).toBe('solarized-light')
+    selectTheme('nord')
+    expect(getSnapshot()).toMatchObject({ themeChoice: 'dark', themeId: 'nord' })
+    expect(localStorage.getItem(MODE_KEY)).toBe('dark')
+    media.dispatchEvent(new Event('change'))
+    expect(getSnapshot().theme).toBe('dark')
+    const selected = getSnapshot()
+    selectTheme('unknown')
+    expect(getSnapshot()).toBe(selected)
+    setThemeChoice('system')
+    expect(getSnapshot().theme).toBe('light')
+    stop()
+    light = false
+    media.dispatchEvent(new Event('change'))
+    expect(getSnapshot().theme).toBe('light')
   })
 })
 

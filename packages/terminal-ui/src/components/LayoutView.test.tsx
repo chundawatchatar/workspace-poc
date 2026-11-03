@@ -120,11 +120,8 @@ describe('LayoutView tab bar', () => {
     const prevented: boolean[] = []
     const record = (event: Event) => prevented.push(event.defaultPrevented)
     document.addEventListener('contextmenu', record)
-    try {
-      await user.pointer({ keys: '[MouseRight]', target: screen.getByTitle('Pull requests') })
-    } finally {
-      document.removeEventListener('contextmenu', record)
-    }
+    await user.pointer({ keys: '[MouseRight]', target: screen.getByTitle('Pull requests') })
+    document.removeEventListener('contextmenu', record)
     expect(prevented).toEqual([false])
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
   })

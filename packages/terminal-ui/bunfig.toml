@@ -4,3 +4,5 @@
 preload = ["./test/happydom.ts", "./test/testing-library.ts"]
 # `bun test --coverage` reports on source files only, not the tests themselves.
 coverageSkipTestFiles = true
+# Imported workspace packages have their own suites; report only this package's production code.
+coveragePathIgnorePatterns = ["../brand/**", "../shared/**", "../ui/**", "test/**"]
