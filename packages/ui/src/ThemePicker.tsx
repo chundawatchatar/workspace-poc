@@ -1,3 +1,5 @@
+import { Radio } from '@base-ui/react/radio'
+import { RadioGroup } from '@base-ui/react/radio-group'
 import type { ReactNode } from 'react'
 import { Check, Monitor, Moon, Sun } from './icons'
 import { Modal } from './Modal'
@@ -43,23 +45,24 @@ export function ThemePicker({ choice, themeId, preferred, onChoose, onSelect, on
       <div className="space-y-4">
         <div>
           <h3 className="mb-2 text-xs font-medium text-dim">Appearance</h3>
-          <div role="radiogroup" aria-label="Appearance" className="inline-flex rounded-md border border-line p-0.5">
+          {/* Arrow keys move between the modes and choose as they go, as in any radio group. */}
+          <RadioGroup
+            aria-label="Appearance"
+            value={choice}
+            onValueChange={(value) => onChoose(value as ThemeChoice)}
+            className="inline-flex rounded-md border border-line p-0.5"
+          >
             {MODES.map((mode) => (
-              <button
+              <Radio.Root
                 key={mode.choice}
-                type="button"
-                role="radio"
-                aria-checked={choice === mode.choice}
-                className={`flex items-center gap-1.5 rounded px-3 py-1 text-xs ${
-                  choice === mode.choice ? 'bg-accent text-on-accent' : 'text-dim hover:text-ink'
-                }`}
-                onClick={() => onChoose(mode.choice)}
+                value={mode.choice}
+                className="flex items-center gap-1.5 rounded px-3 py-1 text-xs text-dim outline-none not-data-checked:hover:text-ink focus-visible:ring-2 focus-visible:ring-accent/60 data-checked:bg-accent data-checked:text-on-accent"
               >
                 {mode.icon}
                 {mode.label}
-              </button>
+              </Radio.Root>
             ))}
-          </div>
+          </RadioGroup>
         </div>
         {section('dark', 'Dark themes')}
         {section('light', 'Light themes')}

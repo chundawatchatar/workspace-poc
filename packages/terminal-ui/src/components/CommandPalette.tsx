@@ -9,7 +9,7 @@ import {
   trackedAgent,
   type Workspace,
 } from '@orch/shared'
-import { THEMES } from '@orch/ui'
+import { Dialog, THEMES } from '@orch/ui'
 import { ChevronRight, GitPullRequest, KanbanSquare, LayoutGrid, Search, SquareTerminal } from '@orch/ui/icons'
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { SWITCH_SHORT_HINT, useAgentTrackingAnswers, useAnswerAgentTracking } from '../lib/agentTracking'
@@ -227,75 +227,72 @@ export function CommandPalette() {
   }
 
   return (
-    <div
-      className="anim-backdrop fixed inset-0 z-50 flex items-start justify-center bg-black/45 pt-[12vh]"
-      onPointerDown={(event) => event.target === event.currentTarget && setOverlay(null)}
+    <Dialog
+      aria-label="Command palette"
+      backdropClassName="bg-black/45"
+      viewportClassName="pt-[12vh]"
+      className="flex max-h-[62vh] w-[580px] max-w-[92vw] flex-col overflow-hidden"
+      onClose={() => setOverlay(null)}
     >
-      <div
-        role="dialog"
-        aria-label="Command palette"
-        className="anim-dialog flex max-h-[62vh] w-[580px] max-w-[92vw] flex-col overflow-hidden rounded-lg border border-line bg-sidebar shadow-2xl"
-      >
-        <div className="flex shrink-0 items-center gap-2 border-b border-line px-3">
-          <Search size={15} className="shrink-0 text-faint" />
-          <input
-            autoFocus
-            role="combobox"
-            aria-expanded="true"
-            aria-controls="palette-list"
-            aria-activedescendant={visible[selected] ? `palette-${visible[selected].id}` : undefined}
-            value={query}
-            onChange={(event) => {
-              setQuery(event.target.value)
-              setIndex(0)
-            }}
-            onKeyDown={onKeyDown}
-            placeholder="Search workspaces, tabs and commands"
-            spellCheck={false}
-            className="h-11 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-faint"
-          />
-          <kbd>Esc</kbd>
-        </div>
-        <div ref={list} id="palette-list" role="listbox" className="min-h-0 flex-1 overflow-y-auto p-1.5">
-          {visible.length === 0 && <div className="px-3 py-6 text-center text-xs text-dim">No matches.</div>}
-          {visible.map((item, i) => (
-            <div
-              key={item.id}
-              id={`palette-${item.id}`}
-              role="option"
-              aria-selected={i === selected}
-              data-selected={i === selected}
-              className={`flex cursor-default items-center gap-2.5 rounded-md px-2.5 py-2 ${
-                i === selected ? 'bg-accent text-on-accent' : 'text-ink'
-              }`}
-              onPointerMove={() => i !== selected && setIndex(i)}
-              onClick={() => run(item)}
-            >
-              <span className={i === selected ? 'text-on-accent/80' : 'text-dim'}>{item.icon}</span>
-              <span className="min-w-0 truncate text-[13px]">{item.label}</span>
-              {item.hint && (
-                <span className={`min-w-0 truncate text-xs ${i === selected ? 'text-on-accent/70' : 'text-faint'}`}>
-                  {item.hint}
+      <div className="flex shrink-0 items-center gap-2 border-b border-line px-3">
+        <Search size={15} className="shrink-0 text-faint" />
+        <input
+          autoFocus
+          role="combobox"
+          aria-expanded="true"
+          aria-controls="palette-list"
+          aria-activedescendant={visible[selected] ? `palette-${visible[selected].id}` : undefined}
+          value={query}
+          onChange={(event) => {
+            setQuery(event.target.value)
+            setIndex(0)
+          }}
+          onKeyDown={onKeyDown}
+          placeholder="Search workspaces, tabs and commands"
+          spellCheck={false}
+          className="h-11 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-faint"
+        />
+        <kbd>Esc</kbd>
+      </div>
+      <div ref={list} id="palette-list" role="listbox" className="min-h-0 flex-1 overflow-y-auto p-1.5">
+        {visible.length === 0 && <div className="px-3 py-6 text-center text-xs text-dim">No matches.</div>}
+        {visible.map((item, i) => (
+          <div
+            key={item.id}
+            id={`palette-${item.id}`}
+            role="option"
+            aria-selected={i === selected}
+            data-selected={i === selected}
+            className={`flex cursor-default items-center gap-2.5 rounded-md px-2.5 py-2 ${
+              i === selected ? 'bg-accent text-on-accent' : 'text-ink'
+            }`}
+            onPointerMove={() => i !== selected && setIndex(i)}
+            onClick={() => run(item)}
+          >
+            <span className={i === selected ? 'text-on-accent/80' : 'text-dim'}>{item.icon}</span>
+            <span className="min-w-0 truncate text-[13px]">{item.label}</span>
+            {item.hint && (
+              <span className={`min-w-0 truncate text-xs ${i === selected ? 'text-on-accent/70' : 'text-faint'}`}>
+                {item.hint}
+              </span>
+            )}
+            <span className="ml-auto flex shrink-0 items-center gap-2">
+              {item.keys && (
+                <span className={`font-mono text-[11px] ${i === selected ? 'text-on-accent/80' : 'text-dim'}`}>
+                  {item.keys}
                 </span>
               )}
-              <span className="ml-auto flex shrink-0 items-center gap-2">
-                {item.keys && (
-                  <span className={`font-mono text-[11px] ${i === selected ? 'text-on-accent/80' : 'text-dim'}`}>
-                    {item.keys}
-                  </span>
-                )}
-                <span
-                  className={`w-[70px] text-right text-[10px] tracking-wide uppercase ${
-                    i === selected ? 'text-on-accent/60' : 'text-faint'
-                  }`}
-                >
-                  {item.group}
-                </span>
+              <span
+                className={`w-[70px] text-right text-[10px] tracking-wide uppercase ${
+                  i === selected ? 'text-on-accent/60' : 'text-faint'
+                }`}
+              >
+                {item.group}
               </span>
-            </div>
-          ))}
-        </div>
+            </span>
+          </div>
+        ))}
       </div>
-    </div>
+    </Dialog>
   )
 }
