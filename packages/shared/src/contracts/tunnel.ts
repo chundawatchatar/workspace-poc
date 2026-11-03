@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { API_PREFIX, WS_PREFIX } from './contract'
+import { machineNameSchema } from './serverMachines'
 
 // The wire format between a machine and the cloud server (`apps/server`). Each
 // machine keeps one outbound WSS connection to the server, which relays browser
@@ -106,6 +107,55 @@ export const authFailedFrame = z
   .strictObject({ type: z.literal('auth.failed'), id: id.optional(), channel: id.optional() })
   .refine((frame) => (frame.id === undefined) !== (frame.channel === undefined), 'needs exactly one of id and channel')
 
+// An enrollment key is a short string, but the frames take any one up to this length, so a malformed key gets the
+// same `enroll.failed` answer as an unknown one instead of being dropped unanswered.
+const enrollmentKey = z.string().max(256)
+
+/**
+ * Asks which account an enrollment key belongs to, without using it. The
+ * machine id never travels in a frame: it is the tunnel's own.
+ */
+export const enrollPreviewFrame = z.strictObject({ type: z.literal('enroll.preview'), id, key: enrollmentKey })
+
+/** Redeems an enrollment key, linking this tunnel's machine to the key's account under `name`. */
+export const enrollRedeemFrame = z.strictObject({
+  type: z.literal('enroll.redeem'),
+  id,
+  key: enrollmentKey,
+  name: machineNameSchema,
+})
+
+/** The account an enrollment key belongs to, with only the first character of the email's local part. */
+const enrollAccount = z.strictObject({ name: z.string(), maskedEmail: z.string() })
+
+/** Answers `enroll.preview` with the same `id`. `expiresAt` is an ISO string. */
+export const enrollPreviewedFrame = z.strictObject({
+  type: z.literal('enroll.previewed'),
+  id,
+  account: enrollAccount,
+  fingerprint: z.string(),
+  expiresAt: z.iso.datetime(),
+})
+
+/** Answers `enroll.redeem` with the same `id`: the machine is now linked to `account`. */
+export const enrollRedeemedFrame = z.strictObject({
+  type: z.literal('enroll.redeemed'),
+  id,
+  machineId: z.string().min(1),
+  account: enrollAccount,
+})
+
+/**
+ * Answers either enrollment frame when it fails. `invalid_key` covers an
+ * unknown, used, expired and malformed key alike; `rate_limited` and
+ * `unavailable` describe the machine or the server, not the key.
+ */
+export const enrollFailedFrame = z.strictObject({
+  type: z.literal('enroll.failed'),
+  id,
+  code: z.enum(['invalid_key', 'rate_limited', 'unavailable']),
+})
+
 /** Frames the machine sends to the server. */
 export const machineFrame = z.discriminatedUnion('type', [
   helloFrame,
@@ -118,6 +168,8 @@ export const machineFrame = z.discriminatedUnion('type', [
   wsAckFrame,
   pingFrame,
   pongFrame,
+  enrollPreviewFrame,
+  enrollRedeemFrame,
 ])
 
 /** Frames the server sends to the machine. */
@@ -130,6 +182,9 @@ export const serverFrame = z.discriminatedUnion('type', [
   wsAckFrame,
   pingFrame,
   pongFrame,
+  enrollPreviewedFrame,
+  enrollRedeemedFrame,
+  enrollFailedFrame,
 ])
 
 export type MachineFrame = z.infer<typeof machineFrame>

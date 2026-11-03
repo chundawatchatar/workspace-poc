@@ -57,6 +57,10 @@ export {
 export * from './server'
 export { type ServerMe, serverMeResponse } from './serverAccount'
 export {
+  type CreateEnrollmentResponse,
+  createEnrollmentResponse,
+  enrollmentFingerprint,
+  enrollmentKeySchema,
   type LinkMachineBody,
   type ListMachinesResponse,
   linkMachineBody,
@@ -79,6 +83,11 @@ export {
   CLOSE_UNSUPPORTED_VERSION,
   decodeFrame,
   encodeFrame,
+  enrollFailedFrame,
+  enrollPreviewedFrame,
+  enrollPreviewFrame,
+  enrollRedeemedFrame,
+  enrollRedeemFrame,
   helloFrame,
   httpBodyFrame,
   httpEndFrame,

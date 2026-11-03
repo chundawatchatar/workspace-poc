@@ -40,12 +40,23 @@ describe('tunnel frames', () => {
       { type: 'http.end', id: 2, error: 'stream failed' },
       { type: 'auth.failed', id: 3 },
       { type: 'auth.failed', channel: 7 },
+      { type: 'enroll.preview', id: 5, key: 'oek_anything' },
+      { type: 'enroll.redeem', id: 6, key: 'not even a key', name: 'Laptop' },
     ]
     const server: TunnelFrame[] = [
       { type: 'welcome', machineId: 'm-1' },
       { type: 'http.request', id: 3, method: 'GET', path: '/api/git/status?cwd=%2Ftmp', headers: [] },
       { type: 'http.request', id: 4, method: 'POST', path: '/api/fs/dirs', headers: [['x', 'y']], body: allBytes },
       { type: 'ws.open', channel: 1, path: '/ws/term/abc?cols=80', headers: [] },
+      {
+        type: 'enroll.previewed',
+        id: 5,
+        account: { name: 'Alice', maskedEmail: 'a***@example.com' },
+        fingerprint: 'AbCd',
+        expiresAt: '2026-01-01T00:15:00.000Z',
+      },
+      { type: 'enroll.redeemed', id: 6, machineId: 'm-1', account: { name: 'Alice', maskedEmail: 'a***@example.com' } },
+      { type: 'enroll.failed', id: 7, code: 'invalid_key' },
     ]
     const both: TunnelFrame[] = [
       { type: 'ws.data', channel: 1, data: 'héllo' },
@@ -124,6 +135,14 @@ describe('tunnel frames', () => {
       [machineFrame, JSON.stringify({ type: 'auth.failed' })],
       [machineFrame, JSON.stringify({ type: 'auth.failed', id: 3, key: 'k' })],
       [serverFrame, JSON.stringify({ type: 'auth.failed', id: 3 })],
+      [machineFrame, JSON.stringify({ type: 'enroll.preview', id: 0, key: 'k' })],
+      [machineFrame, JSON.stringify({ type: 'enroll.preview', id: 1, key: 'k', machineId: 'm-2' })],
+      [machineFrame, JSON.stringify({ type: 'enroll.preview', id: 1, key: 'k'.repeat(257) })],
+      [machineFrame, JSON.stringify({ type: 'enroll.redeem', id: 1, key: 'k', name: '   ' })],
+      [machineFrame, JSON.stringify({ type: 'enroll.redeem', id: 1, key: 'k' })],
+      [serverFrame, JSON.stringify({ type: 'enroll.preview', id: 1, key: 'k' })],
+      [machineFrame, JSON.stringify({ type: 'enroll.failed', id: 1, code: 'invalid_key' })],
+      [serverFrame, JSON.stringify({ type: 'enroll.failed', id: 1, code: 'expired' })],
     ]
     for (const [schema, input] of bad) expect(decodeFrame(schema, input)).toBeNull()
   })
