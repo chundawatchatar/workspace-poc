@@ -1,6 +1,6 @@
 import './env'
 import { join } from 'node:path'
-import { createDomain, type Domain } from '@orch/domain'
+import { createDomain, type Domain, type Principal } from '@orch/domain'
 import { type ApiModule, createApp } from './app'
 import { type ClientIpOf, clientIpReader } from './lib/clientIp'
 import { type AccountsConfig, loadServerConfig, ServerConfigError } from './lib/config'
@@ -15,6 +15,7 @@ import { createAuth } from './modules/auth/auth.service'
 import { ChannelBridge } from './modules/bridge/bridge.service'
 import { HttpForwarder } from './modules/forward/forward.service'
 import { ConnectionLimiter } from './modules/limits/limits.service'
+import { ENROLLMENT_LOOKUP_REASON, EnrollmentService } from './modules/machines/enrollment.service'
 import { createMachinesModule } from './modules/machines/machines.routes'
 import { createMailer, type Mailer } from './modules/mailer/mailer.service'
 import { createSmtpTransport } from './modules/mailer/mailer.transport'
@@ -46,16 +47,23 @@ interface AccountsDeps {
   registry: MachineRegistry
 }
 
-/** What accounts add to the server API: their modules, and the hooks that give `user` endpoints a principal. */
+/**
+ * What accounts add to the server: their API modules, the hooks that give
+ * `user` endpoints a principal, and the enrollment service the tunnel answers
+ * `enroll.*` frames with.
+ */
 interface Accounts {
   modules: ApiModule[]
   api: Pick<ServerRouterOptions, 'authenticate' | 'forUser'>
+  enrollment: EnrollmentService
 }
 
 /**
  * Builds the accounts modules of the server API, mounted only when accounts
  * are on: Better Auth at `/api/auth/*`, the account endpoints and the machines
- * endpoints. `forUser` is a closure, so routers never hold the `Domain`.
+ * endpoints. `forUser` is a closure, so routers never hold the `Domain`, and
+ * the enrollment service gets only a closure that logs its fixed reason on
+ * every key lookup.
  */
 function createAccountsModules({
   domain,
@@ -72,9 +80,15 @@ function createAccountsModules({
     baseUrl: accounts.betterAuthUrl,
     trustedOrigins,
   })
+  const forUser = (principal: Principal) => domain.forUser(principal)
   return {
     modules: [createAuthModule({ auth, clientIp }), createAccountModule(), createMachinesModule({ registry })],
-    api: { authenticate: createAuthenticate({ auth }), forUser: (principal) => domain.forUser(principal) },
+    api: { authenticate: createAuthenticate({ auth }), forUser },
+    enrollment: new EnrollmentService({
+      byKey: () => domain.skipAuthorization(ENROLLMENT_LOOKUP_REASON),
+      forUser,
+      registry,
+    }),
   }
 }
 
@@ -136,6 +150,7 @@ const app = createApp({
   trustProxy,
   api: { trustedOrigins: config.trustedOrigins, ...accountsSetup?.api },
   accounts: accountsSetup ? { modules: accountsSetup.modules } : null,
+  enrollment: accountsSetup?.enrollment ?? null,
 })
 // The Bun server goes in as the env, which is where the client IP and socket upgrades come from.
 const server = Bun.serve({

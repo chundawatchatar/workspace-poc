@@ -172,4 +172,15 @@ describe('tunnel socket', () => {
     await until(() => healthy.frames.some((f) => f.type === 'pong'))
     expect(healthy.frames.find((f) => f.type === 'pong')).toEqual({ type: 'pong', nonce: 77 })
   })
+
+  test('answers enrollment frames with `unavailable` while accounts are off', async () => {
+    const machine = await hello(proofA, { pong: true })
+    machine.send({ type: 'enroll.preview', id: 1, key: 'oek_any' })
+    machine.send({ type: 'enroll.redeem', id: 2, key: 'oek_any', name: 'Box' })
+    await until(() => machine.frames.filter((f) => f.type === 'enroll.failed').length === 2)
+    expect(machine.frames.filter((f) => f.type === 'enroll.failed')).toEqual([
+      { type: 'enroll.failed', id: 1, code: 'unavailable' },
+      { type: 'enroll.failed', id: 2, code: 'unavailable' },
+    ])
+  })
 })

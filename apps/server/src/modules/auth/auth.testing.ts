@@ -1,3 +1,4 @@
+import type { Principal } from '@orch/domain'
 import type { TestDomain } from '@orch/domain/testing'
 import type { Hono } from 'hono'
 import { createApp } from '../../app'
@@ -6,6 +7,7 @@ import { createAccountModule } from '../account/account.routes'
 import { ChannelBridge } from '../bridge/bridge.service'
 import { HttpForwarder } from '../forward/forward.service'
 import { ConnectionLimiter } from '../limits/limits.service'
+import { ENROLLMENT_LOOKUP_REASON, EnrollmentService } from '../machines/enrollment.service'
 import { createMachinesModule } from '../machines/machines.routes'
 import { createMailer } from '../mailer/mailer.service'
 import { type CaptureTransport, createCaptureTransport } from '../mailer/mailer.testing'
@@ -144,12 +146,21 @@ export function authTestClient({
   }
 }
 
+/** What a test may change in `accountsTestApp`. */
+export interface AccountsTestAppOptions {
+  /** The clock enrollment keys are created and checked by. Defaults to the current time. */
+  now?: () => Date
+  /** Defaults to a limiter with the production limits. */
+  limiter?: ConnectionLimiter
+}
+
 /**
  * An app with accounts on over `domain`, as `index.ts` builds it: Better Auth,
  * the account and machines endpoints, with the real `authenticate` and
- * `forUser`, and the `registry` the machines module reads online state from.
+ * `forUser`, the enrollment service the tunnel answers with, and the
+ * `registry` the machines module reads online state from.
  */
-export function accountsTestApp(domain: TestDomain, ipPrefix: string) {
+export function accountsTestApp(domain: TestDomain, ipPrefix: string, { now, limiter }: AccountsTestAppOptions = {}) {
   const mail = createCaptureTransport()
   const auth = createAuth({
     domain,
@@ -159,21 +170,28 @@ export function accountsTestApp(domain: TestDomain, ipPrefix: string) {
     trustedOrigins: [TEST_TRUSTED_ORIGIN],
   })
   const registry = new MachineRegistry()
+  const forUser = (principal: Principal) => domain.forUser(principal)
   const app = createApp({
     registry,
     forwarder: new HttpForwarder({ registry }),
     bridge: new ChannelBridge({ registry }),
-    limiter: new ConnectionLimiter(),
+    limiter: limiter ?? new ConnectionLimiter(),
     api: {
       trustedOrigins: [TEST_TRUSTED_ORIGIN],
       authenticate: createAuthenticate({ auth }),
-      forUser: (principal) => domain.forUser(principal),
+      forUser,
     },
+    enrollment: new EnrollmentService({
+      byKey: () => domain.skipAuthorization(ENROLLMENT_LOOKUP_REASON),
+      forUser,
+      registry,
+      now,
+    }),
     accounts: {
       modules: [
         createAuthModule({ auth, clientIp: clientIpReader({ trustProxy: false }) }),
         createAccountModule(),
-        createMachinesModule({ registry }),
+        createMachinesModule({ registry, now }),
       ],
     },
   })
