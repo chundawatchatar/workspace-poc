@@ -11,7 +11,7 @@ export interface ConnectionCopy {
   /** Shown above the page once the layout has loaded; null means no banner. */
   banner: string | null
   /** Which of the app's hints follows the text, if any. */
-  hint: 'offline' | 'denied' | null
+  hint: 'offline' | 'denied' | 'unapproved' | null
   /** True when the page offers a "Try again" button that calls `reconnect`. */
   retry: boolean
 }
@@ -56,6 +56,14 @@ const COPY: Record<ConnectionStatus, ConnectionCopy> = {
     banner: 'The access key was rejected.',
     hint: 'denied',
     retry: true,
+  },
+  unapproved: {
+    label: 'Waiting for approval',
+    dot: 'bg-warn',
+    message: 'This browser is not approved on the machine yet.',
+    banner: 'This browser is not approved on the machine yet.',
+    hint: 'unapproved',
+    retry: false,
   },
 }
 

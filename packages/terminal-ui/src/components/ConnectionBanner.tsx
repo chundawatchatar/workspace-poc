@@ -1,4 +1,4 @@
-import { KeyRound, LoaderCircle, WifiOff } from '@orch/ui/icons'
+import { KeyRound, LoaderCircle, ShieldQuestion, WifiOff } from '@orch/ui/icons'
 import { connectionCopy } from '../lib/connection'
 import { isReady } from '../lib/page'
 import { useApp } from '../lib/store'
@@ -13,7 +13,14 @@ export function ConnectionBanner() {
   const hint = useConnectionHint()
   const { banner, retry } = connectionCopy(status)
   if (!ready || !banner) return null
-  const Icon = status === 'denied' ? KeyRound : status === 'offline' ? WifiOff : LoaderCircle
+  const Icon =
+    status === 'denied'
+      ? KeyRound
+      : status === 'offline'
+        ? WifiOff
+        : status === 'unapproved'
+          ? ShieldQuestion
+          : LoaderCircle
   return (
     <div
       role="status"

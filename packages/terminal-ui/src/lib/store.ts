@@ -3,6 +3,7 @@ import {
   type AppState,
   buildSocketUrl,
   CLOSE_ACCESS_DENIED,
+  CLOSE_DEVICE_NOT_APPROVED,
   CLOSE_MACHINE_OFFLINE,
   type ClientEvent,
   type HostInfo,
@@ -30,9 +31,10 @@ export type Theme = 'light' | 'dark'
 
 /**
  * The page's connection to the host, read from the events socket. `connecting` lasts until the first `hello`;
- * `offline` means the server is up but the machine is not; `denied` means the host rejected the access key.
+ * `offline` means the server is up but the machine is not; `denied` means the host rejected the access key;
+ * `unapproved` means the machine waits for its owner to approve this browser there.
  */
-export type ConnectionStatus = 'connecting' | 'open' | 'reconnecting' | 'offline' | 'denied'
+export type ConnectionStatus = 'connecting' | 'open' | 'reconnecting' | 'offline' | 'denied' | 'unapproved'
 
 export interface Snapshot {
   status: ConnectionStatus
@@ -156,8 +158,9 @@ let reopenNow: (() => void) | null = null
 
 /**
  * Keeps the events socket open through `via`. After a drop it reopens with a
- * growing wait (`RETRY_DELAYS`), reset by each `hello`; after a rejected key it
- * stops until `reconnect` is called. Returns a cleanup that closes the socket
+ * growing wait (`RETRY_DELAYS`), reset by each `hello`, and keeps doing so while
+ * the device waits for approval, so the page opens once it is approved; after a
+ * rejected key it stops until `reconnect` is called. Returns a cleanup that closes the socket
  * and stops reconnecting.
  */
 export function connect(via: HostTransport, timer: ConnectTimer = realTimer): () => void {
@@ -189,7 +192,14 @@ export function connect(via: HostTransport, timer: ConnectTimer = realTimer): ()
         set({ status: 'denied' })
         return
       }
-      set({ status: event.code === CLOSE_MACHINE_OFFLINE ? 'offline' : 'reconnecting' })
+      set({
+        status:
+          event.code === CLOSE_MACHINE_OFFLINE
+            ? 'offline'
+            : event.code === CLOSE_DEVICE_NOT_APPROVED
+              ? 'unapproved'
+              : 'reconnecting',
+      })
       retry = timer.set(open, RETRY_DELAYS[Math.min(attempt, RETRY_DELAYS.length - 1)])
       attempt++
     }

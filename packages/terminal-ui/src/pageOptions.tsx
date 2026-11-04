@@ -10,6 +10,8 @@ export interface PageOptions {
   offlineHint: ReactNode
   /** Shown under "The access key was rejected." */
   deniedHint: ReactNode
+  /** Shown while the machine waits for its owner to approve this browser. */
+  unapprovedHint: ReactNode
   /** Follows the workspace name in the document title. */
   titleSuffix: string
   /** True when the page offers the Remote access setting, which only a local page can change. */

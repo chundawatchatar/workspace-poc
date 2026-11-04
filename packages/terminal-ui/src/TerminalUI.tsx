@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { type ReactNode, useEffect, useMemo } from 'react'
 import { ConnectionBanner } from './components/ConnectionBanner'
-import { DEFAULT_DENIED_HINT, LOCAL_OFFLINE_HINT } from './components/HostStatus'
+import { DEFAULT_DENIED_HINT, DEFAULT_UNAPPROVED_HINT, LOCAL_OFFLINE_HINT } from './components/HostStatus'
 import { Overlays } from './components/Overlays'
 import { Sidebar } from './components/Sidebar'
 import { useShortcuts } from './lib/shortcuts'
@@ -30,6 +30,11 @@ export interface TerminalUIProps {
   offlineHint?: ReactNode
   /** Says what to do when the host rejects the access key. Defaults to asking the machine's owner for a new link. */
   deniedHint?: ReactNode
+  /**
+   * Says how to approve this browser while the machine waits for it, such as the fingerprint to approve. Defaults to
+   * pointing at the machine's Remote access setting.
+   */
+  unapprovedHint?: ReactNode
   /** Follows the workspace name in the document title. Defaults to `Workspaces`. */
   titleSuffix?: string
   /**
@@ -53,6 +58,7 @@ export function TerminalUI({
   header,
   offlineHint = LOCAL_OFFLINE_HINT,
   deniedHint = DEFAULT_DENIED_HINT,
+  unapprovedHint = DEFAULT_UNAPPROVED_HINT,
   titleSuffix = 'Workspaces',
   remoteAccessSetting = false,
 }: TerminalUIProps) {
@@ -69,8 +75,8 @@ export function TerminalUI({
     [workspaceId, navigate, workspaceHref],
   )
   const options = useMemo<PageOptions>(
-    () => ({ machine, header, offlineHint, deniedHint, titleSuffix, remoteAccessSetting }),
-    [machine, header, offlineHint, deniedHint, titleSuffix, remoteAccessSetting],
+    () => ({ machine, header, offlineHint, deniedHint, unapprovedHint, titleSuffix, remoteAccessSetting }),
+    [machine, header, offlineHint, deniedHint, unapprovedHint, titleSuffix, remoteAccessSetting],
   )
 
   useEffect(() => connect(transport), [transport])
