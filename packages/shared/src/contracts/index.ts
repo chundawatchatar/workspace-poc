@@ -23,6 +23,21 @@ export {
 } from './agentTracking'
 export * from './contract'
 export {
+  CLOSE_DEVICE_NOT_APPROVED,
+  canonicalDeviceJwk,
+  DEVICE_NOT_APPROVED_CODE,
+  DEVICE_PROOF_HEADER,
+  DEVICE_PROOF_SKEW_SECONDS,
+  DEVICE_PROOF_SOCKET_METHOD,
+  type DeviceJwk,
+  type DeviceProofHeader,
+  type DeviceProofPayload,
+  deviceFingerprint,
+  deviceJwk,
+  deviceProofHeader,
+  deviceProofPayload,
+} from './deviceProof'
+export {
   type DirListing,
   listDirsQuery,
   listDirsResponse,
@@ -65,14 +80,23 @@ export {
   socketAuthMessage,
 } from './remote'
 export {
+  type ApprovedDevice,
+  approvedDevice,
+  type DeviceBody,
+  type DevicesResponse,
+  deviceBody,
+  deviceId,
+  devicesResponse,
   type LinkAccount,
   type LinkBody,
   type LinkedAccount,
   linkAccount,
   linkBody,
   linkedAccount,
+  type PendingDevice,
   type PreviewLinkBody,
   type PreviewLinkResponse,
+  pendingDevice,
   previewLinkBody,
   previewLinkResponse,
   type RemoteAccessStatus,

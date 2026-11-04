@@ -69,6 +69,24 @@ export type PreviewLinkResponse = z.infer<typeof previewLinkResponse>
 export const linkBody = z.strictObject({ key: enrollmentKeySchema, serverUrl: z.string() })
 export type LinkBody = z.infer<typeof linkBody>
 
+/** A device id: the base64url SHA-256 of the device's canonical public JWK. */
+export const deviceId = z.string().regex(/^[A-Za-z0-9_-]{43}$/)
+
+/** A browser that offered a valid relay ticket and device proof but isn't approved yet. `firstSeenAt` is an ISO string. */
+export const pendingDevice = z.object({ id: deviceId, fingerprint: z.string(), firstSeenAt: z.iso.datetime() })
+export type PendingDevice = z.infer<typeof pendingDevice>
+
+/** A browser the owner approved on this machine. `approvedAt` is an ISO string. */
+export const approvedDevice = z.object({ id: deviceId, fingerprint: z.string(), approvedAt: z.iso.datetime() })
+export type ApprovedDevice = z.infer<typeof approvedDevice>
+
+/** The devices that may open this machine through the linked account, and those waiting for approval, newest first. */
+export const devicesResponse = z.object({ pending: z.array(pendingDevice), approved: z.array(approvedDevice) })
+export type DevicesResponse = z.infer<typeof devicesResponse>
+
+export const deviceBody = z.strictObject({ id: deviceId })
+export type DeviceBody = z.infer<typeof deviceBody>
+
 export const remoteAccessContract = defineContract({
   status: {
     method: 'GET',
@@ -107,5 +125,27 @@ export const remoteAccessContract = defineContract({
     description: 'Forgets the linked account on this machine. The server still lists the machine. Local callers only.',
     input: z.strictObject({}),
     output: remoteAccessStatus,
+  },
+  devices: {
+    method: 'GET',
+    path: '/api/remote-access/devices',
+    description:
+      'Lists the browsers approved to open this machine through the linked account, and those waiting. Local callers only.',
+    input: z.object({}),
+    output: devicesResponse,
+  },
+  approveDevice: {
+    method: 'POST',
+    path: '/api/remote-access/devices/approve',
+    description: 'Approves a waiting browser. An id that is not waiting or approved gets a 404. Local callers only.',
+    input: deviceBody,
+    output: devicesResponse,
+  },
+  removeDevice: {
+    method: 'POST',
+    path: '/api/remote-access/devices/remove',
+    description: 'Dismisses a waiting browser, or revokes an approved one and closes its sockets. Local callers only.',
+    input: deviceBody,
+    output: devicesResponse,
   },
 })

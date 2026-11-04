@@ -9,11 +9,14 @@ import {
   routes,
   type TunnelState,
 } from '@orch/shared'
+import { deviceKeyFingerprint } from '@orch/terminal-ui/device-proof'
 import { type AppDeps, createApp } from '../../app'
 import type { Principal } from '../../lib/principal'
 import { AccessKeyRepository } from '../access/access.repository'
 import type { EnrollAnswer, EnrollRequest, TunnelClientOptions } from '../tunnel/tunnel.service'
-import type { Credentials } from '../tunnel/tunnel-http.service'
+import { type Credentials, DEVICE_NOT_APPROVED } from '../tunnel/tunnel-http.service'
+import { testDevice } from './device-proof.testing'
+import { DevicesRepository } from './devices.repository'
 import { LinkedAccountRepository } from './linked-account.repository'
 import { testRelayKey } from './relay-ticket.testing'
 import { RemoteAccessRepository, type RemoteAccessSettings } from './remote-access.repository'
@@ -71,6 +74,7 @@ const settingsFile = () => join(dir, 'remote-access.json')
 const keysFile = () => join(dir, 'access-keys.json')
 const secretFile = () => join(dir, 'machine-secret')
 const linkedFile = () => join(dir, 'linked-account.json')
+const devicesFile = () => join(dir, 'devices.json')
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'orch-remote-'))
@@ -93,6 +97,7 @@ function setup(saved?: RemoteAccessSettings | string, env: RemoteAccessEnv = {})
   service = new RemoteAccessService({
     repository: new RemoteAccessRepository(settingsFile()),
     linkedAccounts: new LinkedAccountRepository(linkedFile()),
+    devices: new DevicesRepository(devicesFile()),
     secretFile: secretFile(),
     keysFile: keysFile(),
     env,
@@ -247,7 +252,7 @@ describe('RemoteAccessService', () => {
     expect(closed?.reason).toBe('key rotated')
     expect(revoked.every((keyId) => closed?.revoked({ kind: 'key', keyId, name: 'default' }))).toBe(true)
     // Account sockets stay open across a rotation.
-    expect(closed?.revoked({ kind: 'account', accountId })).toBe(false)
+    expect(closed?.revoked({ kind: 'account', accountId, deviceId: 'd1' })).toBe(false)
 
     service.update({ enabled: true, serverUrl: 'ws://127.0.0.1:4600', clientUrl: 'https://orch.example' })
     const saved = (await (await rotate()).json()) as RotateAccessResponse
@@ -373,26 +378,89 @@ describe('RemoteAccessService.authorize', () => {
     relay.ticket({ sub: accountId, aud: service.status().machineId ?? '', ...overrides })
   const authorize = (credentials: Credentials) => tunnels.at(-1)?.options.authorize(credentials)
 
-  test('a ticket opens as the linked account, a socket spends it, a key alone decides, and unlink ends it', () => {
+  test('a ticket opens as the linked account only with a fresh proof from an approved device, and a key alone decides', async () => {
+    writeLinked({ accountId, relayKeys })
+    connected()
+    const machineId = service.status().machineId ?? ''
+    const device = await testDevice()
+    const health = { machineId, method: 'GET', path: '/api/health' }
+    const ticket = ticketFor()
+
+    // An unknown device with a valid ticket waits for approval, listed once by the fingerprint its browser shows.
+    expect(authorize({ key: null, ticket, device: await device.presented(health) })).toBe(DEVICE_NOT_APPROVED)
+    expect(authorize({ key: null, ticket, device: await device.presented(health) })).toBe(DEVICE_NOT_APPROVED)
+    const fingerprint = await deviceKeyFingerprint(device.signer.publicJwk)
+    expect(service.listDevices()).toEqual({
+      pending: [{ id: device.id, fingerprint, firstSeenAt: expect.any(String) }],
+      approved: [],
+    })
+
+    // Without a valid ticket nothing is recorded, however good the proof.
+    const stranger = await testDevice()
+    const bad = ticketFor({ sub: 'someone-else' })
+    expect(authorize({ key: null, ticket: bad, device: await stranger.presented(health) })).toBeNull()
+    expect(service.listDevices().pending.map((d) => d.id)).toEqual([device.id])
+
+    expect(service.approveDevice(device.id).approved).toEqual([
+      { id: device.id, fingerprint, approvedAt: expect.any(String) },
+    ])
+    const asAccount: Principal = { kind: 'account', accountId, deviceId: device.id }
+    const proof = await device.presented(health)
+    expect(authorize({ key: null, ticket, device: proof })).toEqual(asAccount)
+    // A used proof, no proof, a proof for another request, and a valid proof with a bad ticket are all refused.
+    expect(authorize({ key: null, ticket, device: proof })).toBeNull()
+    expect(authorize({ key: null, ticket, device: null })).toBeNull()
+    const elsewhere = await device.presented({ ...health, path: '/api/git/status' })
+    expect(authorize({ key: null, ticket, device: { ...elsewhere, path: '/api/health' } })).toBeNull()
+    expect(authorize({ key: null, ticket: bad, device: await device.presented(health) })).toBeNull()
+    expect(authorize({ key: null, ticket: null, device: await device.presented(health) })).toBeNull()
+    // A key is judged alone, with or without a proof.
+    expect(authorize({ key: 'wrong', ticket, device: await device.presented(health) })).toBeNull()
+
+    // A socket spends its ticket, so the same ticket with a fresh proof opens nothing more.
+    const socket = { machineId, method: 'WS', path: '/ws/events' }
+    expect(authorize({ key: null, ticket, device: await device.presented(socket), once: true })).toEqual(asAccount)
+    expect(authorize({ key: null, ticket, device: await device.presented(socket), once: true })).toBeNull()
+
+    // Approval survives a restart.
+    service.shutdown()
+    connected()
+    expect(service.listDevices().approved.map((d) => d.id)).toEqual([device.id])
+    expect(authorize({ key: null, ticket: ticketFor(), device: await device.presented(health) })).toEqual(asAccount)
+  })
+
+  test('revoking a device closes only its channels and refuses it, and unlink forgets every device', async () => {
     writeLinked({ accountId, relayKeys })
     const { tunnel } = connected()
-    const ticket = ticketFor()
-    const asAccount: Principal = { kind: 'account', accountId }
-    // HTTP requests may reuse a ticket; a socket spends it, so a replay opens nothing.
-    expect(authorize({ key: null, ticket })).toEqual(asAccount)
-    expect(authorize({ key: null, ticket })).toEqual(asAccount)
-    expect(authorize({ key: null, ticket, once: true })).toEqual(asAccount)
-    expect(authorize({ key: null, ticket, once: true })).toBeNull()
-    expect(authorize({ key: null, ticket: ticketFor({ sub: 'someone-else' }) })).toBeNull()
-    expect(authorize({ key: null, ticket: ticketFor({ aud: 'another-machine' }) })).toBeNull()
-    expect(authorize({ key: null, ticket: null })).toBeNull()
-    expect(authorize({ key: 'wrong', ticket: ticketFor() })).toBeNull()
+    const machineId = service.status().machineId ?? ''
+    const health = { machineId, method: 'GET', path: '/api/health' }
+    const [kept, revoked, waiting] = await Promise.all([testDevice(), testDevice(), testDevice()])
+    for (const device of [kept, revoked, waiting]) {
+      authorize({ key: null, ticket: ticketFor(), device: await device.presented(health) })
+    }
+    service.approveDevice(kept.id)
+    service.approveDevice(revoked.id)
+
+    expect(service.removeDevice(revoked.id).approved.map((d) => d.id)).toEqual([kept.id])
+    expect(tunnel.closed.map((c) => c.reason)).toEqual(['device revoked'])
+    const [closed] = tunnel.closed
+    expect(closed?.revoked({ kind: 'account', accountId, deviceId: revoked.id })).toBe(true)
+    expect(closed?.revoked({ kind: 'account', accountId, deviceId: kept.id })).toBe(false)
+    expect(closed?.revoked({ kind: 'key', keyId: 'k1', name: 'default' })).toBe(false)
+    const next = authorize({ key: null, ticket: ticketFor(), device: await revoked.presented(health) })
+    expect(next).toBe(DEVICE_NOT_APPROVED)
+    expect(JSON.parse(readFileSync(devicesFile(), 'utf8')).map((d: { id: string }) => d.id)).toEqual([kept.id])
+
+    // Dismissing a waiting device closes nothing, and an unknown id can't be approved.
+    service.removeDevice(waiting.id)
+    expect(service.listDevices().pending.map((d) => d.id)).toEqual([revoked.id])
+    expect(tunnel.closed).toHaveLength(1)
+    const app = createApp({ remoteAccess: service } as unknown as AppDeps).app
+    expect((await post(app, routes.remoteAccess.approveDevice, { id: waiting.id })).status).toBe(404)
 
     service.unlink()
-    expect(tunnel.closed.map((c) => c.reason)).toEqual(['account unlinked'])
-    expect(tunnel.closed[0]?.revoked(asAccount)).toBe(true)
-    expect(tunnel.closed[0]?.revoked({ kind: 'key', keyId: 'k1', name: 'default' })).toBe(false)
-    expect(authorize({ key: null, ticket: ticketFor() })).toBeNull()
+    expect(service.listDevices()).toEqual({ pending: [], approved: [] })
+    expect(existsSync(devicesFile())).toBe(false)
   })
 
   test('an older linked file still shows the account but accepts no ticket, nor does another server', () => {

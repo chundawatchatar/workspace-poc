@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, type Mock, spyOn, test } from 'bun:test'
 import {
   CLOSE_ACCESS_DENIED,
+  CLOSE_DEVICE_NOT_APPROVED,
   type MachineFrame,
   relaySocketProtocols,
   WS_CHANNEL_WINDOW_BYTES,
@@ -11,7 +12,7 @@ import type { Principal } from '../../lib/principal'
 import type { SocketConn, SocketData } from '../../lib/socket'
 import type { SocketRefusal } from '../../lib/socketRouter'
 import { CHANNEL_QUEUE_CAP_BYTES, type OpenSocket, TunnelChannels } from './tunnel-channels.service'
-import type { Authorize, Credentials } from './tunnel-http.service'
+import { type Authorize, bodySha256, type Credentials, DEVICE_NOT_APPROVED } from './tunnel-http.service'
 
 /** One handler run, as the test sees it. */
 interface Opened {
@@ -37,8 +38,8 @@ afterEach(() => warn.mockRestore())
 /** The auth message for `key`. */
 const auth = (key: string) => JSON.stringify({ type: 'auth', key })
 
-/** The auth message that asks to be judged by the ticket the channel opened with. */
-const accountAuth = JSON.stringify({ type: 'auth', account: true })
+/** The auth message that asks to be judged by the ticket the channel opened with, and the device proof `device`. */
+const accountAuth = (device = 'p-good') => JSON.stringify({ type: 'auth', account: true, device })
 
 /** The `ws.open` headers of a socket that offered `ticket`, as a browser sends them. */
 const withTicket = (ticket: string): [string, string][] => [
@@ -51,15 +52,17 @@ let asked: Credentials[] = []
 
 /**
  * Accepts the keys `good` (key id `k1`) and `other` (key id `k2`), and the
- * ticket `t-good` as the account `u1`.
+ * ticket `t-good` with the proof `p-good` as the account `u1`. The proof
+ * `p-new` stands for a device the machine hasn't approved.
  */
 const authorize: Authorize = (credentials) => {
   asked.push(credentials)
-  const { key, ticket } = credentials
+  const { key, ticket, device } = credentials
   if (key === 'good') return { kind: 'key', keyId: 'k1', name: 'default' }
   if (key === 'other') return { kind: 'key', keyId: 'k2', name: 'second' }
-  if (key === null && ticket === 't-good') return { kind: 'account', accountId: 'u1' }
-  return null
+  if (key !== null || ticket !== 't-good') return null
+  if (device?.proof === 'p-new') return DEVICE_NOT_APPROVED
+  return device?.proof === 'p-good' ? { kind: 'account', accountId: 'u1', deviceId: 'd1' } : null
 }
 
 /**
@@ -135,19 +138,20 @@ describe('TunnelChannels', () => {
     expect(of('auth.failed')).toEqual([])
   })
 
-  test('an account auth message is judged by the ticket its socket offered, which it spends; a key message by the key', () => {
-    const { channels, opened, of } = setup()
+  test('an account auth message is judged by the ticket its socket offered, which it spends, and its device proof; a key message by the key', () => {
+    const { channels, frames, opened, of } = setup()
     channels.receive({ type: 'ws.open', channel: 1, path: '/ws/events', headers: withTicket('t-good') })
-    channels.receive({ type: 'ws.data', channel: 1, data: accountAuth })
-    expect(opened.map((run) => run.principal)).toEqual([{ kind: 'account', accountId: 'u1' }])
-    expect(asked).toEqual([{ key: null, ticket: 't-good', once: true }])
+    channels.receive({ type: 'ws.data', channel: 1, data: accountAuth() })
+    expect(opened.map((run) => run.principal)).toEqual([{ kind: 'account', accountId: 'u1', deviceId: 'd1' }])
+    const device = { proof: 'p-good', method: 'WS', path: '/ws/events', bodySha256: bodySha256() }
+    expect(asked).toEqual([{ key: null, ticket: 't-good', device, once: true }])
     // The subprotocols carried the ticket, so the handler never sees them.
     expect(opened[0]?.headers).toEqual([['x-thing', 'a']])
 
     // A bad ticket, and no ticket at all.
     channels.receive({ type: 'ws.open', channel: 2, path: '/ws/events', headers: withTicket('t-bad') })
     channels.receive({ type: 'ws.open', channel: 3, path: '/ws/events', headers: [] })
-    for (const channel of [2, 3]) channels.receive({ type: 'ws.data', channel, data: accountAuth })
+    for (const channel of [2, 3]) channels.receive({ type: 'ws.data', channel, data: accountAuth() })
     expect(opened).toHaveLength(1)
     expect(of('auth.failed')).toEqual([
       { type: 'auth.failed', channel: 2 },
@@ -161,6 +165,18 @@ describe('TunnelChannels', () => {
     expect(opened).toHaveLength(1)
     expect(asked.at(-1)).toEqual({ key: 'wrong', ticket: null })
     expect(of('auth.failed').at(-1)).toEqual({ type: 'auth.failed', channel: 4 })
+
+    // A device waiting for approval gets its own close and no `auth.failed`; an account message without a proof,
+    // as an older page sends, is refused.
+    channels.receive({ type: 'ws.open', channel: 5, path: '/ws/events', headers: withTicket('t-good') })
+    channels.receive({ type: 'ws.data', channel: 5, data: accountAuth('p-new') })
+    channels.receive({ type: 'ws.open', channel: 6, path: '/ws/events', headers: withTicket('t-good') })
+    channels.receive({ type: 'ws.data', channel: 6, data: JSON.stringify({ type: 'auth', account: true }) })
+    expect(opened).toHaveLength(1)
+    expect(frames.filter((f) => 'channel' in f && f.channel === 5)).toEqual([
+      { type: 'ws.close', channel: 5, code: CLOSE_DEVICE_NOT_APPROVED, reason: 'device not approved' },
+    ])
+    expect(of('auth.failed').at(-1)).toEqual({ type: 'auth.failed', channel: 6 })
     channels.close()
   })
 
@@ -171,7 +187,7 @@ describe('TunnelChannels', () => {
     const c = openChannel(3, 'good')
     channels.receive({ type: 'ws.open', channel: 4, path: '/ws/events', headers: [] })
     channels.receive({ type: 'ws.open', channel: 5, path: '/ws/events', headers: withTicket('t-good') })
-    channels.receive({ type: 'ws.data', channel: 5, data: accountAuth })
+    channels.receive({ type: 'ws.data', channel: 5, data: accountAuth() })
     const d = opened.at(-1)
 
     const rotated = (p: Principal) => p.kind === 'key' && p.keyId === 'k1'

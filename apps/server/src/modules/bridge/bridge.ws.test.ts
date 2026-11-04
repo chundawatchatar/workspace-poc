@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
 import { connect, type Socket } from 'node:net'
 import {
   type AgentState,
+  CLOSE_DEVICE_NOT_APPROVED,
   CLOSE_MACHINE_OFFLINE,
   decodeFrame,
   encodeFrame,
@@ -150,7 +151,8 @@ describe('bridge socket', () => {
     const logs = (['log', 'info', 'warn', 'error'] as const).map((method) => spyOn(console, method))
     try {
       const m = await machine(proofA)
-      const auth = JSON.stringify({ type: 'auth', key: 'secret-key' })
+      // The auth message, with its device proof, is the machine's to read, so it passes through as sent.
+      const auth = JSON.stringify({ type: 'auth', account: true, device: 'a.device.proof' })
       const one = browser('/ws/term/abc?cols=80&name=a%20b', idA, { 'x-thing': 'a' })
       await opened(one)
       one.ws.send(auth)
@@ -191,7 +193,7 @@ describe('bridge socket', () => {
       expect(of(m, 'ws.ack', 1).map((f) => f.bytes)).toEqual([6, 2])
 
       const logged = logs.flatMap((spy) => spy.mock.calls.map((call) => call.join(' ')))
-      expect(logged.some((line) => line.includes('secret-key') || line.includes('term/abc'))).toBe(false)
+      expect(logged.some((line) => line.includes('a.device.proof') || line.includes('term/abc'))).toBe(false)
     } finally {
       for (const spy of logs) spy.mockRestore()
     }
@@ -232,8 +234,9 @@ describe('bridge socket', () => {
     // Bun's client sends 1000 for a bare `close()`, so the no-code case is left to the service test.
     expect(of(m, 'ws.close', 2)).toEqual([{ type: 'ws.close', channel: 2, code: 1000 }])
 
-    m.send({ type: 'ws.close', channel: 3, code: 4100, reason: 'exited' })
-    expect(await byMachine.closed).toEqual({ code: 4100, reason: 'exited' })
+    // Any close code from 3000 to 4999 passes through, such as a device waiting for approval.
+    m.send({ type: 'ws.close', channel: 3, code: CLOSE_DEVICE_NOT_APPROVED, reason: 'device not approved' })
+    expect(await byMachine.closed).toEqual({ code: CLOSE_DEVICE_NOT_APPROVED, reason: 'device not approved' })
     await Bun.sleep(20)
     expect(of(m, 'ws.close', 3)).toHaveLength(0)
     expect(bridge.size).toBe(0)

@@ -1,5 +1,7 @@
 import {
   CLOSE_ACCESS_DENIED,
+  CLOSE_DEVICE_NOT_APPROVED,
+  DEVICE_PROOF_SOCKET_METHOD,
   encodeFrame,
   MAX_TUNNEL_FRAME_BYTES,
   type MachineFrame,
@@ -13,7 +15,7 @@ import {
 import type { Principal } from '../../lib/principal'
 import type { SocketConn, SocketData, SocketSession } from '../../lib/socket'
 import type { SocketRefusal } from '../../lib/socketRouter'
-import type { Authorize } from './tunnel-http.service'
+import { type Authorize, bodySha256, DEVICE_NOT_APPROVED } from './tunnel-http.service'
 
 /**
  * Opens the socket a `ws.open` asks for, as the principal that authorized it,
@@ -43,6 +45,9 @@ const MAX_ESCAPE_BYTES = 6
 const FRAME_OVERHEAD_BYTES = 64
 
 const encoder = new TextEncoder()
+
+/** A socket proof's `bodySha256`: sockets have no body. */
+const EMPTY_SHA256 = bodySha256()
 
 /** A `ws.data` payload. Bun never hands the host a `SharedArrayBuffer`, so every `SocketData` is one. */
 type Payload = string | Uint8Array<ArrayBuffer>
@@ -82,8 +87,10 @@ interface Channel {
  * No handler runs before the channel's first message, which must be a
  * `socketAuthMessage` that `authorize` accepts: its key, or with
  * `account: true` the relay ticket the socket offered as a subprotocol, which
- * it spends. Anything else, or nothing within the auth timeout, gets
- * `auth.failed` and a `CLOSE_ACCESS_DENIED` close.
+ * it spends, with the message's `device` proof for `'WS'` and the channel's
+ * path. A device that isn't approved gets a `CLOSE_DEVICE_NOT_APPROVED` close
+ * and no `auth.failed`. Anything else, or nothing within the auth timeout,
+ * gets `auth.failed` and a `CLOSE_ACCESS_DENIED` close.
  */
 export class TunnelChannels {
   private readonly channels = new Map<number, Channel>()
@@ -173,9 +180,23 @@ export class TunnelChannels {
       ? null
       : 'key' in message
         ? this.authorize({ key: message.key, ticket: null })
-        : this.authorize({ key: null, ticket: channel.ticket, once: true })
+        : this.authorize({
+            key: null,
+            ticket: channel.ticket,
+            device: {
+              proof: message.device,
+              method: DEVICE_PROOF_SOCKET_METHOD,
+              path: channel.path,
+              bodySha256: EMPTY_SHA256,
+            },
+            once: true,
+          })
     if (!principal) {
       this.deny(channel, 'access denied')
+      return
+    }
+    if (principal === DEVICE_NOT_APPROVED) {
+      this.fail(channel, CLOSE_DEVICE_NOT_APPROVED, 'device not approved')
       return
     }
     channel.principal = principal

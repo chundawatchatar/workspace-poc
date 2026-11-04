@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
 import {
   ACCESS_KEY_HEADER,
+  DEVICE_PROOF_HEADER,
   decodeFrame,
   encodeFrame,
   MAX_TUNNEL_FRAME_BYTES,
@@ -99,6 +100,7 @@ describe('forward routes', () => {
         headers: {
           [ACCESS_KEY_HEADER]: 'secret-key',
           [RELAY_TICKET_HEADER]: 'a.relay.ticket',
+          [DEVICE_PROOF_HEADER]: 'a.device.proof',
           'x-thing': 'a',
           connection: 'keep-alive',
           Cookie: 'session=abc',
@@ -109,8 +111,9 @@ describe('forward routes', () => {
       const request = m.requests[0]
       expect(request).toMatchObject({ type: 'http.request', id: 1, method: 'POST', path: '/api/git/status?cwd=%2Ftmp' })
       expect(request?.headers).toContainEqual([ACCESS_KEY_HEADER, 'secret-key'])
-      // A relay ticket is the machine's to check, so it passes through as sent.
+      // A relay ticket and a device proof are the machine's to check, so they pass through as sent.
       expect(request?.headers).toContainEqual([RELAY_TICKET_HEADER, 'a.relay.ticket'])
+      expect(request?.headers).toContainEqual([DEVICE_PROOF_HEADER, 'a.device.proof'])
       expect(request?.headers).toContainEqual(['x-thing', 'a'])
       expect(request?.headers.some(([name]) => name === 'connection' || name === 'host')).toBe(false)
       // The account session cookie lives on the server's origin, so a machine never sees it.
@@ -166,9 +169,11 @@ describe('forward routes', () => {
       expect(forwarder.size).toBe(0)
 
       const logged = logs.flatMap((spy) => spy.mock.calls.map((call) => call.join(' ')))
-      expect(logged.some((line) => ['secret-key', 'git/status', 'session=abc'].some((s) => line.includes(s)))).toBe(
-        false,
-      )
+      expect(
+        logged.some((line) =>
+          ['secret-key', 'a.device.proof', 'git/status', 'session=abc'].some((s) => line.includes(s)),
+        ),
+      ).toBe(false)
     } finally {
       for (const spy of logs) spy.mockRestore()
     }

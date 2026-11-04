@@ -4,7 +4,8 @@ import { API_PREFIX, WS_PREFIX } from './contract'
 // How a browser reaches a machine through the cloud server. The server forwards
 // `/m/<machineId>/api/*` and `/m/<machineId>/ws/*` to the machine, and the
 // machine checks the access key, or a relay ticket the server signed for the
-// account. Neither ever goes in a URL, so they stay out of server logs, proxies
+// account together with a proof from a device approved on the machine. None
+// of them ever goes in a URL, so they stay out of server logs, proxies
 // and browser history.
 
 /** The request header that carries a machine's access key on HTTP requests. */
@@ -13,11 +14,12 @@ export const ACCESS_KEY_HEADER = 'x-orch-access-key'
 /**
  * The first text message on every remote socket, sent before anything else,
  * since browsers can't set socket headers. It carries the access key, or
- * `account: true` to be judged by the relay ticket the socket opened with.
+ * `account: true` to be judged by the relay ticket the socket opened with,
+ * plus `device`, a fresh device proof for the socket (`'WS'` and its path).
  */
 export const socketAuthMessage = z.union([
   z.object({ type: z.literal('auth'), key: z.string().min(1) }),
-  z.object({ type: z.literal('auth'), account: z.literal(true) }),
+  z.object({ type: z.literal('auth'), account: z.literal(true), device: z.string().min(1).max(4096) }),
 ])
 
 export type SocketAuthMessage = z.infer<typeof socketAuthMessage>
