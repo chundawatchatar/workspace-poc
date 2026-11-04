@@ -104,9 +104,25 @@ describe('client routes', () => {
     expect(screen.queryByText('Page not found.')).not.toBeInTheDocument()
   })
 
-  test('a machine this browser holds no key for asks for the connect link', async () => {
+  test('a machine with no key here opens through the account when listed, and is not linked otherwise', async () => {
+    const at = '2026-10-30T12:00:00.000Z'
+    const listed = { machineId: 'account-machine', name: 'Desktop', createdAt: at, lastOpenedAt: at, online: true }
+    const firstMessages: string[] = []
+    server.use(
+      http.get('*/api/machines', () => HttpResponse.json({ machines: [listed] })),
+      ws
+        .link(`*/m/account-machine${routes.sockets.events.path}`)
+        .addEventListener('connection', ({ client }) =>
+          client.addEventListener('message', (event) => firstMessages.push(String(event.data)), { once: true }),
+        ),
+    )
+    await show('/m/account-machine')
+    expect((await screen.findAllByText('Desktop')).length).toBeGreaterThan(0)
+    await waitFor(() => expect(firstMessages).toEqual([JSON.stringify({ type: 'auth', account: true })]))
+    cleanup()
+
     await show('/m/other-machine')
-    expect(await screen.findByText(/Open the connect link on this device/)).toBeInTheDocument()
+    expect(await screen.findByText(/isn't linked to your account or in this browser/)).toBeInTheDocument()
   })
 
   test('pages share the root query client', async () => {

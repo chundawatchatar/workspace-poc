@@ -25,14 +25,18 @@ export interface RemoteTransportOptions {
   /** The cloud server, such as `https://example.com`. Only `http:` and `https:` are accepted. */
   serverUrl: string
   machineId: string
-  /** The machine's access key. It goes in a header or the first socket message, never in a URL. */
-  accessKey: string
+  /**
+   * The machine's access key. It goes in a header or the first socket message, never in a URL. Without it, the
+   * signed-in account opens the machine: requests send the session cookie and sockets ask for the account.
+   */
+  accessKey?: string
 }
 
 /**
- * A transport that reaches a machine through the cloud server, under `machinePathPrefix(machineId)`. Requests carry
- * the key in `ACCESS_KEY_HEADER`. Sockets send `socketAuthMessage` as their first message, ahead of anything the
- * page sends from its own `onopen`.
+ * A transport that reaches a machine through the cloud server, under `machinePathPrefix(machineId)`. With a key,
+ * requests carry it in `ACCESS_KEY_HEADER`; without one, they send no key and include credentials, so the server can
+ * attach the signed-in account. Sockets send `socketAuthMessage` as their first message, ahead of anything the page
+ * sends from its own `onopen`: the key, or `account: true`.
  */
 export function createRemoteTransport({ serverUrl, machineId, accessKey }: RemoteTransportOptions): HostTransport {
   const server = new URL(serverUrl)
@@ -41,9 +45,11 @@ export function createRemoteTransport({ serverUrl, machineId, accessKey }: Remot
   }
   const http = `${server.origin}${server.pathname.replace(/\/$/, '')}${machinePathPrefix(machineId)}`
   const ws = http.replace(/^http/, 'ws')
-  const auth = JSON.stringify({ type: 'auth', key: accessKey } satisfies SocketAuthMessage)
+  const message: SocketAuthMessage = accessKey ? { type: 'auth', key: accessKey } : { type: 'auth', account: true }
+  const auth = JSON.stringify(message)
   return {
     request: (path, init) => {
+      if (!accessKey) return fetch(`${http}${path}`, { ...init, credentials: 'include' })
       const headers = new Headers(init.headers)
       headers.set(ACCESS_KEY_HEADER, accessKey)
       return fetch(`${http}${path}`, { ...init, headers })

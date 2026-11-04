@@ -3,7 +3,6 @@ import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { machinesQuery } from '../../lib/accountMachines'
 import { sessionQuery } from '../../lib/auth'
-import { useMachines } from '../../lib/machines'
 import { AccountMenu } from '../account/AccountMenu'
 import { ConnectMachineDialog } from './ConnectMachineDialog'
 import { MachineRow } from './MachineRow'
@@ -35,7 +34,6 @@ function Loading() {
 
 function AccountMachines({ userId }: { userId: string }) {
   const list = useQuery(machinesQuery(userId))
-  const saved = useMachines()
 
   if (list.isPending) return <Loading />
   if (list.isError) {
@@ -60,12 +58,7 @@ function AccountMachines({ userId }: { userId: string }) {
   return (
     <ul className="divide-y divide-line rounded-md border border-line">
       {machines.map((machine) => (
-        <MachineRow
-          key={machine.machineId}
-          machine={machine}
-          userId={userId}
-          hasKey={saved.some((m) => m.id === machine.machineId)}
-        />
+        <MachineRow key={machine.machineId} machine={machine} userId={userId} />
       ))}
     </ul>
   )

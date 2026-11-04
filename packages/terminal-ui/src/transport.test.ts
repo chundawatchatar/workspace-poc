@@ -26,11 +26,37 @@ function fakeTransport() {
 let disconnect = () => {}
 const servers: Bun.Server<unknown>[] = []
 const RealWebSocket = globalThis.WebSocket
+const realFetch = globalThis.fetch
 afterEach(() => {
   disconnect()
   for (const server of servers.splice(0)) server.stop(true)
   globalThis.WebSocket = RealWebSocket
+  globalThis.fetch = realFetch
 })
+
+/** A server that records each request's URL and headers and each socket message, resolving once `count` arrive. */
+function recordingServer(count: number) {
+  const seen: { url: string; headers: Record<string, string> }[] = []
+  const messages: string[] = []
+  const { promise: received, resolve } = Promise.withResolvers<void>()
+  const server = Bun.serve({
+    port: 0,
+    hostname: 'localhost',
+    fetch(req, srv) {
+      seen.push({ url: req.url, headers: Object.fromEntries(req.headers) })
+      if (srv.upgrade(req)) return
+      return new Response('ok')
+    },
+    websocket: {
+      message(_ws, message) {
+        messages.push(String(message))
+        if (messages.length === count) resolve()
+      },
+    },
+  })
+  servers.push(server)
+  return { base: `http://localhost:${server.port}`, seen, messages, received }
+}
 
 describe('the page transport', () => {
   test('carries the events socket and every API call, and its cleanup stops reconnecting', async () => {
@@ -73,26 +99,8 @@ describe('the page transport', () => {
   test('the remote transport goes through the machine prefix and carries the key in a header or the first message', async () => {
     const machineId = 'mac/1 a'
     const accessKey = 'secret-key'
-    const seen: { url: string; headers: Record<string, string> }[] = []
-    const messages: string[] = []
-    const { promise: twoMessages, resolve } = Promise.withResolvers<void>()
-    const server = Bun.serve({
-      port: 0,
-      hostname: 'localhost',
-      fetch(req, srv) {
-        seen.push({ url: req.url, headers: Object.fromEntries(req.headers) })
-        if (srv.upgrade(req)) return
-        return new Response('ok')
-      },
-      websocket: {
-        message(_ws, message) {
-          messages.push(String(message))
-          if (messages.length === 2) resolve()
-        },
-      },
-    })
-    servers.push(server)
-    const base = `http://localhost:${server.port}`
+    const { base, seen, messages, received: twoMessages } = recordingServer(2)
+    const port = new URL(base).port
     const transport = createRemoteTransport({ serverUrl: `${base}/`, machineId, accessKey })
 
     await transport.request('/api/git/status?cwd=%2Ftmp', { headers: { 'content-type': 'application/json' } })
@@ -101,12 +109,33 @@ describe('the page transport', () => {
     expect(seen[0].headers[ACCESS_KEY_HEADER]).toBe(accessKey)
 
     const socket = transport.openSocket('/ws/events')
-    expect(socket.url).toBe(`ws://localhost:${server.port}/m/mac%2F1%20a/ws/events`)
+    expect(socket.url).toBe(`ws://localhost:${port}/m/mac%2F1%20a/ws/events`)
     socket.onopen = () => socket.send('from the page')
     await twoMessages
     socket.close()
     expect(messages).toEqual([JSON.stringify({ type: 'auth', key: accessKey }), 'from the page'])
     expect(seen.every((s) => !s.url.includes(accessKey))).toBe(true)
+  })
+
+  test('without a key, the remote transport sends no key, includes credentials and asks for the account', async () => {
+    const { base, seen, messages, received } = recordingServer(2)
+    const inits: RequestInit[] = []
+    globalThis.fetch = ((input: RequestInfo | URL, init: RequestInit = {}) => {
+      inits.push(init)
+      return realFetch(input, init)
+    }) as typeof fetch
+    const transport = createRemoteTransport({ serverUrl: base, machineId: 'm1' })
+
+    await transport.request('/api/git/status', { headers: { 'content-type': 'application/json' } })
+    expect(seen[0].headers[ACCESS_KEY_HEADER]).toBeUndefined()
+    expect(seen[0].headers['content-type']).toBe('application/json')
+    expect(inits[0].credentials).toBe('include')
+
+    const socket = transport.openSocket('/ws/events')
+    socket.onopen = () => socket.send('from the page')
+    await received
+    socket.close()
+    expect(messages).toEqual([JSON.stringify({ type: 'auth', account: true }), 'from the page'])
   })
 
   test('the remote transport uses wss:// for an https server and rejects other schemes', () => {

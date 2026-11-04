@@ -9,25 +9,13 @@ import { renameMachineFormOptions, renameMachineMutation, unlinkMachineMutation 
 import { shownError, submitOnce } from '../../lib/authForms'
 import { focusClass, linkClass } from '../Centered'
 
-/** What a machine page says when this browser holds no key for the machine. */
-export const NO_KEY_HINT = 'Open the connect link on this device'
-
 const smallButtonClass = `px-1.5 py-0.5 text-xs text-dim hover:bg-raised hover:text-ink active:bg-line ${focusClass}`
 
 /**
- * One of the account's machines: its name and online state, an Open link when this browser holds its key, and
- * rename and unlink.
+ * One of the account's machines: its name and online state, an Open link, and rename and unlink. The account opens
+ * it from any browser, so every row can be opened.
  */
-export function MachineRow({
-  machine,
-  userId,
-  hasKey,
-}: {
-  machine: ServerMachine
-  userId: string
-  /** True when this browser holds the machine's access key, so it can be opened here. */
-  hasKey: boolean
-}) {
+export function MachineRow({ machine, userId }: { machine: ServerMachine; userId: string }) {
   const queryClient = useQueryClient()
   const [renaming, setRenaming] = useState(false)
   const unlink = useMutation(unlinkMachineMutation(queryClient, userId))
@@ -47,18 +35,14 @@ export function MachineRow({
             <span aria-hidden className={`size-1.5 rounded-full ${online ? 'bg-good' : 'bg-faint'}`} />
             {online ? 'Online' : 'Offline'}
           </span>
-          {hasKey ? (
-            <Link
-              to="/m/$machineId"
-              params={{ machineId }}
-              aria-label={`Open ${name}`}
-              className={`text-xs ${linkClass}`}
-            >
-              Open
-            </Link>
-          ) : (
-            <span className="text-xs text-faint">{NO_KEY_HINT}</span>
-          )}
+          <Link
+            to="/m/$machineId"
+            params={{ machineId }}
+            aria-label={`Open ${name}`}
+            className={`text-xs ${linkClass}`}
+          >
+            Open
+          </Link>
           <button
             type="button"
             aria-label={`Rename ${name}`}
