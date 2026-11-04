@@ -29,6 +29,7 @@ import { AccessKeyRepository } from './modules/access/access.repository'
 import { AccessKeys, machineIdFromSecret } from './modules/access/access.service'
 import { EventHub } from './modules/events/events.service'
 import type { LayoutRepository } from './modules/layout/layout.repository'
+import { LinkedAccountRepository } from './modules/remote-access/linked-account.repository'
 import { RemoteAccessRepository } from './modules/remote-access/remote-access.repository'
 import { RemoteAccessService } from './modules/remote-access/remote-access.service'
 import { TunnelClient } from './modules/tunnel/tunnel.service'
@@ -142,6 +143,7 @@ beforeEach(() => {
   )
   remoteAccess = new RemoteAccessService({
     repository: new RemoteAccessRepository(settingsFile),
+    linkedAccounts: new LinkedAccountRepository(join(dir, 'linked-account.json')),
     secretFile,
     keysFile,
     handle: async (request, principal) => app.fetch(request, tunnelEnv(principal)),
@@ -405,28 +407,24 @@ describe('tunneled sockets', () => {
     expect(reachesChannel).toEqual([])
   })
 
-  test('the remote access routes answer 403 through the tunnel and leave the setting and tunnel alone, but work locally', async () => {
+  test('every remote access route answers 403 through the tunnel and leaves the setting and tunnel alone, but works locally', async () => {
     const conn = await welcomed()
     const saved = readFileSync(settingsFile, 'utf8')
     const { status, update } = routes.remoteAccess
-    send(conn, {
-      type: 'http.request',
-      id: 1,
-      method: status.method,
-      path: status.path,
-      headers: [[ACCESS_KEY_HEADER, key]],
-    })
-    send(conn, {
-      type: 'http.request',
-      id: 2,
-      method: update.method,
-      path: update.path,
-      headers: [[ACCESS_KEY_HEADER, key]],
-    })
+    const endpoints = Object.values(routes.remoteAccess)
+    for (const [index, endpoint] of endpoints.entries()) {
+      send(conn, {
+        type: 'http.request',
+        id: index + 1,
+        method: endpoint.method,
+        path: endpoint.path,
+        headers: [[ACCESS_KEY_HEADER, key]],
+      })
+    }
     const response = (id: number) => conn.frames.find((f) => f.type === 'http.response' && f.id === id)
-    await until(() => response(1) !== undefined && response(2) !== undefined)
-    expect(response(1)).toMatchObject({ status: 403 })
-    expect(response(2)).toMatchObject({ status: 403 })
+    await until(() => endpoints.every((_, index) => response(index + 1) !== undefined))
+    for (const [index] of endpoints.entries()) expect(response(index + 1)).toMatchObject({ status: 403 })
+    expect(conn.frames.some((f) => f.type.startsWith('enroll.'))).toBe(false)
     expect(readFileSync(settingsFile, 'utf8')).toBe(saved)
     expect(clients).toHaveLength(1)
     expect(clients[0]?.status).toBe('connected')
@@ -436,11 +434,13 @@ describe('tunneled sockets', () => {
     expect(remoteAccessStatus.parse(JSON.parse(text))).toEqual({
       enabled: true,
       serverUrl: `ws://127.0.0.1:${server.port}`,
+      serverUrlIsDefault: false,
       clientUrl: 'https://orch.example',
       serverUrlFromEnv: false,
       clientUrlFromEnv: false,
       machineId: machineIdFromSecret(secret),
       tunnel: 'connected',
+      linkedAccount: null,
     })
     for (const hidden of [
       secret,

@@ -3,11 +3,11 @@ import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import { createRouter } from '../../lib/createRouter'
 import { tunnelPrincipal } from '../../lib/principal'
-import { InvalidRemoteAccessSetting, type RemoteAccessService } from './remote-access.service'
+import { InvalidRemoteAccessSetting, LinkError, type RemoteAccessService } from './remote-access.service'
 
 /** What the remote access routes need from the host. */
 export interface RemoteAccessDeps {
-  remoteAccess: Pick<RemoteAccessService, 'status' | 'update'>
+  remoteAccess: Pick<RemoteAccessService, 'status' | 'update' | 'previewLink' | 'link' | 'unlink'>
 }
 
 /**
@@ -36,6 +36,19 @@ export function createRemoteAccessRoutes({ remoteAccess }: RemoteAccessDeps) {
           })
         }
       },
+      previewLink: (input) => linking(() => remoteAccess.previewLink(input)),
+      link: (input) => linking(() => remoteAccess.link(input)),
+      unlink: async () => remoteAccess.unlink(),
     }),
   )
+}
+
+/** Runs a link step, answering a `LinkError` with its status and message. */
+async function linking<T>(step: () => Promise<T>): Promise<T> {
+  try {
+    return await step()
+  } catch (error) {
+    if (error instanceof LinkError) throw new HTTPException(error.status, { message: error.message })
+    throw error
+  }
 }

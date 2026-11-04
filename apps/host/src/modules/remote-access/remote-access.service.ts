@@ -1,5 +1,13 @@
 import { existsSync } from 'node:fs'
-import type { RemoteAccessStatus, UpdateRemoteAccessBody } from '@orch/shared'
+import { hostname } from 'node:os'
+import type {
+  LinkBody,
+  LinkedAccount,
+  PreviewLinkBody,
+  PreviewLinkResponse,
+  RemoteAccessStatus,
+  UpdateRemoteAccessBody,
+} from '@orch/shared'
 import { AccessKeyRepository } from '../access/access.repository'
 import {
   AccessKeys,
@@ -11,10 +19,24 @@ import {
   type RemoteAccess,
 } from '../access/access.service'
 import { loadOrCreateMachineSecret } from '../tunnel/tunnel.repository'
-import { parseServerUrl, TunnelClient, type TunnelClientOptions } from '../tunnel/tunnel.service'
+import {
+  type EnrollAnswer,
+  type EnrollRequest,
+  parseServerUrl,
+  TunnelClient,
+  type TunnelClientOptions,
+} from '../tunnel/tunnel.service'
 import type { OpenSocket } from '../tunnel/tunnel-channels.service'
 import type { TunnelHandler } from '../tunnel/tunnel-http.service'
+import type { LinkedAccountRepository } from './linked-account.repository'
 import type { RemoteAccessRepository, RemoteAccessSettings } from './remote-access.repository'
+
+/**
+ * The server address used when neither `SERVER_URL` nor a saved one is set.
+ * `orch.example.com` is a reserved placeholder: replace it with the real
+ * server's address before launch.
+ */
+export const DEFAULT_SERVER_URL = 'wss://orch.example.com'
 
 /** The environment variables that override the saved setting. Empty values count as unset. */
 export interface RemoteAccessEnv {
@@ -23,15 +45,19 @@ export interface RemoteAccessEnv {
 }
 
 /** The parts of a `TunnelClient` the service drives. */
-export type Tunnel = Pick<TunnelClient, 'start' | 'stop' | 'closeChannels' | 'status'>
+export type Tunnel = Pick<TunnelClient, 'start' | 'stop' | 'closeChannels' | 'status' | 'enroll'>
 
 export interface RemoteAccessServiceOptions {
   repository: RemoteAccessRepository
+  /** Where the linked account is kept. */
+  linkedAccounts: LinkedAccountRepository
   /** The machine secret file, created the first time remote access is needed. */
   secretFile: string
   /** The access keys file. */
   keysFile: string
   env?: RemoteAccessEnv
+  /** The server address used when none is set. Defaults to `DEFAULT_SERVER_URL`; tests pass a loopback one. */
+  defaultServerUrl?: string
   /** Answers each tunneled request. Read only once a tunnel is open, so it may close over the app built later. */
   handle: TunnelHandler
   /** Opens each tunneled WebSocket. Read only once a tunnel is open, like `handle`. */
@@ -43,28 +69,56 @@ export interface RemoteAccessServiceOptions {
 /** A setting the host refuses, such as a server address `parseServerUrl` rejects. Its message is meant for the user. */
 export class InvalidRemoteAccessSetting extends Error {}
 
-/**
- * The client address connect links are built on: `CLIENT_URL` if it is valid,
- * else the saved client address, else the one derived from the server address
- * in use (`SERVER_URL`, else the saved one). Null when none of them is known.
- */
-export function linkClientUrl(env: RemoteAccessEnv, saved: RemoteAccessSettings | null): string | null {
-  const fromEnv = env.CLIENT_URL ? parseClientUrl(env.CLIENT_URL) : null
-  if (fromEnv) return fromEnv
-  if (saved?.clientUrl) return saved.clientUrl
-  const serverUrl = env.SERVER_URL || saved?.serverUrl
-  return serverUrl ? clientUrlFromServerUrl(serverUrl) : null
+/** Why linking with a key failed, with the HTTP status to answer. Its message is meant for the user and never holds the key. */
+export class LinkError extends Error {
+  constructor(
+    readonly status: 400 | 409 | 429 | 502 | 503,
+    message: string,
+  ) {
+    super(message)
+  }
+}
+
+/** The name a link gives this machine: its host name, trimmed and cut to 64 characters, or `this machine`. */
+export function hostMachineName(name = hostname()): string {
+  return name.trim().slice(0, 64).trim() || 'this machine'
 }
 
 /**
+ * The client address connect links are built on: `CLIENT_URL` if it is valid,
+ * else the saved client address, else the one derived from the server address
+ * in use (`SERVER_URL`, else the saved one, else `defaultServerUrl`). Null when
+ * that address is not a `ws(s)://` one.
+ */
+export function linkClientUrl(
+  env: RemoteAccessEnv,
+  saved: RemoteAccessSettings | null,
+  defaultServerUrl = DEFAULT_SERVER_URL,
+): string | null {
+  const fromEnv = env.CLIENT_URL ? parseClientUrl(env.CLIENT_URL) : null
+  if (fromEnv) return fromEnv
+  if (saved?.clientUrl) return saved.clientUrl
+  return clientUrlFromServerUrl(env.SERVER_URL || saved?.serverUrl || defaultServerUrl)
+}
+
+/** The status and message each `enroll.failed` code answers with. */
+const ENROLL_FAILURES = {
+  invalid_key: [400, 'This key is unknown, used or expired'],
+  rate_limited: [429, 'Too many tries. Wait a minute, then try again'],
+  unavailable: [503, 'The server could not check the key. Try again later'],
+} as const
+
+/**
  * Owns remote access while the host runs: the saved setting, the machine
- * secret, the access keys and the tunnel. `SERVER_URL` and `CLIENT_URL`
+ * secret, the access keys, the tunnel and the linked account. `SERVER_URL` and `CLIENT_URL`
  * override the saved addresses, and `SERVER_URL` turns the tunnel on at start
  * whatever the saved flag says. Nothing is read from disk until `start()`.
  */
 export class RemoteAccessService {
   private readonly env: RemoteAccessEnv
+  private readonly defaultServerUrl: string
   private saved: RemoteAccessSettings | null = null
+  private linked: LinkedAccount | null = null
   private secret: string | null = null
   private keys: AccessKeys | null = null
   private tunnel: Tunnel | null = null
@@ -73,6 +127,7 @@ export class RemoteAccessService {
 
   constructor(private readonly options: RemoteAccessServiceOptions) {
     this.env = { SERVER_URL: options.env?.SERVER_URL || undefined, CLIENT_URL: options.env?.CLIENT_URL || undefined }
+    this.defaultServerUrl = options.defaultServerUrl ?? DEFAULT_SERVER_URL
   }
 
   /**
@@ -85,6 +140,11 @@ export class RemoteAccessService {
       this.saved = this.options.repository.load()
     } catch (error) {
       console.error(`remote access is off: ${error instanceof Error ? error.message : 'its setting could not be read'}`)
+    }
+    try {
+      this.linked = this.options.linkedAccounts.load()
+    } catch (error) {
+      console.error(`no linked account: ${error instanceof Error ? error.message : 'it could not be read'}`)
     }
     if (this.env.CLIENT_URL && !parseClientUrl(this.env.CLIENT_URL)) {
       console.error('CLIENT_URL must be an http:// or https:// URL. Ignoring it')
@@ -119,11 +179,13 @@ export class RemoteAccessService {
     return {
       enabled: this.tunnel !== null,
       serverUrl: this.serverUrl(),
+      serverUrlIsDefault: this.serverUrlIsDefault(),
       clientUrl: this.env.CLIENT_URL ?? this.saved?.clientUrl ?? null,
       serverUrlFromEnv: this.env.SERVER_URL !== undefined,
       clientUrlFromEnv: this.env.CLIENT_URL !== undefined,
       machineId: this.machineId(),
       tunnel: this.tunnel?.status ?? 'off',
+      linkedAccount: this.linked,
     }
   }
 
@@ -143,6 +205,56 @@ export class RemoteAccessService {
   }
 
   /**
+   * Asks the server which account `key` belongs to, over the open tunnel,
+   * without using the key or saving anything. Throws `LinkError`.
+   */
+  async previewLink({ key }: PreviewLinkBody): Promise<PreviewLinkResponse> {
+    const tunnel = this.linkTunnel()
+    const answer = await this.enroll(tunnel, { type: 'enroll.preview', key })
+    if (answer.type !== 'enroll.previewed')
+      throw new LinkError(502, 'The server sent an answer the host does not expect')
+    return {
+      serverUrl: this.serverUrl(),
+      serverUrlIsDefault: this.serverUrlIsDefault(),
+      account: answer.account,
+      fingerprint: answer.fingerprint,
+      expiresAt: answer.expiresAt,
+    }
+  }
+
+  /**
+   * Redeems `key` over the open tunnel and remembers the account, once the
+   * server confirms it linked this machine's own id. `serverUrl` must be the
+   * address in use, so a key is only ever used with the server the user
+   * confirmed. Throws `LinkError` before anything is saved.
+   */
+  async link({ key, serverUrl }: LinkBody): Promise<RemoteAccessStatus> {
+    if (this.linked) throw new LinkError(409, 'Unlink first')
+    const inUse = this.serverUrl()
+    if (serverUrl !== inUse) throw new LinkError(409, 'The server address changed. Preview the key again')
+    const tunnel = this.linkTunnel()
+    const answer = await this.enroll(tunnel, { type: 'enroll.redeem', key, name: hostMachineName() })
+    if (answer.type !== 'enroll.redeemed')
+      throw new LinkError(502, 'The server sent an answer the host does not expect')
+    if (answer.machineId !== this.machineId()) {
+      throw new LinkError(502, 'The server linked another machine id than this host has. Nothing was saved')
+    }
+    // Linked while this call waited: keep the first account rather than overwrite it.
+    if (this.linked) throw new LinkError(409, 'Unlink first')
+    const account = { ...answer.account, serverUrl: inUse, linkedAt: new Date().toISOString() }
+    this.options.linkedAccounts.save(account)
+    this.linked = account
+    return this.status()
+  }
+
+  /** Forgets the linked account on this machine. The server still lists the machine until it is unlinked there. */
+  unlink(): RemoteAccessStatus {
+    this.options.linkedAccounts.remove()
+    this.linked = null
+    return this.status()
+  }
+
+  /**
    * What rotating the key needs, or null when no valid server address is known
    * at all. The client address follows the setting as it is now.
    */
@@ -151,7 +263,7 @@ export class RemoteAccessService {
     const keys = this.loadKeys()
     const machineId = this.machineId()
     if (!keys || !machineId) return null
-    return { keys, machineId, clientUrl: linkClientUrl(this.env, this.saved) }
+    return { keys, machineId, clientUrl: linkClientUrl(this.env, this.saved, this.defaultServerUrl) }
   }
 
   /** Closes the tunnel and writes pending key use, for shutdown. */
@@ -173,7 +285,6 @@ export class RemoteAccessService {
           'The server address must be wss://<host>, or ws:// on 127.0.0.1, [::1] or localhost',
         )
       }
-      if (enabled && !trimmed) throw new InvalidRemoteAccessSetting('Enter the server address first')
       savedServer = trimmed || null
     }
     let savedClient = this.saved?.clientUrl ?? null
@@ -233,7 +344,7 @@ export class RemoteAccessService {
       throw new Error(`the access key could not be saved (${error instanceof Error ? error.message : error})`)
     }
     const machineId = machineIdFromSecret(secret)
-    const clientUrl = linkClientUrl(this.env, this.saved)
+    const clientUrl = linkClientUrl(this.env, this.saved, this.defaultServerUrl)
     const target = clientUrl
       ? `Connect link: ${connectLink(clientUrl, machineId, key)}`
       : `Machine id: ${machineId}\nAccess key: ${key}`
@@ -271,12 +382,50 @@ export class RemoteAccessService {
     return this.secret ? machineIdFromSecret(this.secret) : null
   }
 
-  private serverUrl(): string | null {
-    return this.env.SERVER_URL ?? this.saved?.serverUrl ?? null
+  /**
+   * The tunnel to link through: there must be no linked account yet and a
+   * connected tunnel. A tunnel is never opened just for this, since opening
+   * one creates the access key and serves remote requests.
+   */
+  private linkTunnel(): Tunnel {
+    if (this.linked) throw new LinkError(409, 'Unlink first')
+    const tunnel = this.tunnel
+    if (tunnel?.status !== 'connected') {
+      throw new LinkError(409, 'Turn remote access on and wait until it is connected')
+    }
+    return tunnel
+  }
+
+  /** Sends an enrollment frame, turning `enroll.failed`, a timeout and a lost tunnel into `LinkError`s. */
+  private async enroll(
+    tunnel: Tunnel,
+    request: EnrollRequest,
+  ): Promise<Exclude<EnrollAnswer, { type: 'enroll.failed' }>> {
+    let answer: EnrollAnswer
+    try {
+      answer = await tunnel.enroll(request)
+    } catch {
+      throw new LinkError(503, 'The server did not answer. Check the connection and try again')
+    }
+    if (answer.type === 'enroll.failed') {
+      const [status, message] = ENROLL_FAILURES[answer.code]
+      throw new LinkError(status, message)
+    }
+    return answer
+  }
+
+  /** The server address in use: `SERVER_URL`, else the saved one, else the default. */
+  private serverUrl(): string {
+    return this.env.SERVER_URL ?? this.saved?.serverUrl ?? this.defaultServerUrl
+  }
+
+  /** True when the address in use is the default's, compared as tunnel URLs. */
+  private serverUrlIsDefault(): boolean {
+    const inUse = this.serverTunnelUrl()
+    return inUse !== null && inUse === parseServerUrl(this.defaultServerUrl)
   }
 
   private serverTunnelUrl(): string | null {
-    const serverUrl = this.serverUrl()
-    return serverUrl ? parseServerUrl(serverUrl) : null
+    return parseServerUrl(this.serverUrl())
   }
 }

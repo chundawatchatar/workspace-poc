@@ -47,6 +47,16 @@ export {
   socketAuthMessage,
 } from './remote'
 export {
+  type LinkAccount,
+  type LinkBody,
+  type LinkedAccount,
+  linkAccount,
+  linkBody,
+  linkedAccount,
+  type PreviewLinkBody,
+  type PreviewLinkResponse,
+  previewLinkBody,
+  previewLinkResponse,
   type RemoteAccessStatus,
   remoteAccessStatus,
   type TunnelState,

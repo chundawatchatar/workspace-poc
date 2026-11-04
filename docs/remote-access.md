@@ -3,7 +3,7 @@
 How to reach this machine through the cloud server (`apps/server`) and the global
 app (`apps/client`), all on one computer. This is the development setup: plain
 `ws://` and `http://` on loopback, with no TLS. Docker is needed only for the
-database and email services (section 5). What a real deploy adds is listed at
+database and email services (section 6). What a real deploy adds is listed at
 the end.
 
 ## 1. Run the server and the client
@@ -34,7 +34,7 @@ needed. Without a build it only relays, and logs that it found no client build.
 
 With a `.env` copied from `.env.example`, `DATABASE_URL` is set, so the server
 turns accounts on and refuses to start until Postgres is up and migrated:
-`bun run db:up`, then `bun run db:migrate` (section 5). Unset `DATABASE_URL`
+`bun run db:up`, then `bun run db:migrate` (section 6). Unset `DATABASE_URL`
 (or leave it out of `.env`) to run the relay alone. Either way,
 `curl -s http://127.0.0.1:4600/api/health` answers `{"ok":true}`. How to work
 on accounts is in [accounts](accounts.md).
@@ -49,7 +49,8 @@ command palette. Fill in:
   client from `bun run dev:client`. Leave it empty when the server serves the
   client build.
 
-Then turn the switch on. The dialog shows whether the tunnel is connected.
+Then turn the switch on. The dialog shows whether the tunnel is connected. With
+no server address set, the host uses its built-in default (section 5).
 
 The host accepts `ws://` only for a loopback host (`127.0.0.1`, `[::1]` or
 `localhost`). Any other server needs `wss://`.
@@ -71,6 +72,8 @@ The host keeps its remote access files in `apps/host/.data/` (gitignored):
   from it. Deleting it gives the machine a new id, and old connect links stop
   working.
 - `access-keys.json`: the access keys, as hashes only.
+- `linked-account.json`: the account this machine is linked to, if any
+  (section 5).
 
 ## 3. Open it from a browser
 
@@ -109,7 +112,39 @@ Both print a new link. With a running host that has remote access, both also
 close every session that used the old key. With the host stopped, the script
 rewrites `access-keys.json`, and the host uses the new key at its next start.
 
-## 5. Database and email
+## 5. Link the machine to an account
+
+A signed-in user can link this machine to their account with a one-time
+enrollment key instead of a connect link. Create the key on the client's home
+page, then, on this machine, open "Remote access…", paste it into "Link key"
+and press "Preview". Linking needs remote access on and the tunnel connected,
+since the key is checked over the tunnel; the host never opens a tunnel just
+to check one.
+
+The server address the key is checked with is the host's own: `SERVER_URL`,
+else the saved "Server address", else the built-in default
+(`DEFAULT_SERVER_URL` in `apps/host/src/modules/remote-access/remote-access.service.ts`,
+a placeholder until there is a real deploy). Nothing in the key can change it,
+and the host refuses a link when the address changed after the preview.
+
+Before anything is used, the dialog shows three values to check:
+
+- the server address, with a warning when it isn't the built-in default. Link
+  only to a server you run or trust;
+- the account the key belongs to: its name and masked email;
+- the key's fingerprint, its last 4 characters, which the client showed when it
+  created the key.
+
+"Link" redeems the key, so it can't be used again. The host then saves the
+account (name, masked email, server address and when it was linked, never the
+key) in `apps/host/.data/linked-account.json`, and the dialog shows it with an
+"Unlink" button. A linked machine must unlink before it links again.
+
+"Unlink" deletes that file, so this machine forgets the account. It is local
+only: the server still lists the machine until you unlink it from the client's
+home page. A linked account grants no access to the machine yet.
+
+## 6. Database and email
 
 `apps/server` uses Postgres for accounts and sends email over SMTP. For development, `compose.yaml` at the repo root
 runs both locally: Postgres 17 and [Mailpit](https://mailpit.axllent.org/), an SMTP server that keeps every email in
@@ -137,7 +172,7 @@ exits with a message naming the problem when one is missing, the database is unr
 
 Migrations, Better Auth, sessions and reading the emails are covered in [accounts](accounts.md).
 
-## 6. What changes for a real deploy
+## 7. What changes for a real deploy
 
 This guide stops at one computer. The next phase ("Later: deploy" in the
 factory backlog) must handle:

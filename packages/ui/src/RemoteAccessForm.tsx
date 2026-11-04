@@ -2,6 +2,7 @@ import type { RemoteAccessStatus } from '@orch/shared'
 import { useState } from 'react'
 import { Check, Copy, Link } from './icons'
 import { Modal } from './Modal'
+import { RemoteAccessLink, type RemoteAccessLinkProps } from './RemoteAccessLink'
 
 /** How the status dot is coloured. */
 export type RemoteAccessTone = 'good' | 'warn' | 'bad' | 'off'
@@ -33,16 +34,19 @@ interface Props {
   onNewLink: () => void
   /** The connect link from the last `onNewLink`. Null means none is shown. */
   link: string | null
+  /** Linking this machine to an account with a key. The linked account and `busy` come from this form's props. */
+  accountLink: Omit<RemoteAccessLinkProps, 'linkedAccount' | 'busy'>
   error: string | null
-  /** True while a save or a new link is on its way, so the buttons wait. */
+  /** True while a save, a new link or a link step is on its way, so the buttons wait. */
   busy: boolean
   onClose: () => void
 }
 
 /**
  * The remote access setting: the server and client addresses, an on/off
- * switch, where the tunnel stands, and a button for a fresh connect link. An
- * address set by the host's environment is shown read-only.
+ * switch, where the tunnel stands, a button for a fresh connect link, and the
+ * account this machine is linked to. An address set by the host's environment
+ * is shown read-only.
  */
 export function RemoteAccessForm(props: Props) {
   const { status, link, error, busy } = props
@@ -125,6 +129,8 @@ export function RemoteAccessForm(props: Props) {
           />
           {status?.clientUrlFromEnv && <span className="mt-1 block text-xs text-faint">Set by CLIENT_URL.</span>}
         </label>
+
+        {status && <RemoteAccessLink {...props.accountLink} linkedAccount={status.linkedAccount} busy={busy} />}
 
         {link && (
           <div>

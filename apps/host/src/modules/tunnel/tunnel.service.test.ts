@@ -266,6 +266,42 @@ describe('TunnelClient', () => {
     expect(conns[0]?.closed?.code).toBe(1000)
   })
 
+  test('enroll resolves each request with its own answer, and rejects before welcome, on timeout and on a lost tunnel', async () => {
+    const key = `oek_${'k'.repeat(43)}`
+    const account = { name: 'Ada', maskedEmail: 'a***@example.com' }
+    mode = 'mute'
+    const client = start({ timings: { ...timings, welcomeTimeoutMs: 2000, enrollTimeoutMs: 60 } })
+    await until(() => conns[0]?.frames.some((f) => f.type === 'hello') ?? false)
+    await expect(client.enroll({ type: 'enroll.preview', key })).rejects.toThrow('not connected')
+
+    const [conn] = conns
+    if (!conn) throw new Error('no connection')
+    send(conn, { type: 'welcome', machineId: 'm' })
+    await until(() => client.status === 'connected')
+    const preview = client.enroll({ type: 'enroll.preview', key })
+    const redeem = client.enroll({ type: 'enroll.redeem', key, name: 'box' })
+    const sent = () => conn.frames.filter((f) => f.type === 'enroll.preview' || f.type === 'enroll.redeem')
+    await until(() => sent().length === 2)
+    const [p, r] = sent()
+    if (p?.type !== 'enroll.preview' || r?.type !== 'enroll.redeem') throw new Error('frames out of order')
+    expect(p).toEqual({ type: 'enroll.preview', id: p.id, key })
+    expect(r).toEqual({ type: 'enroll.redeem', id: r.id, key, name: 'box' })
+    expect(p.id).not.toBe(r.id)
+    // An answer of the wrong kind for the id is ignored; the right one resolves it.
+    send(conn, { type: 'enroll.redeemed', id: p.id, machineId: 'm', account })
+    const expiresAt = new Date(Date.now() + 60_000).toISOString()
+    send(conn, { type: 'enroll.previewed', id: p.id, account, fingerprint: 'kkkk', expiresAt })
+    send(conn, { type: 'enroll.failed', id: r.id, code: 'rate_limited' })
+    expect(await preview).toEqual({ type: 'enroll.previewed', id: p.id, account, fingerprint: 'kkkk', expiresAt })
+    expect(await redeem).toEqual({ type: 'enroll.failed', id: r.id, code: 'rate_limited' })
+
+    await expect(client.enroll({ type: 'enroll.preview', key })).rejects.toThrow('did not answer')
+    const lost = client.enroll({ type: 'enroll.preview', key })
+    conn.ws.close(1000)
+    await expect(lost).rejects.toThrow('closed')
+    expect(logs.join('\n')).not.toContain(key)
+  })
+
   test('drops the requests of a lost connection, and answers a refused ws.open with a close', async () => {
     let signal: AbortSignal | undefined
     let cancelled = false
