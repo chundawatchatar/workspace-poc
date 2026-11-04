@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { schema } from '@orch/domain'
 import { createTestDomain, type TestDomain } from '@orch/domain/testing'
-import type { ServerMachine } from '@orch/shared'
+import { type CreateEnrollmentResponse, enrollmentKeySchema, type ServerMachine } from '@orch/shared'
 import { eq } from 'drizzle-orm'
 import { accountsTestApp, cookiePair } from '../auth/auth.testing'
 import { type MachineConnection, machineIdFromProof } from '../tunnel/tunnel.service'
@@ -10,10 +10,11 @@ import { MachinesService } from './machines.service'
 
 let domain: TestDomain
 let ctx: ReturnType<typeof accountsTestApp>
+const NOW = new Date('2026-03-01T12:00:00.000Z')
 
 beforeAll(async () => {
   domain = await createTestDomain({ log: () => {} })
-  ctx = accountsTestApp(domain, '10.5.0')
+  ctx = accountsTestApp(domain, '10.5.0', { now: () => NOW })
 })
 
 afterAll(async () => {
@@ -198,5 +199,38 @@ describe('machines module', () => {
     })
     expect(await errorOf(plain)).toEqual({ status: 415, code: 'unsupported_media_type' })
     expect(await rowsOf(machineId)).toEqual([])
+  })
+
+  test('creates an enrollment key that only its hash is stored for, and refuses a body or no session', async () => {
+    const ada = await signedIn()
+    const create = (body: unknown, user: Partial<User> = ada) =>
+      ctx.client.call('POST', '/api/machines/enrollments', { ip: ada.ip, ...user, body })
+    const response = await create({})
+    expect(response.status).toBe(200)
+    const created = (await response.json()) as CreateEnrollmentResponse
+    expect(enrollmentKeySchema.safeParse(created.key).success).toBe(true)
+    expect(Buffer.from(created.key.slice('oek_'.length), 'base64url')).toHaveLength(32)
+    expect(created.fingerprint).toBe(created.key.slice(-4))
+    expect(created.expiresAt).toBe(new Date(NOW.getTime() + 15 * 60_000).toISOString())
+    const other = (await (await create({})).json()) as CreateEnrollmentResponse
+    expect(other.key).not.toBe(created.key)
+
+    const enrollmentsOf = () =>
+      domain
+        .skipAuthorization('test: read enrollment rows')
+        .select()
+        .from(schema.machineEnrollments)
+        .where(eq(schema.machineEnrollments.userId, ada.userId))
+    const rows = await enrollmentsOf()
+    expect(rows).toHaveLength(2)
+    const row = rows.find((r) => r.keyHash === createHash('sha256').update(created.key).digest('hex'))
+    expect(row).toMatchObject({ createdAt: NOW, usedAt: null })
+    expect(Object.values(row ?? {})).not.toContain(created.key)
+
+    for (const body of [{ key: created.key }, { name: 'Laptop' }]) {
+      expect(await errorOf(await create(body))).toEqual({ status: 400, code: 'bad_request' })
+    }
+    expect(await errorOf(await create({}, { cookie: undefined }))).toEqual({ status: 401, code: 'unauthorized' })
+    expect(await enrollmentsOf()).toHaveLength(2)
   })
 })

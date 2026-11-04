@@ -17,6 +17,8 @@ export interface ConnectionLimiterDeps {
   tunnelPerIp?: BucketLimit
   /** Rejected access keys per IP. Defaults to 10, refilling 1 per minute. */
   badKeysPerIp?: BucketLimit
+  /** Enrollment previews and redeems per machine id. Defaults to 10, refilling 1 per 30 s. */
+  enrollPerMachine?: BucketLimit
   /** How often full buckets are dropped. Defaults to 60 s. */
   sweepIntervalMs?: number
   /** The clock, in milliseconds. Defaults to `Date.now`. */
@@ -83,7 +85,8 @@ class TokenBuckets {
 /**
  * Rate limits for connection attempts, kept in memory for this server only.
  * Browser requests and sockets take a token from their IP's bucket, then from
- * their machine's. Tunnel upgrades have their own per-IP bucket. An IP whose
+ * their machine's. Tunnel upgrades have their own per-IP bucket, and
+ * enrollment frames their own per-machine one. An IP whose
  * bad-key bucket is empty is refused everywhere until it refills. It sees only
  * IPs, machine ids and `auth.failed` reports, never a key or a relayed request.
  */
@@ -92,6 +95,7 @@ export class ConnectionLimiter {
   private readonly perMachine: TokenBuckets
   private readonly tunnelPerIp: TokenBuckets
   private readonly badKeys: TokenBuckets
+  private readonly enrollPerMachine: TokenBuckets
   private readonly sweepIntervalMs: number
   private sweepTimer: Timer | undefined
 
@@ -100,6 +104,7 @@ export class ConnectionLimiter {
     perMachine = { capacity: 300, refillEveryMs: 200 },
     tunnelPerIp = { capacity: 10, refillEveryMs: 10_000 },
     badKeysPerIp = { capacity: 10, refillEveryMs: 60_000 },
+    enrollPerMachine = { capacity: 10, refillEveryMs: 30_000 },
     sweepIntervalMs = 60_000,
     now = Date.now,
   }: ConnectionLimiterDeps = {}) {
@@ -107,6 +112,7 @@ export class ConnectionLimiter {
     this.perMachine = new TokenBuckets(perMachine, now)
     this.tunnelPerIp = new TokenBuckets(tunnelPerIp, now)
     this.badKeys = new TokenBuckets(badKeysPerIp, now)
+    this.enrollPerMachine = new TokenBuckets(enrollPerMachine, now)
     this.sweepIntervalMs = sweepIntervalMs
   }
 
@@ -130,6 +136,16 @@ export class ConnectionLimiter {
     return wait > 0 ? refused(wait) : { ok: true }
   }
 
+  /**
+   * Admits an enrollment preview or redeem from the tunnel of `machineId`.
+   * Every attempt takes a token, whatever its result. Keyed by machine id,
+   * not IP, since many machines can share one address.
+   */
+  admitEnrollment(machineId: string): Admission {
+    const wait = this.enrollPerMachine.take(machineId)
+    return wait > 0 ? refused(wait) : { ok: true }
+  }
+
   /** Counts a rejected access key against `ip`. An IP already out of bad-key tokens stays blocked. */
   badKey(ip: string): void {
     this.badKeys.take(ip)
@@ -141,6 +157,7 @@ export class ConnectionLimiter {
     this.perMachine.sweep()
     this.tunnelPerIp.sweep()
     this.badKeys.sweep()
+    this.enrollPerMachine.sweep()
   }
 
   /** Starts sweeping every `sweepIntervalMs`. The timer does not keep the process alive. */
@@ -157,7 +174,9 @@ export class ConnectionLimiter {
 
   /** The number of buckets held, across every limit. */
   get size(): number {
-    return this.perIp.size + this.perMachine.size + this.tunnelPerIp.size + this.badKeys.size
+    return (
+      this.perIp.size + this.perMachine.size + this.tunnelPerIp.size + this.badKeys.size + this.enrollPerMachine.size
+    )
   }
 }
 

@@ -35,6 +35,25 @@ export const unlinkMachineBody = z.strictObject({ machineId: machineIdSchema })
 
 export const unlinkMachineResponse = z.object({ ok: z.literal(true) })
 
+/**
+ * An enrollment key: `oek_` and 32 random bytes as unpadded base64url. A
+ * signed-in user creates one to link a machine from the machine itself.
+ */
+export const enrollmentKeySchema = z.string().regex(/^oek_[A-Za-z0-9_-]{43}$/, 'Not an enrollment key.')
+
+/** The part of an enrollment key shown to compare it on both screens: its last 4 characters. */
+export function enrollmentFingerprint(key: string): string {
+  return key.slice(-4)
+}
+
+/** A new enrollment key. It is shown once, works once and expires at `expiresAt`, an ISO string. */
+export const createEnrollmentResponse = z.object({
+  key: enrollmentKeySchema,
+  fingerprint: z.string().length(4),
+  expiresAt: z.iso.datetime(),
+})
+export type CreateEnrollmentResponse = z.infer<typeof createEnrollmentResponse>
+
 export const serverMachinesContract = defineServerContract({
   list: {
     method: 'GET',
@@ -64,5 +83,13 @@ export const serverMachinesContract = defineServerContract({
     description: 'Removes a machine from the account. It does not touch the machine or its access key.',
     input: unlinkMachineBody,
     output: unlinkMachineResponse,
+  },
+  createEnrollment: {
+    method: 'POST',
+    path: '/api/machines/enrollments',
+    description:
+      'Creates a single-use enrollment key, valid for 15 minutes, that a machine redeems over its tunnel to link itself.',
+    input: z.strictObject({}),
+    output: createEnrollmentResponse,
   },
 })
