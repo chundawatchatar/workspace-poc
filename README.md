@@ -46,6 +46,8 @@ server address with `ws`/`wss` swapped for `http`/`https`. Lost the link, or
 want to cut everyone off? Press "New connect link" in the dialog, or run
 `bun run host:rotate-key`: either gives a new link and closes every remote
 session that used the old key.
+`bun run host:remote` sets up remote access from a terminal (`status`,
+`server <url>`, `on`, `off`, `link <key>`, `unlink`).
 
 The server serves the global app itself, so the connect link opens on the
 server's own origin and needs no CORS. Build the client with

@@ -228,9 +228,8 @@ and accounts don't replace that check.
   `bun run host:remote link <key>` command, each with a Copy button, its fingerprint and a countdown to its expiry.
   The key lives only in the dialog's state, never in the query cache, storage, the URL or a log, so closing the dialog
   forgets it and opening it again creates a new one. While it is open the machines list is read every 2 seconds, and
-  the first machine that wasn't listed when the key was created is taken to be the one that redeemed it. The
-  `host:remote` command comes in a later release, and a machine linked this way has no Open link until a browser
-  holds its access key.
+  the first machine that wasn't listed when the key was created is taken to be the one that redeemed it. A machine
+  linked this way has no Open link until a browser holds its access key.
 - The relay still sees access keys in transit, in the header and first socket message it forwards, until end-to-end
   encryption (REM-2). It never checks or stores them.
 - A machine's online state comes from the server's in-memory `MachineRegistry`, the same one the relay uses. Offline
