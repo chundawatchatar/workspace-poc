@@ -121,6 +121,7 @@ try {
   // 1. A first host attaches and sees a screen.
   const first = await Client.connect()
   const snapshot = await hello(first)
+  if (snapshot.kind !== 'control') fail('expected a control snapshot')
   const identity = (snapshot.value as { status?: { id?: string; build?: string; queries?: boolean } }).status
   if (!identity?.id) fail('snapshot carried no identity')
   if (!identity.build || !identity.queries) fail(`status lacks the build or query support: ${JSON.stringify(identity)}`)
@@ -180,6 +181,7 @@ try {
     const value = frame.value as { type?: string; status?: { cols?: number; rows?: number } }
     return value.type === 'status' && value.status?.cols === 120 && value.status?.rows === 40
   })
+  if (status.kind !== 'control') fail('expected a control status')
   const size = (status.value as { status?: { cols?: number; rows?: number } }).status
   if (size?.cols !== 120 || size.rows !== 40) fail(`resize not applied: ${JSON.stringify(size)}`)
 
