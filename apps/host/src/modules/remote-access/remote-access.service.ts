@@ -29,6 +29,7 @@ import {
 import type { OpenSocket } from '../tunnel/tunnel-channels.service'
 import type { Credentials, TunnelHandler } from '../tunnel/tunnel-http.service'
 import type { LinkedAccountRepository, SavedLinkedAccount } from './linked-account.repository'
+import { SpentTickets, verifyRelayTicket } from './relay-ticket.service'
 import type { RemoteAccessRepository, RemoteAccessSettings } from './remote-access.repository'
 
 /**
@@ -139,6 +140,8 @@ export class RemoteAccessService {
   private tunnel: Tunnel | null = null
   /** The tunnel URL `tunnel` dials, so an update to the same address keeps it. */
   private tunnelUrl: string | null = null
+  /** The relay tickets sockets have opened with, so each opens one socket. */
+  private readonly spentTickets = new SpentTickets()
 
   constructor(private readonly options: RemoteAccessServiceOptions) {
     this.env = { SERVER_URL: options.env?.SERVER_URL || undefined, CLIENT_URL: options.env?.CLIENT_URL || undefined }
@@ -266,6 +269,7 @@ export class RemoteAccessService {
       serverUrl: inUse,
       linkedAt: new Date().toISOString(),
       accountId: answer.accountId,
+      relayKeys: answer.relayKeys,
     }
     this.options.linkedAccounts.save(account)
     this.linked = account
@@ -285,17 +289,23 @@ export class RemoteAccessService {
 
   /**
    * Decides a tunneled request or socket. A key is judged by the access keys
-   * alone. An account is accepted only when it is the linked account's id and
-   * that account was linked through the server address in use, so neither
-   * another account nor another server can open this machine. A linked file
-   * without `accountId` accepts no account.
+   * alone. A relay ticket opens the machine as the linked account only when
+   * it is signed with one of the server's saved public keys, names this
+   * machine and the linked account, hasn't expired, and comes through the
+   * server address the account was linked through. With `once`, as for a
+   * socket, a ticket that already opened one is refused. A linked file
+   * without `accountId` or `relayKeys` accepts no ticket.
    */
-  authorize({ key, accountId }: Credentials): Principal | null {
+  authorize({ key, ticket, once = false }: Credentials): Principal | null {
     if (key !== null) return this.keys?.authorize(key) ?? null
     const linked = this.linked
-    if (!accountId || !linked?.accountId) return null
-    if (linked.accountId !== accountId || linked.serverUrl !== this.serverUrl()) return null
-    return { kind: 'account', accountId }
+    const machineId = this.machineId()
+    if (!ticket || !linked?.accountId || !linked.relayKeys || !machineId) return null
+    if (linked.serverUrl !== this.serverUrl()) return null
+    const now = Date.now()
+    const payload = verifyRelayTicket(ticket, { keys: linked.relayKeys, machineId, accountId: linked.accountId, now })
+    if (!payload || (once && !this.spentTickets.spend(payload, now))) return null
+    return { kind: 'account', accountId: payload.sub }
   }
 
   /**

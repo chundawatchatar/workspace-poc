@@ -1,4 +1,10 @@
-import { ACCESS_KEY_HEADER, API_PREFIX, type httpRequestFrame, type MachineFrame } from '@orch/shared'
+import {
+  ACCESS_KEY_HEADER,
+  API_PREFIX,
+  type httpRequestFrame,
+  type MachineFrame,
+  RELAY_TICKET_HEADER,
+} from '@orch/shared'
 import type { z } from 'zod'
 import { HOST_ORIGIN } from '../../lib/localOrigin'
 import type { Principal } from '../../lib/principal'
@@ -9,31 +15,39 @@ type HttpRequestFrame = z.infer<typeof httpRequestFrame>
 export type TunnelHandler = (request: Request, principal: Principal) => Promise<Response>
 
 /**
- * What a request or channel presents: its access key, or the account the
- * server attached. A caller sets at most one, and a key always wins.
+ * What a request or channel presents: its access key, or a relay ticket the
+ * server signed for an account. A caller sets at most one, and a key always
+ * wins. `once` spends the ticket, so it can't open another socket.
  */
 export interface Credentials {
   key: string | null
-  accountId: string | null
+  ticket: string | null
+  once?: boolean
 }
 
 /**
  * Decides whether a request or channel may in. In the host this is
  * `RemoteAccessService`'s, which checks a key with `AccessKeys.authorize` and
- * an account against the linked one.
+ * a ticket against the linked account and the server's public keys.
  */
 export type Authorize = (credentials: Credentials) => Principal | null
 
+/** The value of the one header named `name`, or null when there is none or more than one. */
+function singleHeader(headers: [string, string][], name: string): string | null {
+  const values = headers.filter(([header]) => header.toLowerCase() === name)
+  return values.length === 1 ? (values[0]?.[1] ?? null) : null
+}
+
 /**
  * What an `http.request` presents. With any `ACCESS_KEY_HEADER` the key alone
- * decides, so a missing or wrong key is never rescued by the account; without
- * one, the frame's `accountId` does.
+ * decides, so a missing or wrong key is never rescued by a ticket; without
+ * one, its one `RELAY_TICKET_HEADER` does.
  */
-export function requestCredentials(frame: Pick<HttpRequestFrame, 'headers' | 'accountId'>): Credentials {
-  const hasKey = frame.headers.some(([name]) => name.toLowerCase() === ACCESS_KEY_HEADER)
+export function requestCredentials(headers: [string, string][]): Credentials {
+  const hasKey = headers.some(([name]) => name.toLowerCase() === ACCESS_KEY_HEADER)
   return hasKey
-    ? { key: accessKeyOf(frame.headers), accountId: null }
-    : { key: null, accountId: frame.accountId ?? null }
+    ? { key: accessKeyOf(headers), ticket: null }
+    : { key: null, ticket: singleHeader(headers, RELAY_TICKET_HEADER) }
 }
 
 /**
@@ -41,8 +55,7 @@ export function requestCredentials(frame: Pick<HttpRequestFrame, 'headers' | 'ac
  * null when there is none or more than one. Never read from the query string.
  */
 export function accessKeyOf(headers: [string, string][]): string | null {
-  const values = headers.filter(([name]) => name.toLowerCase() === ACCESS_KEY_HEADER)
-  return values.length === 1 ? (values[0]?.[1] ?? null) : null
+  return singleHeader(headers, ACCESS_KEY_HEADER)
 }
 
 /** The largest `http.body` payload, so every encoded frame stays far below `MAX_TUNNEL_FRAME_BYTES`. */
@@ -73,7 +86,7 @@ export function tunneledRequest(frame: HttpRequestFrame, signal?: AbortSignal): 
 
 /**
  * Serves the `http.request` frames of one tunnel connection through `handle`,
- * once `authorize` has accepted the request's access key or account, streaming
+ * once `authorize` has accepted the request's access key or relay ticket, streaming
  * each response back as `http.response`, `http.body` and `http.end`.
  * Each body chunk waits for `room`, so a large response is read only as fast
  * as the tunnel takes it. After `close()` it writes nothing more, so a dropped
@@ -119,14 +132,17 @@ export class TunnelHttp {
     }
 
     // Preflights included: the server answers those itself, so one that gets here is an ordinary request.
-    const principal = this.authorize(requestCredentials(frame))
+    const principal = this.authorize(requestCredentials(frame.headers))
     if (!principal) {
       // First, so the server still knows the request's browser when it reads it.
       send({ type: 'auth.failed', id })
       return fail(401)
     }
-    // The key has done its job, so no handler ever sees it.
-    const headers = frame.headers.filter(([name]) => name.toLowerCase() !== ACCESS_KEY_HEADER)
+    // The key or ticket has done its job, so no handler ever sees it.
+    const headers = frame.headers.filter(([name]) => {
+      const lower = name.toLowerCase()
+      return lower !== ACCESS_KEY_HEADER && lower !== RELAY_TICKET_HEADER
+    })
     const request = tunneledRequest({ ...frame, headers }, signal)
     if (!request) return fail(400)
     let response: Response

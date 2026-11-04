@@ -2,12 +2,20 @@ import { afterEach, beforeEach, describe, expect, type Mock, spyOn, test } from 
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { type Endpoint, type RotateAccessResponse, routes, type TunnelState } from '@orch/shared'
+import {
+  type Endpoint,
+  type RelayTicketPayload,
+  type RotateAccessResponse,
+  routes,
+  type TunnelState,
+} from '@orch/shared'
 import { type AppDeps, createApp } from '../../app'
 import type { Principal } from '../../lib/principal'
 import { AccessKeyRepository } from '../access/access.repository'
 import type { EnrollAnswer, EnrollRequest, TunnelClientOptions } from '../tunnel/tunnel.service'
+import type { Credentials } from '../tunnel/tunnel-http.service'
 import { LinkedAccountRepository } from './linked-account.repository'
+import { testRelayKey } from './relay-ticket.testing'
 import { RemoteAccessRepository, type RemoteAccessSettings } from './remote-access.repository'
 import {
   DEFAULT_SERVER_URL,
@@ -48,6 +56,9 @@ const key = `oek_${'k'.repeat(43)}`
 const account = { name: 'Ada', maskedEmail: 'a***@example.com' }
 /** The key owner's user id, as the server sends it in `enroll.redeemed`. */
 const accountId = 'acct-ada-1'
+/** The server's relay signing key, whose public half it sends in `enroll.redeemed`. */
+const relay = testRelayKey('k1')
+const relayKeys = [relay.relayKey]
 const expiresAt = '2026-11-04T12:15:00.000Z'
 
 let dir: string
@@ -265,7 +276,7 @@ describe('RemoteAccessService', () => {
     tunnel.answer = (request) =>
       request.type === 'enroll.preview'
         ? { type: 'enroll.previewed', id: 1, account, fingerprint: 'kkkk', expiresAt }
-        : { type: 'enroll.redeemed', id: 2, machineId: machineId ?? '', accountId, account }
+        : { type: 'enroll.redeemed', id: 2, machineId: machineId ?? '', accountId, account, relayKeys }
     const files = readdirSync(dir).sort()
 
     const preview = await post(app, routes.remoteAccess.previewLink, { key })
@@ -287,12 +298,13 @@ describe('RemoteAccessService', () => {
 
     const linked = await post(app, routes.remoteAccess.link, { key, serverUrl: 'ws://127.0.0.1:4600' })
     expect(tunnel.sent[1]).toEqual({ type: 'enroll.redeem', key, name: hostMachineName() })
-    const { accountId: savedId, ...saved } = JSON.parse(readFileSync(linkedFile(), 'utf8'))
-    expect(savedId).toBe(accountId)
+    const { accountId: savedId, relayKeys: savedKeys, ...saved } = JSON.parse(readFileSync(linkedFile(), 'utf8'))
+    expect([savedId, savedKeys]).toEqual([accountId, relayKeys])
     expect(saved).toEqual({ ...account, serverUrl: 'ws://127.0.0.1:4600', linkedAt: expect.any(String) })
-    // The account id stays on this machine: the status, and so the page, never shows it.
+    // The account id and the keys stay on this machine: the status, and so the page, never shows them.
     expect(linked.json().linkedAccount).toEqual(saved)
     expect(linked.text).not.toContain(accountId)
+    expect(linked.text).not.toContain(relay.relayKey.publicKey)
     expect(readFileSync(linkedFile(), 'utf8')).not.toContain(key)
 
     const again = await post(app, routes.remoteAccess.previewLink, { key })
@@ -328,7 +340,7 @@ describe('RemoteAccessService', () => {
         503,
       ],
       // A link to another machine id than this host's.
-      [() => ({ type: 'enroll.redeemed', id: 1, machineId: 'someone-else', accountId, account }), 502],
+      [() => ({ type: 'enroll.redeemed', id: 1, machineId: 'someone-else', accountId, account, relayKeys }), 502],
     ]
     for (const [answer, status, message] of cases) {
       tunnel.answer = answer
@@ -351,38 +363,49 @@ describe('RemoteAccessService', () => {
 
 describe('RemoteAccessService.authorize', () => {
   /** Writes the linked account file a previous run saved. */
-  const writeLinked = (fields: Record<string, string>) =>
+  const writeLinked = (fields: Record<string, unknown>) =>
     writeFileSync(
       linkedFile(),
       JSON.stringify({ ...account, serverUrl: 'ws://127.0.0.1:4600', linkedAt: expiresAt, ...fields }),
     )
-  const asAccount = (id: string) => tunnels.at(-1)?.options.authorize({ key: null, accountId: id })
+  /** A ticket for this machine and the linked account, changed by `overrides`. */
+  const ticketFor = (overrides: Partial<RelayTicketPayload> = {}) =>
+    relay.ticket({ sub: accountId, aud: service.status().machineId ?? '', ...overrides })
+  const authorize = (credentials: Credentials) => tunnels.at(-1)?.options.authorize(credentials)
 
-  test('accepts only the linked account id, and a key alone decides when one is sent', () => {
-    writeLinked({ accountId })
+  test('a ticket opens as the linked account, a socket spends it, a key alone decides, and unlink ends it', () => {
+    writeLinked({ accountId, relayKeys })
     const { tunnel } = connected()
-    expect(asAccount(accountId)).toEqual({ kind: 'account', accountId })
-    expect(asAccount('someone-else')).toBeNull()
-    expect(tunnel.options.authorize({ key: null, accountId: null })).toBeNull()
-    expect(tunnel.options.authorize({ key: 'wrong', accountId })).toBeNull()
+    const ticket = ticketFor()
+    const asAccount: Principal = { kind: 'account', accountId }
+    // HTTP requests may reuse a ticket; a socket spends it, so a replay opens nothing.
+    expect(authorize({ key: null, ticket })).toEqual(asAccount)
+    expect(authorize({ key: null, ticket })).toEqual(asAccount)
+    expect(authorize({ key: null, ticket, once: true })).toEqual(asAccount)
+    expect(authorize({ key: null, ticket, once: true })).toBeNull()
+    expect(authorize({ key: null, ticket: ticketFor({ sub: 'someone-else' }) })).toBeNull()
+    expect(authorize({ key: null, ticket: ticketFor({ aud: 'another-machine' }) })).toBeNull()
+    expect(authorize({ key: null, ticket: null })).toBeNull()
+    expect(authorize({ key: 'wrong', ticket: ticketFor() })).toBeNull()
 
     service.unlink()
     expect(tunnel.closed.map((c) => c.reason)).toEqual(['account unlinked'])
-    expect(tunnel.closed[0]?.revoked({ kind: 'account', accountId })).toBe(true)
+    expect(tunnel.closed[0]?.revoked(asAccount)).toBe(true)
     expect(tunnel.closed[0]?.revoked({ kind: 'key', keyId: 'k1', name: 'default' })).toBe(false)
-    expect(asAccount(accountId)).toBeNull()
+    expect(authorize({ key: null, ticket: ticketFor() })).toBeNull()
   })
 
-  test('a file saved before account access still loads but grants no account, nor does another server', () => {
-    writeLinked({})
+  test('an older linked file still shows the account but accepts no ticket, nor does another server', () => {
+    for (const fields of [{}, { accountId }]) {
+      writeLinked(fields)
+      connected()
+      expect(service.status().linkedAccount).toMatchObject(account)
+      expect(authorize({ key: null, ticket: ticketFor() })).toBeNull()
+      service.shutdown()
+    }
+    writeLinked({ accountId, relayKeys, serverUrl: 'wss://other.example.com' })
     connected()
-    expect(service.status().linkedAccount).toMatchObject(account)
-    expect(asAccount(accountId)).toBeNull()
-    service.shutdown()
-
-    writeLinked({ accountId, serverUrl: 'wss://other.example.com' })
-    connected()
-    expect(asAccount(accountId)).toBeNull()
+    expect(authorize({ key: null, ticket: ticketFor() })).toBeNull()
   })
 })
 

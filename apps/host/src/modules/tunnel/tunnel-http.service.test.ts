@@ -5,6 +5,7 @@ import {
   HOST_PORT,
   MAX_TUNNEL_FRAME_BYTES,
   type MachineFrame,
+  RELAY_TICKET_HEADER,
   routes,
 } from '@orch/shared'
 import type { SessionManager } from '@orch/terminal'
@@ -83,19 +84,22 @@ describe('TunnelHttp', () => {
 
   test('refuses a missing, wrong, repeated or query-string key with auth.failed, 401 and end, never calling handle', async () => {
     const seen: Credentials[] = []
-    // Accepts the key `good` and the account `u1`.
+    // Accepts the key `good`, and the ticket `t-good` as the account `u1`.
     const authorize: Authorize = (credentials) => {
       seen.push(credentials)
-      const { key, accountId } = credentials
-      return key === 'good' ? principal : key === null && accountId === 'u1' ? { kind: 'account', accountId } : null
+      const { key, ticket } = credentials
+      if (key === 'good') return principal
+      return key === null && ticket === 't-good' ? { kind: 'account', accountId: 'u1' } : null
     }
     const handled: Principal[] = []
-    const { http, frames } = setup(async (_request, p) => {
+    const handledHeaders: Headers[] = []
+    const { http, frames } = setup(async (request, p) => {
       handled.push(p)
+      handledHeaders.push(request.headers)
       return new Response('ok')
     }, authorize)
-    const send = (id: number, headers: [string, string][], path = '/api/health', accountId?: string) =>
-      http.request({ type: 'http.request', id, method: 'GET', path, headers, ...(accountId ? { accountId } : {}) })
+    const send = (id: number, headers: [string, string][], path = '/api/health') =>
+      http.request({ type: 'http.request', id, method: 'GET', path, headers })
     send(1, [])
     send(2, [[ACCESS_KEY_HEADER, 'bad']])
     send(3, [
@@ -103,21 +107,26 @@ describe('TunnelHttp', () => {
       [ACCESS_KEY_HEADER, 'good'],
     ])
     send(4, [], `/api/health?${ACCESS_KEY_HEADER}=good&key=good`)
-    // With a key header the key alone decides, even when the account would pass.
-    send(5, [[ACCESS_KEY_HEADER, 'bad']], '/api/health', 'u1')
-    send(6, [], '/api/health', 'u2')
-    send(7, [], '/api/health', 'u1')
+    // With a key header the key alone decides, even when the ticket would pass.
+    send(5, [
+      [ACCESS_KEY_HEADER, 'bad'],
+      [RELAY_TICKET_HEADER, 't-good'],
+    ])
+    send(6, [[RELAY_TICKET_HEADER, 't-bad']])
+    send(7, [[RELAY_TICKET_HEADER, 't-good']])
     await until(() => [1, 2, 3, 4, 5, 6, 7].every((id) => ended(frames, id)))
 
     expect(handled).toEqual([{ kind: 'account', accountId: 'u1' }])
+    // The ticket has done its job, so the handler never sees it.
+    expect(handledHeaders[0]?.has(RELAY_TICKET_HEADER)).toBe(false)
     expect(seen).toEqual([
-      { key: null, accountId: null },
-      { key: 'bad', accountId: null },
-      { key: null, accountId: null },
-      { key: null, accountId: null },
-      { key: 'bad', accountId: null },
-      { key: null, accountId: 'u2' },
-      { key: null, accountId: 'u1' },
+      { key: null, ticket: null },
+      { key: 'bad', ticket: null },
+      { key: null, ticket: null },
+      { key: null, ticket: null },
+      { key: 'bad', ticket: null },
+      { key: null, ticket: 't-bad' },
+      { key: null, ticket: 't-good' },
     ])
     for (const id of [1, 2, 3, 4, 5, 6]) {
       expect(frames.filter((f) => 'id' in f && f.id === id)).toEqual([

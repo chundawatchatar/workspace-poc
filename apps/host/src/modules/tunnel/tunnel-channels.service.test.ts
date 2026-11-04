@@ -1,15 +1,22 @@
 import { afterEach, beforeEach, describe, expect, type Mock, spyOn, test } from 'bun:test'
-import { CLOSE_ACCESS_DENIED, type MachineFrame, WS_CHANNEL_WINDOW_BYTES, wsPayloadBytes } from '@orch/shared'
+import {
+  CLOSE_ACCESS_DENIED,
+  type MachineFrame,
+  relaySocketProtocols,
+  WS_CHANNEL_WINDOW_BYTES,
+  wsPayloadBytes,
+} from '@orch/shared'
 import { CAUGHT_UP, deliver, type TermClient } from '@orch/terminal'
 import type { Principal } from '../../lib/principal'
 import type { SocketConn, SocketData } from '../../lib/socket'
 import type { SocketRefusal } from '../../lib/socketRouter'
 import { CHANNEL_QUEUE_CAP_BYTES, type OpenSocket, TunnelChannels } from './tunnel-channels.service'
-import type { Authorize } from './tunnel-http.service'
+import type { Authorize, Credentials } from './tunnel-http.service'
 
 /** One handler run, as the test sees it. */
 interface Opened {
   path: string
+  headers: [string, string][]
   principal: Principal
   conn: SocketConn
   messages: SocketData[]
@@ -20,6 +27,7 @@ let warn: Mock<(...args: unknown[]) => void>
 let warnings: string[]
 
 beforeEach(() => {
+  asked = []
   warnings = []
   warn = spyOn(console, 'warn').mockImplementation((...args: unknown[]) => void warnings.push(args.join(' ')))
 })
@@ -29,14 +37,28 @@ afterEach(() => warn.mockRestore())
 /** The auth message for `key`. */
 const auth = (key: string) => JSON.stringify({ type: 'auth', key })
 
-/** The auth message that asks to be judged by the channel's account. */
+/** The auth message that asks to be judged by the ticket the channel opened with. */
 const accountAuth = JSON.stringify({ type: 'auth', account: true })
 
-/** Accepts the keys `good` (key id `k1`) and `other` (key id `k2`), and the account `u1`. */
-const authorize: Authorize = ({ key, accountId }) => {
+/** The `ws.open` headers of a socket that offered `ticket`, as a browser sends them. */
+const withTicket = (ticket: string): [string, string][] => [
+  ['sec-websocket-protocol', relaySocketProtocols(ticket).join(', ')],
+  ['x-thing', 'a'],
+]
+
+/** What `authorize` was asked, in order. */
+let asked: Credentials[] = []
+
+/**
+ * Accepts the keys `good` (key id `k1`) and `other` (key id `k2`), and the
+ * ticket `t-good` as the account `u1`.
+ */
+const authorize: Authorize = (credentials) => {
+  asked.push(credentials)
+  const { key, ticket } = credentials
   if (key === 'good') return { kind: 'key', keyId: 'k1', name: 'default' }
   if (key === 'other') return { kind: 'key', keyId: 'k2', name: 'second' }
-  if (key === null && accountId === 'u1') return { kind: 'account', accountId }
+  if (key === null && ticket === 't-good') return { kind: 'account', accountId: 'u1' }
   return null
 }
 
@@ -47,9 +69,9 @@ const authorize: Authorize = ({ key, accountId }) => {
 function setup(open?: (opened: Opened) => void, authTimeoutMs = 1000) {
   const frames: MachineFrame[] = []
   const opened: Opened[] = []
-  const openSocket: OpenSocket = (path, _headers, conn, principal) => {
+  const openSocket: OpenSocket = (path, headers, conn, principal) => {
     if (path === '/ws/nope') return { code: 1008, reason: 'not found' } satisfies SocketRefusal
-    const run: Opened = { path, principal, conn, messages: [], closes: 0 }
+    const run: Opened = { path, headers, principal, conn, messages: [], closes: 0 }
     opened.push(run)
     open?.(run)
     return { message: (data) => run.messages.push(data), close: () => run.closes++ }
@@ -113,14 +135,17 @@ describe('TunnelChannels', () => {
     expect(of('auth.failed')).toEqual([])
   })
 
-  test('an account auth message is judged by the account of its own ws.open, never by a key', () => {
+  test('an account auth message is judged by the ticket its socket offered, which it spends; a key message by the key', () => {
     const { channels, opened, of } = setup()
-    channels.receive({ type: 'ws.open', channel: 1, path: '/ws/events', headers: [], accountId: 'u1' })
+    channels.receive({ type: 'ws.open', channel: 1, path: '/ws/events', headers: withTicket('t-good') })
     channels.receive({ type: 'ws.data', channel: 1, data: accountAuth })
     expect(opened.map((run) => run.principal)).toEqual([{ kind: 'account', accountId: 'u1' }])
+    expect(asked).toEqual([{ key: null, ticket: 't-good', once: true }])
+    // The subprotocols carried the ticket, so the handler never sees them.
+    expect(opened[0]?.headers).toEqual([['x-thing', 'a']])
 
-    // Another account, no account, and an account auth message on a channel whose key would pass.
-    channels.receive({ type: 'ws.open', channel: 2, path: '/ws/events', headers: [], accountId: 'u2' })
+    // A bad ticket, and no ticket at all.
+    channels.receive({ type: 'ws.open', channel: 2, path: '/ws/events', headers: withTicket('t-bad') })
     channels.receive({ type: 'ws.open', channel: 3, path: '/ws/events', headers: [] })
     for (const channel of [2, 3]) channels.receive({ type: 'ws.data', channel, data: accountAuth })
     expect(opened).toHaveLength(1)
@@ -130,10 +155,11 @@ describe('TunnelChannels', () => {
     ])
     expect(of('ws.close').map((f) => f.code)).toEqual([CLOSE_ACCESS_DENIED, CLOSE_ACCESS_DENIED])
 
-    // A key auth message on a channel that carries the account is judged by the key.
-    channels.receive({ type: 'ws.open', channel: 4, path: '/ws/events', headers: [], accountId: 'u1' })
+    // A key auth message on a socket that offered a good ticket is judged by the key.
+    channels.receive({ type: 'ws.open', channel: 4, path: '/ws/events', headers: withTicket('t-good') })
     channels.receive({ type: 'ws.data', channel: 4, data: auth('wrong') })
     expect(opened).toHaveLength(1)
+    expect(asked.at(-1)).toEqual({ key: 'wrong', ticket: null })
     expect(of('auth.failed').at(-1)).toEqual({ type: 'auth.failed', channel: 4 })
     channels.close()
   })
@@ -144,7 +170,7 @@ describe('TunnelChannels', () => {
     const b = openChannel(2, 'other')
     const c = openChannel(3, 'good')
     channels.receive({ type: 'ws.open', channel: 4, path: '/ws/events', headers: [] })
-    channels.receive({ type: 'ws.open', channel: 5, path: '/ws/events', headers: [], accountId: 'u1' })
+    channels.receive({ type: 'ws.open', channel: 5, path: '/ws/events', headers: withTicket('t-good') })
     channels.receive({ type: 'ws.data', channel: 5, data: accountAuth })
     const d = opened.at(-1)
 

@@ -20,6 +20,7 @@ const account = {
   serverUrl: 'wss://relay.example.com',
   linkedAt: '2026-11-04T12:00:00.000Z',
   accountId: 'u1',
+  relayKeys: [{ kid: 'k1', publicKey: 'P'.repeat(43) }],
 }
 
 describe('LinkedAccountRepository', () => {
@@ -37,8 +38,8 @@ describe('LinkedAccountRepository', () => {
     repository.remove()
   })
 
-  test('a file saved before account access, without `accountId`, still loads', () => {
-    const { accountId: _, ...older } = account
+  test('a file saved before account access, without `accountId` or `relayKeys`, still loads', () => {
+    const { accountId: _, relayKeys: __, ...older } = account
     const repository = new LinkedAccountRepository(join(dir, 'older.json'))
     writeFileSync(repository.file, JSON.stringify(older))
     expect(repository.load()).toEqual(older)

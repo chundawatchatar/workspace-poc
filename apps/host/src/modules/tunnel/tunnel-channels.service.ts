@@ -6,6 +6,7 @@ import {
   parseMessage,
   type ServerFrame,
   socketAuthMessage,
+  ticketFromProtocols,
   WS_CHANNEL_WINDOW_BYTES,
   wsPayloadBytes,
 } from '@orch/shared'
@@ -53,8 +54,8 @@ interface Channel {
   id: number
   path: string
   headers: [string, string][]
-  /** The account the server attached to the `ws.open`. Null means none. */
-  accountId: string | null
+  /** The relay ticket the browser offered as a subprotocol. Null means none, or more than one. */
+  ticket: string | null
   /** Null until the channel's auth message has been accepted. */
   principal: Principal | null
   /** Runs out when no auth message arrives in time. Cleared once one does. */
@@ -80,9 +81,9 @@ interface Channel {
  *
  * No handler runs before the channel's first message, which must be a
  * `socketAuthMessage` that `authorize` accepts: its key, or with
- * `account: true` the account of the channel's `ws.open`. Anything else, or
- * nothing within the auth timeout, gets `auth.failed` and a
- * `CLOSE_ACCESS_DENIED` close.
+ * `account: true` the relay ticket the socket offered as a subprotocol, which
+ * it spends. Anything else, or nothing within the auth timeout, gets
+ * `auth.failed` and a `CLOSE_ACCESS_DENIED` close.
  */
 export class TunnelChannels {
   private readonly channels = new Map<number, Channel>()
@@ -107,7 +108,7 @@ export class TunnelChannels {
   receive(frame: ChannelFrame): void {
     if (this.closed) return
     if (frame.type === 'ws.open') {
-      this.open(frame.channel, frame.path, frame.headers, frame.accountId ?? null)
+      this.open(frame.channel, frame.path, frame.headers)
       return
     }
     const channel = this.channels.get(frame.channel)
@@ -141,13 +142,15 @@ export class TunnelChannels {
     return this.channels.size
   }
 
-  private open(id: number, path: string, headers: [string, string][], accountId: string | null) {
+  private open(id: number, path: string, headers: [string, string][]) {
     if (this.channels.has(id)) return
+    const protocols = headers.filter(([name]) => name.toLowerCase() === 'sec-websocket-protocol')
     const channel: Channel = {
       id,
       path,
-      headers,
-      accountId,
+      // The subprotocols carry the ticket, so no handler sees them; the host's sockets negotiate none.
+      headers: headers.filter(([name]) => name.toLowerCase() !== 'sec-websocket-protocol'),
+      ticket: protocols.length === 1 ? ticketFromProtocols(protocols[0]?.[1]) : null,
       principal: null,
       authTimer: undefined,
       session: null,
@@ -169,8 +172,8 @@ export class TunnelChannels {
     const principal = !message
       ? null
       : 'key' in message
-        ? this.authorize({ key: message.key, accountId: null })
-        : this.authorize({ key: null, accountId: channel.accountId })
+        ? this.authorize({ key: message.key, ticket: null })
+        : this.authorize({ key: null, ticket: channel.ticket, once: true })
     if (!principal) {
       this.deny(channel, 'access denied')
       return

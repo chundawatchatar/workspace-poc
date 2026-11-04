@@ -288,7 +288,8 @@ describe('TunnelClient', () => {
     expect(r).toEqual({ type: 'enroll.redeem', id: r.id, key, name: 'box' })
     expect(p.id).not.toBe(r.id)
     // An answer of the wrong kind for the id is ignored; the right one resolves it.
-    send(conn, { type: 'enroll.redeemed', id: p.id, machineId: 'm', accountId: 'u1', account })
+    const relayKeys = [{ kid: 'k1', publicKey: 'P'.repeat(43) }]
+    send(conn, { type: 'enroll.redeemed', id: p.id, machineId: 'm', accountId: 'u1', account, relayKeys })
     const expiresAt = new Date(Date.now() + 60_000).toISOString()
     send(conn, { type: 'enroll.previewed', id: p.id, account, fingerprint: 'kkkk', expiresAt })
     send(conn, { type: 'enroll.failed', id: r.id, code: 'rate_limited' })

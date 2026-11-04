@@ -1,15 +1,18 @@
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { linkedAccount } from '@orch/shared'
+import { linkedAccount, relayKeyList } from '@orch/shared'
 import { z } from 'zod'
 import { writeJsonAtomic } from './remote-access.repository'
 
 /**
  * The linked account as this machine keeps it: what the status shows, plus
- * `accountId`, the user id tunneled requests may present. A file written
- * before account access has no `accountId`, and grants no account access.
+ * `accountId`, the user id relay tickets must name, and `relayKeys`, the
+ * server's public keys they must be signed with. A file written before
+ * account access has neither, and grants no account access.
  */
-const savedLinkedAccount = linkedAccount.extend({ accountId: z.string().min(1).optional() }).strict()
+const savedLinkedAccount = linkedAccount
+  .extend({ accountId: z.string().min(1).optional(), relayKeys: relayKeyList.optional() })
+  .strict()
 
 export type SavedLinkedAccount = z.infer<typeof savedLinkedAccount>
 
@@ -38,8 +41,8 @@ export class LinkedAccountRepository {
 
   /** Replaces the file in one step, keeping only the account's fields. */
   save(account: SavedLinkedAccount) {
-    const { name, maskedEmail, serverUrl, linkedAt, accountId } = account
-    writeJsonAtomic(this.file, { name, maskedEmail, serverUrl, linkedAt, accountId })
+    const { name, maskedEmail, serverUrl, linkedAt, accountId, relayKeys } = account
+    writeJsonAtomic(this.file, { name, maskedEmail, serverUrl, linkedAt, accountId, relayKeys })
   }
 
   /** Removes the file. A missing file is fine. */

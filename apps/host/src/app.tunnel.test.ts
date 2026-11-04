@@ -13,7 +13,9 @@ import {
   type HostInfo,
   type MachineFrame,
   machineFrame,
+  RELAY_TICKET_HEADER,
   type RotateAccessResponse,
+  relaySocketProtocols,
   remoteAccessStatus,
   routes,
   type ServerFrame,
@@ -30,6 +32,7 @@ import { AccessKeys, machineIdFromSecret } from './modules/access/access.service
 import { EventHub } from './modules/events/events.service'
 import type { LayoutRepository } from './modules/layout/layout.repository'
 import { LinkedAccountRepository } from './modules/remote-access/linked-account.repository'
+import { testRelayKey } from './modules/remote-access/relay-ticket.testing'
 import { RemoteAccessRepository } from './modules/remote-access/remote-access.repository'
 import { RemoteAccessService } from './modules/remote-access/remote-access.service'
 import { TunnelClient } from './modules/tunnel/tunnel.service'
@@ -41,8 +44,9 @@ import { TunnelHttp } from './modules/tunnel/tunnel-http.service'
 // served locally to compare against.
 
 const secret = `${'S'.repeat(42)}s`
-/** The user id the fake server says owns every enrollment key. */
+/** The user id the fake server says owns every enrollment key, and the key it signs relay tickets with. */
 const ACCOUNT_ID = 'acct-ada-1'
+const relay = testRelayKey()
 const info: HostInfo = { home: '/home/me', shell: '/bin/zsh', platform: 'darwin', projectRoot: '/repo' }
 const OUTPUT = new Uint8Array([27, 91, 72, 104, 105])
 
@@ -129,7 +133,8 @@ beforeEach(() => {
         if (frame.type === 'enroll.redeem') {
           const account = { name: 'Ada', maskedEmail: 'a***@example.com' }
           const machineId = machineIdFromSecret(secret)
-          send(conn, { type: 'enroll.redeemed', id: frame.id, machineId, accountId: ACCOUNT_ID, account })
+          const relayKeys = [relay.relayKey]
+          send(conn, { type: 'enroll.redeemed', id: frame.id, machineId, accountId: ACCOUNT_ID, account, relayKeys })
         }
         // Like the server, it acks what it has delivered to the browser.
         if (frame.type === 'ws.data') {
@@ -364,19 +369,13 @@ describe('tunneled sockets', () => {
     expect(stub.ensured).toHaveLength(1)
   })
 
-  test('the linked account opens requests and sockets without a key, never local-only routes, and unlink closes it', async () => {
+  test('a relay ticket opens requests and a socket as the linked account, never local-only routes, and unlink ends it', async () => {
     const conn = await welcomed()
     const response = (id: number) => conn.frames.find((f) => f.type === 'http.response' && f.id === id)
+    const ticket = () => relay.ticket({ sub: ACCOUNT_ID, aud: machineIdFromSecret(secret) })
     const request = (id: number, path: string, method = 'GET') =>
-      send(conn, { type: 'http.request', id, method, path, headers: [], accountId: ACCOUNT_ID })
-    const locally = (endpoint: { path: string; method: string }, body: unknown) =>
-      fetch(`http://127.0.0.1:${local.port}${endpoint.path}`, {
-        method: endpoint.method,
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-      })
-    const linkBody = { key: `oek_${'k'.repeat(43)}`, serverUrl: `ws://127.0.0.1:${server.port}` }
-    expect((await locally(routes.remoteAccess.link, linkBody)).status).toBe(200)
+      send(conn, { type: 'http.request', id, method, path, headers: [[RELAY_TICKET_HEADER, ticket()]] })
+    await remoteAccess.link({ key: `oek_${'k'.repeat(43)}`, serverUrl: `ws://127.0.0.1:${server.port}` })
 
     request(1, routes.system.health.path)
     request(2, routes.access.rotate.path, 'POST')
@@ -384,12 +383,13 @@ describe('tunneled sockets', () => {
     await until(() => [1, 2, 3].every((id) => response(id) !== undefined))
     expect([1, 2, 3].map(response)).toMatchObject([{ status: 200 }, { status: 403 }, { status: 403 }])
 
-    send(conn, { type: 'ws.open', channel: 1, path: '/ws/term/t1', headers: [], accountId: ACCOUNT_ID })
+    const headers: [string, string][] = [['sec-websocket-protocol', relaySocketProtocols(ticket()).join(', ')]]
+    send(conn, { type: 'ws.open', channel: 1, path: '/ws/term/t1', headers })
     send(conn, { type: 'ws.data', channel: 1, data: JSON.stringify({ type: 'auth', account: true }) })
     await until(() => stub.attached.size === 1)
 
-    expect((await locally(routes.remoteAccess.unlink, {})).status).toBe(200)
-    await until(() => stub.attached.size === 0)
+    remoteAccess.unlink()
+    await until(() => stub.attached.size === 0 && conn.frames.some((f) => f.type === 'ws.close'))
     expect(conn.frames.filter((f) => f.type === 'ws.close')).toEqual([
       { type: 'ws.close', channel: 1, code: CLOSE_ACCESS_DENIED, reason: 'account unlinked' },
     ])
