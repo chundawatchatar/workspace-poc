@@ -4,13 +4,13 @@ How to work on accounts: the database, Better Auth, sessions, emails and the acc
 developers changing `apps/server`, `packages/domain` or the accounts side of `apps/client`. The rules behind it are in
 [architecture](architecture.md#1-dependencies-point-one-way); this guide is the "how to work with it" view and links
 there rather than repeating it. Everything here is the development setup on one computer. What a real deploy adds is
-in [remote access, section 6](remote-access.md#6-what-changes-for-a-real-deploy).
+in [remote access, section 7](remote-access.md#7-what-changes-for-a-real-deploy).
 
 ## 1. Database and email setup
 
 Accounts need Postgres and an SMTP server. `compose.yaml` runs both locally: Postgres 17 and Mailpit, which keeps
 every email in a web inbox instead of delivering it. The addresses and ports are in the table in
-[remote access, section 5](remote-access.md#5-database-and-email).
+[remote access, section 6](remote-access.md#6-database-and-email).
 
 1. Copy the settings once: `cp .env.example .env`. `.env` is gitignored.
 2. `bun run db:up` starts Postgres and Mailpit and returns once Postgres is healthy. It needs Docker with Compose v2.
