@@ -1,6 +1,7 @@
 import './env'
 import { resolve } from 'node:path'
 import { createInterface } from 'node:readline'
+import { optionalEnv } from '@orch/shared/env'
 import { hostUrl } from './env'
 import { createHostCaller, runRemote } from './remote-cli'
 
@@ -28,7 +29,7 @@ try {
   process.exitCode = await runRemote(process.argv.slice(2), {
     callHost: createHostCaller(hostUrl()),
     hostRoot: resolve(import.meta.dir, '..'),
-    env: { SERVER_URL: process.env.SERVER_URL, CLIENT_URL: process.env.CLIENT_URL },
+    env: { SERVER_URL: optionalEnv('SERVER_URL'), CLIENT_URL: optionalEnv('CLIENT_URL') },
     prompt,
     out: (line) => console.log(line),
     err: (line) => console.error(line),

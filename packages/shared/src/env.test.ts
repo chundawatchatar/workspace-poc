@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { loadRootEnv, requiredEnv, urlFromEnv } from './env'
+import { loadRootEnv, optionalEnv, requiredEnv, urlFromEnv } from './env'
 
 let dir: string | undefined
 
@@ -75,5 +75,13 @@ describe('urlFromEnv', () => {
     expect(urlFromEnv('H', 'P', { H: '127.0.0.1', P: '4599' })).toBe('http://127.0.0.1:4599')
     expect(urlFromEnv('H', 'P', { H: '::1', P: '4599' })).toBe('http://[::1]:4599')
     expect(urlFromEnv('H', 'P', { H: '[::1]', P: '4599' })).toBe('http://[::1]:4599')
+  })
+})
+
+describe('optionalEnv', () => {
+  test('treats an unset or blank setting as unset', () => {
+    expect(optionalEnv('SERVER_URL', { SERVER_URL: ' ws://relay ' })).toBe('ws://relay')
+    expect(optionalEnv('SERVER_URL', { SERVER_URL: '' })).toBeUndefined()
+    expect(optionalEnv('SERVER_URL', {})).toBeUndefined()
   })
 })

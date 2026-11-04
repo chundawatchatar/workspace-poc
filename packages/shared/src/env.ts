@@ -56,6 +56,11 @@ export function loadRootEnv(options: { path?: string; env?: Record<string, strin
   }
 }
 
+/** Reads a setting that may be left out: an unset or blank one is `undefined`, so `KEY=` in `.env` means unset. */
+export function optionalEnv(key: string, env: Record<string, string | undefined> = process.env): string | undefined {
+  return env[key]?.trim() || undefined
+}
+
 /**
  * Reads a setting that must come from the env, such as an address or a port: nothing has a default in code, so the
  * env is the one place to change it. Throws with the variable's name, never a value, when it is unset or blank.

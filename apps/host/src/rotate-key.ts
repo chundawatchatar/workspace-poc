@@ -1,6 +1,7 @@
 import './env'
 import { resolve } from 'node:path'
 import { buildRequest, type RotateAccessResponse, rotateAccessResponse, routes } from '@orch/shared'
+import { optionalEnv } from '@orch/shared/env'
 import { hostUrl } from './env'
 import { AccessKeyRepository, accessKeysPath } from './modules/access/access.repository'
 import { AccessKeys, machineIdFromSecret, rotateAccess } from './modules/access/access.service'
@@ -51,7 +52,10 @@ function rotateFile(): RotateAccessResponse {
   } catch (error) {
     console.error(`ignoring the saved setting: ${error instanceof Error ? error.message : error}`)
   }
-  const clientUrl = linkClientUrl({ SERVER_URL: process.env.SERVER_URL, CLIENT_URL: process.env.CLIENT_URL }, saved)
+  const clientUrl = linkClientUrl(
+    { SERVER_URL: optionalEnv('SERVER_URL'), CLIENT_URL: optionalEnv('CLIENT_URL') },
+    saved,
+  )
   return rotateAccess({ keys, machineId: machineIdFromSecret(secret), clientUrl })
 }
 

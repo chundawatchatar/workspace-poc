@@ -3,7 +3,7 @@ import { homedir } from 'node:os'
 import { resolve } from 'node:path'
 import { websocket } from '@hono/bun'
 import type { HostInfo } from '@orch/shared'
-import { requiredEnv } from '@orch/shared/env'
+import { optionalEnv, requiredEnv } from '@orch/shared/env'
 import { SessionManager, shellProgram } from '@orch/terminal'
 import { createApp } from './app'
 import { tunnelEnv } from './lib/principal'
@@ -62,7 +62,7 @@ const remoteAccess = new RemoteAccessService({
   linkedAccounts: new LinkedAccountRepository(linkedAccountPath(hostRoot)),
   secretFile: machineSecretFile(hostRoot),
   keysFile: accessKeysPath(hostRoot),
-  env: { SERVER_URL: process.env.SERVER_URL, CLIENT_URL: process.env.CLIENT_URL },
+  env: { SERVER_URL: optionalEnv('SERVER_URL'), CLIENT_URL: optionalEnv('CLIENT_URL') },
   handle: async (request, principal) => app.fetch(request, tunnelEnv(principal)),
   openSocket: (path, headers, conn, principal) => sockets.open(path, headers, conn, principal),
 })

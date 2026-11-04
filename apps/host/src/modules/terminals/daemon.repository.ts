@@ -10,6 +10,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { optionalEnv } from '@orch/shared/env'
 import { agentSocketPath } from '@orch/terminal'
 import { z } from 'zod'
 
@@ -46,7 +47,7 @@ export class DaemonRepository {
   constructor(hostRoot: string) {
     this.records = join(hostRoot, '.data', 'terminal-daemons')
     const app = createHash('sha256').update(resolve(hostRoot)).digest('hex').slice(0, 12)
-    this.runtime = process.env.ORCH_PTY_RUNTIME ?? `/tmp/orchpty-${process.getuid?.() ?? 'user'}-${app}`
+    this.runtime = optionalEnv('ORCH_PTY_RUNTIME') ?? `/tmp/orchpty-${process.getuid?.() ?? 'user'}-${app}`
     this.socket = join(this.runtime, 'host.sock')
     for (const dir of [this.records, this.runtime]) {
       mkdirSync(dir, { recursive: true, mode: 0o700 })
