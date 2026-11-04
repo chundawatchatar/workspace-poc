@@ -14,12 +14,17 @@ export const LOCAL_OFFLINE_HINT = (
 /** The default `deniedHint`, for a user who doesn't own the machine. */
 export const DEFAULT_DENIED_HINT = "Ask the machine's owner for a new connect link."
 
+/** The default `unapprovedHint`, for an app that doesn't show the browser's fingerprint. */
+export const DEFAULT_UNAPPROVED_HINT = 'Approve this browser in the Remote access setting on the machine.'
+
 /** The hint an app passed for the current status, or null when the status has none. */
 export function useConnectionHint(): ReactNode {
   const status = useApp((s) => s.status)
-  const { offlineHint, deniedHint } = usePageOptions()
+  const { offlineHint, deniedHint, unapprovedHint } = usePageOptions()
   const { hint } = connectionCopy(status)
-  return hint === 'offline' ? offlineHint : hint === 'denied' ? deniedHint : null
+  if (hint === 'offline') return offlineHint
+  if (hint === 'denied') return deniedHint
+  return hint === 'unapproved' ? unapprovedHint : null
 }
 
 /** Opens the events socket again, for a key that was rejected. */

@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { connectionCopy } from './connection'
 import type { ConnectionStatus } from './store'
 
-const statuses: ConnectionStatus[] = ['connecting', 'open', 'reconnecting', 'offline', 'denied']
+const statuses: ConnectionStatus[] = ['connecting', 'open', 'reconnecting', 'offline', 'denied', 'unapproved']
 
 describe('connection copy', () => {
   test('each status has its own sidebar label and dot, and only a lost connection shows a banner', () => {
@@ -13,6 +13,7 @@ describe('connection copy', () => {
       ['Reconnecting…', 'bg-warn'],
       ['Machine offline', 'bg-bad'],
       ['Access denied', 'bg-bad'],
+      ['Waiting for approval', 'bg-warn'],
     ])
     expect(new Set(footer.map(([label]) => label)).size).toBe(statuses.length)
     expect(connectionCopy('open').banner).toBeNull()

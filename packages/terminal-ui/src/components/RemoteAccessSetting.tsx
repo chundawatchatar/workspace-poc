@@ -1,4 +1,4 @@
-import { type PreviewLinkResponse, type RemoteAccessStatus, routes } from '@orch/shared'
+import { type DevicesResponse, type PreviewLinkResponse, type RemoteAccessStatus, routes } from '@orch/shared'
 import { RemoteAccessForm } from '@orch/ui'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
@@ -11,9 +11,11 @@ const POLL_MS = 2000
 
 /**
  * The Remote access dialog, connected to the host's `routes.remoteAccess` and
- * `routes.access.rotate`. A link key lives only in this component's state:
- * preview and link go through `callApi`, not a mutation, so it never enters
- * TanStack Query's caches, and it is dropped on link, cancel and close.
+ * `routes.access.rotate`. While an account is linked it also lists the
+ * browsers approved for it, polled like the status. A link key lives only in
+ * this component's state: preview and link go through `callApi`, not a
+ * mutation, so it never enters TanStack Query's caches, and it is dropped on
+ * link, cancel and close.
  */
 export function RemoteAccessSetting() {
   const queryClient = useQueryClient()
@@ -21,6 +23,15 @@ export function RemoteAccessSetting() {
   const update = useMutation(apiMutation(routes.remoteAccess.update))
   const rotate = useMutation(apiMutation(routes.access.rotate))
   const unlink = useMutation(apiMutation(routes.remoteAccess.unlink))
+  const linked = Boolean(status.data?.linkedAccount)
+  const devices = useQuery({
+    ...apiQuery(routes.remoteAccess.devices, {}),
+    enabled: linked,
+    refetchInterval: POLL_MS,
+    retry: false,
+  })
+  const approveDevice = useMutation(apiMutation(routes.remoteAccess.approveDevice))
+  const removeDevice = useMutation(apiMutation(routes.remoteAccess.removeDevice))
   // What the user typed. Null means the field still shows the host's value.
   const [serverUrl, setServerUrl] = useState<string | null>(null)
   const [clientUrl, setClientUrl] = useState<string | null>(null)
@@ -59,6 +70,17 @@ export function RemoteAccessSetting() {
 
   function showStatus(next: RemoteAccessStatus) {
     queryClient.setQueryData(apiKey(routes.remoteAccess.status, {}), next)
+  }
+
+  /** Approves, dismisses or revokes a device, then shows the list the host answers. */
+  async function changeDevice(change: (input: { id: string }) => Promise<DevicesResponse>, id: string) {
+    setError(null)
+    try {
+      queryClient.setQueryData(apiKey(routes.remoteAccess.devices, {}), await change({ id }))
+    } catch (failure) {
+      setError(requestErrorMessage(failure))
+      void devices.refetch()
+    }
   }
 
   async function previewKey() {
@@ -129,8 +151,21 @@ export function RemoteAccessSetting() {
         onCancel: cancelLink,
         onUnlink: unlinkAccount,
       }}
+      devices={{
+        devices: devices.data,
+        onApprove: (id) => changeDevice(approveDevice.mutateAsync, id),
+        onDismiss: (id) => changeDevice(removeDevice.mutateAsync, id),
+        onRevoke: (id) => changeDevice(removeDevice.mutateAsync, id),
+      }}
       error={error}
-      busy={update.isPending || rotate.isPending || unlink.isPending || linking}
+      busy={
+        update.isPending ||
+        rotate.isPending ||
+        unlink.isPending ||
+        approveDevice.isPending ||
+        removeDevice.isPending ||
+        linking
+      }
       onClose={() => setOverlay(null)}
     />
   )

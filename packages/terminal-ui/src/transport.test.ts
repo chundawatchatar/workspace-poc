@@ -4,11 +4,13 @@ import {
   buildRequest,
   buildSocketUrl,
   CLOSE_ACCESS_DENIED,
+  DEVICE_PROOF_HEADER,
   RELAY_TICKET_HEADER,
   relaySocketProtocols,
   routes,
 } from '@orch/shared'
 import { callApi } from './lib/api'
+import { type DeviceSigner, deviceSigner } from './lib/deviceProof'
 import { connect, getSnapshot } from './lib/store'
 import { createLocalTransport, createRemoteTransport, type HostTransport } from './transport'
 
@@ -62,6 +64,30 @@ function recordingServer(count: number) {
   })
   servers.push(server)
   return { base: `http://localhost:${server.port}`, seen, messages, received }
+}
+
+/** A fresh WebCrypto device key, as a browser keeps one. */
+async function testSigner(): Promise<DeviceSigner> {
+  return deviceSigner(
+    await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify']),
+  )
+}
+
+/** The payload of a device proof. */
+const payloadOf = (proof: string) => JSON.parse(Buffer.from(proof.split('.')[1] ?? '', 'base64url').toString())
+
+/** True when `proof` carries `signer`'s public key and its signature verifies under it. */
+async function signedBy(proof: string, signer: DeviceSigner) {
+  const [header = '', payload = '', signature = ''] = proof.split('.')
+  const { jwk } = JSON.parse(Buffer.from(header, 'base64url').toString())
+  if (jwk.x !== signer.publicJwk.x || jwk.y !== signer.publicJwk.y) return false
+  const key = await crypto.subtle.importKey('jwk', jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify'])
+  return crypto.subtle.verify(
+    { name: 'ECDSA', hash: 'SHA-256' },
+    key,
+    Buffer.from(signature, 'base64url'),
+    new TextEncoder().encode(`${header}.${payload}`),
+  )
 }
 
 describe('the page transport', () => {
@@ -123,24 +149,33 @@ describe('the page transport', () => {
     expect(seen.every((s) => !s.url.includes(accessKey))).toBe(true)
   })
 
-  test('without a key, requests share a relay ticket header and each socket opens with a fresh ticket', async () => {
+  test('without a key, requests share a relay ticket, each request and socket carries a fresh device proof', async () => {
     const { base, seen, messages, received } = recordingServer(2)
     let issued = 0
     const relayTicket = async () => ({
       ticket: `t${++issued}`,
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
     })
-    const transport = createRemoteTransport({ serverUrl: base, machineId: 'm1', relayTicket })
+    const device = await testSigner()
+    const transport = createRemoteTransport({ serverUrl: base, machineId: 'm1', relayTicket, device })
 
     await Promise.all([
-      transport.request('/api/git/status', { headers: { 'content-type': 'application/json' } }),
-      transport.request('/api/system/health', {}),
+      transport.request('/api/git/status?cwd=%2Ftmp', { headers: { 'content-type': 'application/json' } }),
+      transport.request('/api/system/health', { method: 'post', body: '{"a":1}' }),
     ])
     expect(seen.map((s) => [s.headers[RELAY_TICKET_HEADER], ACCESS_KEY_HEADER in s.headers])).toEqual([
       ['t1', false],
       ['t1', false],
     ])
     expect(seen[0].headers.cookie).toBeUndefined()
+    const proofs = seen.map((s) => s.headers[DEVICE_PROOF_HEADER] ?? '')
+    expect(await Promise.all(proofs.map((proof) => signedBy(proof, device)))).toEqual([true, true])
+    const [get, post] = proofs.map(payloadOf)
+    expect(get).toMatchObject({ aud: 'm1', method: 'GET', path: '/api/git/status?cwd=%2Ftmp' })
+    expect(post).toMatchObject({ aud: 'm1', method: 'POST', path: '/api/system/health' })
+    expect(get.nonce).not.toBe(post.nonce)
+    expect(get.bodySha256).not.toBe(post.bodySha256)
+    await expect(transport.request('/api/x', { method: 'POST', body: new Uint8Array([1]) })).rejects.toThrow()
 
     const socket = transport.openSocket('/ws/events')
     expect(socket.url).toBe(`${base.replace('http', 'ws')}/m/m1/ws/events`)
@@ -149,12 +184,19 @@ describe('the page transport', () => {
     socket.close()
     expect(seen[2].headers['sec-websocket-protocol']).toBe(relaySocketProtocols('t2').join(', '))
     expect(seen[2].url).not.toContain('t2')
-    expect(messages).toEqual([JSON.stringify({ type: 'auth', account: true }), 'from the page'])
+    const [auth, fromPage] = messages
+    const { device: proof, ...rest } = JSON.parse(auth ?? '')
+    expect(rest).toEqual({ type: 'auth', account: true })
+    expect(await signedBy(proof, device)).toBe(true)
+    expect(payloadOf(proof)).toMatchObject({ aud: 'm1', method: 'WS', path: '/ws/events' })
+    expect(fromPage).toBe('from the page')
   })
 
-  test('without a key, an account that cannot open the machine gets 401 and a denied socket', async () => {
+  test('without a key, an account that cannot open the machine gets 401 and a denied socket, and no device key throws', async () => {
     const { base, seen } = recordingServer(1)
-    const transport = createRemoteTransport({ serverUrl: base, machineId: 'm1', relayTicket: async () => null })
+    const device = await testSigner()
+    const relayTicket = async () => null
+    const transport = createRemoteTransport({ serverUrl: base, machineId: 'm1', relayTicket, device })
     expect((await transport.request('/api/system/health', {})).status).toBe(401)
     const socket = transport.openSocket('/ws/events')
     const closed = await new Promise<CloseEvent>((resolve) => {
@@ -162,6 +204,7 @@ describe('the page transport', () => {
     })
     expect(closed.code).toBe(CLOSE_ACCESS_DENIED)
     expect(seen).toEqual([])
+    expect(() => createRemoteTransport({ serverUrl: base, machineId: 'm1', relayTicket })).toThrow()
   })
 
   test('the remote transport uses wss:// for an https server and rejects other schemes', () => {

@@ -1,4 +1,4 @@
-import { createRemoteTransport, TerminalUI, type TerminalUIProps } from '@orch/terminal-ui'
+import { createRemoteTransport, type DeviceSigner, TerminalUI, type TerminalUIProps } from '@orch/terminal-ui'
 import { Button } from '@orch/ui'
 import { ArrowLeft } from '@orch/ui/icons'
 import { useQuery } from '@tanstack/react-query'
@@ -6,6 +6,7 @@ import { Link, Outlet, useNavigate, useParams } from '@tanstack/react-router'
 import { type ReactNode, useCallback, useMemo } from 'react'
 import { machinesQuery, relayTicketFor } from '../../lib/accountMachines'
 import { sessionQuery } from '../../lib/auth'
+import { loadDeviceKey } from '../../lib/deviceKey'
 import { machinePath, useMachines } from '../../lib/machines'
 import { AccountMenu } from '../account/AccountMenu'
 import { Centered, linkClass } from '../Centered'
@@ -15,12 +16,28 @@ function serverUrl(): string {
   return import.meta.env.VITE_SERVER_URL || location.origin
 }
 
-/** The machine a page opens: with `key` through its access key, without it through the signed-in account's tickets. */
+/**
+ * The machine a page opens: with `key` through its access key, without it through the signed-in account's tickets
+ * and this browser's `device` key, whose `fingerprint` the user approves on the machine.
+ */
 interface OpenedMachine {
   id: string
   name: string
   key?: string
+  device?: { signer: DeviceSigner; fingerprint: string }
 }
+
+/**
+ * This browser's device key, loaded once. It isn't account data: the same key opens every machine and account in this
+ * browser profile, and only its public half and signatures ever leave it.
+ */
+const deviceKeyQuery = {
+  queryKey: ['device-key'],
+  queryFn: () => loadDeviceKey(),
+  staleTime: Number.POSITIVE_INFINITY,
+  gcTime: Number.POSITIVE_INFINITY,
+  retry: false,
+} as const
 
 /**
  * A machine's page, or a note that it isn't linked here. A key saved in this browser wins, so a connect link opens
@@ -44,13 +61,28 @@ function Loading() {
   )
 }
 
-/** A machine opened through the account, named from the account's list. */
+/** A machine opened through the account, named from the account's list, once this browser's device key is loaded. */
 function AccountMachinePage({ machineId, userId }: { machineId: string; userId: string }) {
   const list = useQuery(machinesQuery(userId))
+  const device = useQuery(deviceKeyQuery)
+  if (device.isError) {
+    return (
+      <Centered>
+        <p role="alert">This browser could not keep a device key, which opening a machine through the account needs.</p>
+        <Button variant="secondary" pending={device.isFetching} onClick={() => void device.refetch()}>
+          Retry
+        </Button>
+      </Centered>
+    )
+  }
   // Once listed, a failed refetch keeps the page open rather than tearing down its terminals.
-  if (list.data) {
+  if (list.data && device.data) {
     const listed = list.data.machines.find((m) => m.machineId === machineId)
-    return listed ? <MachineTerminalUI machine={{ id: machineId, name: listed.name }} /> : <NotLinked />
+    return listed ? (
+      <MachineTerminalUI machine={{ id: machineId, name: listed.name, device: device.data }} />
+    ) : (
+      <NotLinked />
+    )
   }
   if (list.isError) {
     return (
@@ -95,23 +127,37 @@ const accountDeniedHint = (
   </>
 )
 
+/** What to do while the machine waits for its owner to approve this browser. */
+function unapprovedHint(fingerprint: string): ReactNode {
+  return (
+    <>
+      Approve this browser on the machine: open Remote access there and approve{' '}
+      <code className="rounded bg-raised px-1.5 py-0.5 font-mono text-ink">{fingerprint}</code>. Approve only this
+      fingerprint.
+    </>
+  )
+}
+
 function MachineTerminalUI({ machine }: { machine: OpenedMachine }) {
-  const { id, name, key } = machine
+  const { id, name, key, device } = machine
+  const signer = device?.signer
+  const fingerprint = device?.fingerprint
   const { workspaceId } = useParams({ strict: false })
   const routerNavigate = useNavigate()
 
   // One transport per machine and key, so moving between workspaces keeps the connection. Without a key, the
-  // account opens the machine with relay tickets.
+  // account opens the machine with relay tickets and this browser's device key.
   const transport = useMemo(
     () =>
       createRemoteTransport({
         serverUrl: serverUrl(),
         machineId: id,
-        ...(key ? { accessKey: key } : { relayTicket: () => relayTicketFor(id) }),
+        ...(key ? { accessKey: key } : { relayTicket: () => relayTicketFor(id), device: signer }),
       }),
-    [id, key],
+    [id, key, signer],
   )
   const deniedHint: ReactNode = key ? keyDeniedHint : accountDeniedHint
+  const unapproved = useMemo(() => (fingerprint ? unapprovedHint(fingerprint) : undefined), [fingerprint])
   const info = useMemo(() => ({ id, name }), [id, name])
   const navigate = useCallback<TerminalUIProps['navigate']>(
     ({ workspaceId }, options) =>
@@ -154,6 +200,7 @@ function MachineTerminalUI({ machine }: { machine: OpenedMachine }) {
       header={header}
       offlineHint={offlineHint}
       deniedHint={deniedHint}
+      unapprovedHint={unapproved}
       titleSuffix={name}
     >
       <Outlet />

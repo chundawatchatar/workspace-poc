@@ -163,6 +163,26 @@ it unchanged; the host checks it:
 - the account was linked through the server address in use;
 - on a socket, the ticket hasn't opened another socket already.
 
+A ticket alone opens nothing. Each browser profile keeps its own device key
+(a non-exportable ECDSA P-256 key pair in IndexedDB) and signs a fresh proof
+for every request (`x-orch-device-proof`) and socket (`device` in its first
+message), naming this machine, the method, the path, the body's hash, the time
+and a random nonce. The host also checks:
+
+- the proof verifies under the public key it carries, and matches this request;
+- its time is within 5 minutes of the machine's clock, and its nonce is unused;
+- the device is approved on this machine.
+
+A valid ticket and proof from a device that isn't approved yet get a 403
+`device_not_approved` on a request, or close a socket with 4403, and the device
+waits in the Remote access setting's Devices list (at most 5, for 15 minutes
+each), by the fingerprint its browser shows, such as `ABCD-EFGH-JKMN-PQRS`. The
+browser's page says which fingerprint to approve, and opens by itself once it
+is. Approve only a fingerprint shown in your own browser. Approved devices are
+kept in `apps/host/.data/devices.json` (public keys only; delete it to approve
+again); Revoke takes one away and closes what it has open. Every browser must
+be approved once, and an older page, which sends no proof, is refused.
+
 Anything else gets the same refusal as a wrong key. Access keys from connect
 links keep working, and a request that carries a key is judged by the key
 alone. A `linked-account.json` saved before this (with no user id or public
@@ -171,15 +191,20 @@ again with a new enrollment key. The server and the host must be updated
 together for this, since `enroll.redeemed` now carries the account's id and the
 public keys.
 
-"Unlink" deletes that file, so this machine forgets the account, and closes the
-sockets the account has open. It is local only: the server still lists the
+"Unlink" deletes that file and the approved devices, so this machine forgets
+the account and its browsers, and closes the sockets the account has open. It is local only: the server still lists the
 machine until you unlink it from the client's home page, but the machine
 refuses that account's tickets from then on.
 
-Accepted risks, until device approval and end-to-end encryption: the server is
-trusted for access. It says who is signed in, so it decides who owns an
-enrollment key and who gets relay tickets, and a leaked `RELAY_SIGNING_KEY` or
-a compromised server could open every linked machine of every account. Revoking a session or unlinking on the server stops new tickets at
+Accepted risks: the server still says who is signed in, so it decides who owns
+an enrollment key and who gets relay tickets, but a leaked `RELAY_SIGNING_KEY`
+or a compromised server can't open a machine without an approved browser. It
+can mint tickets to put its own key in the Devices list, hoping you approve it,
+which is why the fingerprint must be one your own browser shows. Until
+end-to-end encryption, a compromised server can read and inject into a session
+an approved browser opens, and capture an access key from a connect link,
+which device approval doesn't cover. A browser whose clock is more than 5
+minutes off is refused. Revoking a session or unlinking on the server stops new tickets at
 once, but a ticket already issued works for up to a minute, and an open socket
 stays until it closes; unlinking on the host closes them. A refused ticket sends
 `auth.failed`, so it counts against the browser's bad-key limit like a wrong

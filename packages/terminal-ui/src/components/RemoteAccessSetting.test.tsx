@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { type LinkedAccount, type RemoteAccessStatus, routes } from '@orch/shared'
+import { type DevicesResponse, type LinkedAccount, type RemoteAccessStatus, routes } from '@orch/shared'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -13,8 +13,28 @@ afterEach(() => disconnect())
 const key = `oek_${'k'.repeat(43)}`
 const account = { name: 'Ada Lovelace', maskedEmail: 'a***@example.com' }
 
-/** Renders the dialog against a fake host that answers the link endpoints and records what it was sent. */
-function setup() {
+const linkedAccount: LinkedAccount = {
+  ...account,
+  serverUrl: 'wss://relay.example.com',
+  linkedAt: '2026-11-04T12:00:00.000Z',
+}
+const deviceA = { id: 'a'.repeat(43), fingerprint: 'AAAA-AAAA-AAAA-AAAA' }
+const deviceB = { id: 'b'.repeat(43), fingerprint: 'BBBB-BBBB-BBBB-BBBB' }
+const deviceC = { id: 'c'.repeat(43), fingerprint: 'CCCC-CCCC-CCCC-CCCC' }
+
+/**
+ * Renders the dialog against a fake host that answers the link and device endpoints and records what it was sent.
+ * `linked` starts it linked, with two browsers waiting and one approved.
+ */
+function setup({ linked = false } = {}) {
+  const seenAt = '2026-11-04T12:05:00.000Z'
+  let devices: DevicesResponse = {
+    pending: [
+      { ...deviceA, firstSeenAt: seenAt },
+      { ...deviceB, firstSeenAt: seenAt },
+    ],
+    approved: [{ ...deviceC, approvedAt: seenAt }],
+  }
   let status: RemoteAccessStatus = {
     enabled: true,
     serverUrl: 'wss://relay.example.com',
@@ -24,12 +44,13 @@ function setup() {
     clientUrlFromEnv: false,
     machineId: 'm-1',
     tunnel: 'connected',
-    linkedAccount: null,
+    linkedAccount: linked ? linkedAccount : null,
   }
   const sent: [string, unknown][] = []
   const transport: HostTransport = {
     request: async (path, init) => {
       if (path === routes.remoteAccess.status.path) return Response.json(status)
+      if (path === routes.remoteAccess.devices.path) return Response.json(devices)
       const body: unknown = JSON.parse(String(init.body))
       sent.push([path, body])
       if (path === routes.remoteAccess.previewLink.path) {
@@ -44,13 +65,26 @@ function setup() {
         })
       }
       if (path === routes.remoteAccess.link.path) {
-        const linkedAccount: LinkedAccount = {
-          ...account,
-          serverUrl: status.serverUrl,
-          linkedAt: '2026-11-04T12:00:00.000Z',
-        }
         status = { ...status, linkedAccount }
         return Response.json(status)
+      }
+      if (path === routes.remoteAccess.approveDevice.path) {
+        const { id } = body as { id: string }
+        const device = devices.pending.find((d) => d.id === id)
+        if (!device) return new Response('No browser with this id is waiting', { status: 404 })
+        devices = {
+          pending: devices.pending.filter((d) => d.id !== id),
+          approved: [{ id, fingerprint: device.fingerprint, approvedAt: seenAt }, ...devices.approved],
+        }
+        return Response.json(devices)
+      }
+      if (path === routes.remoteAccess.removeDevice.path) {
+        const { id } = body as { id: string }
+        devices = {
+          pending: devices.pending.filter((d) => d.id !== id),
+          approved: devices.approved.filter((d) => d.id !== id),
+        }
+        return Response.json(devices)
       }
       if (path === routes.remoteAccess.unlink.path) {
         status = { ...status, linkedAccount: null }
@@ -104,5 +138,31 @@ describe('RemoteAccessSetting', () => {
     await user.click(screen.getByRole('button', { name: 'Unlink' }))
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'Link key' })).toHaveValue(''))
     expect(sent.at(-1)).toEqual([routes.remoteAccess.unlink.path, {}])
+  })
+  test('lists waiting and approved browsers by fingerprint, and Approve, Dismiss and Revoke update the list', async () => {
+    const user = userEvent.setup()
+    const { sent } = setup({ linked: true })
+    const waiting = await screen.findByRole('list', { name: 'Waiting for approval' })
+    expect(waiting).toHaveTextContent(deviceA.fingerprint)
+    expect(waiting).toHaveTextContent(deviceB.fingerprint)
+    expect(screen.getByRole('region', { name: 'Devices' })).toHaveTextContent(
+      'Approve only a fingerprint shown in your own browser',
+    )
+    expect(screen.getByRole('list', { name: 'Approved' })).toHaveTextContent(deviceC.fingerprint)
+
+    await user.click(screen.getByRole('button', { name: `Approve ${deviceA.fingerprint}` }))
+    expect(await screen.findByRole('button', { name: `Revoke ${deviceA.fingerprint}` })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: `Dismiss ${deviceB.fingerprint}` }))
+    await waitFor(() => expect(screen.queryByRole('list', { name: 'Waiting for approval' })).not.toBeInTheDocument())
+    await user.click(screen.getByRole('button', { name: `Revoke ${deviceC.fingerprint}` }))
+    await waitFor(() =>
+      expect(screen.getByRole('list', { name: 'Approved' })).not.toHaveTextContent(deviceC.fingerprint),
+    )
+
+    expect(sent).toEqual([
+      [routes.remoteAccess.approveDevice.path, { id: deviceA.id }],
+      [routes.remoteAccess.removeDevice.path, { id: deviceB.id }],
+      [routes.remoteAccess.removeDevice.path, { id: deviceC.id }],
+    ])
   })
 })

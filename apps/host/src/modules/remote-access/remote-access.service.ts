@@ -1,13 +1,13 @@
 import { existsSync } from 'node:fs'
 import { hostname } from 'node:os'
 import type {
+  DevicesResponse,
   LinkBody,
   PreviewLinkBody,
   PreviewLinkResponse,
   RemoteAccessStatus,
   UpdateRemoteAccessBody,
 } from '@orch/shared'
-import type { Principal } from '../../lib/principal'
 import { AccessKeyRepository } from '../access/access.repository'
 import {
   AccessKeys,
@@ -27,7 +27,15 @@ import {
   type TunnelClientOptions,
 } from '../tunnel/tunnel.service'
 import type { OpenSocket } from '../tunnel/tunnel-channels.service'
-import type { Credentials, TunnelHandler } from '../tunnel/tunnel-http.service'
+import {
+  type Authorization,
+  type Credentials,
+  DEVICE_NOT_APPROVED,
+  type TunnelHandler,
+} from '../tunnel/tunnel-http.service'
+import { SpentNonces, verifyDeviceProof } from './device-proof.service'
+import type { DevicesRepository } from './devices.repository'
+import { DevicesService } from './devices.service'
 import type { LinkedAccountRepository, SavedLinkedAccount } from './linked-account.repository'
 import { SpentTickets, verifyRelayTicket } from './relay-ticket.service'
 import type { RemoteAccessRepository, RemoteAccessSettings } from './remote-access.repository'
@@ -52,6 +60,8 @@ export interface RemoteAccessServiceOptions {
   repository: RemoteAccessRepository
   /** Where the linked account is kept. */
   linkedAccounts: LinkedAccountRepository
+  /** Where the browsers approved for the linked account are kept. */
+  devices: DevicesRepository
   /** The machine secret file, created the first time remote access is needed. */
   secretFile: string
   /** The access keys file. */
@@ -69,6 +79,9 @@ export interface RemoteAccessServiceOptions {
 
 /** A setting the host refuses, such as a server address `parseServerUrl` rejects. Its message is meant for the user. */
 export class InvalidRemoteAccessSetting extends Error {}
+
+/** An id that is neither a waiting nor an approved device. */
+export class UnknownDevice extends Error {}
 
 /** Why linking with a key failed, with the HTTP status to answer. Its message is meant for the user and never holds the key. */
 export class LinkError extends Error {
@@ -126,7 +139,7 @@ const ENROLL_FAILURES = {
 
 /**
  * Owns remote access while the host runs: the saved setting, the machine
- * secret, the access keys, the tunnel and the linked account. `SERVER_URL` and `CLIENT_URL`
+ * secret, the access keys, the tunnel, the linked account and its devices. `SERVER_URL` and `CLIENT_URL`
  * override the saved addresses, and `SERVER_URL` turns the tunnel on at start
  * whatever the saved flag says. Nothing is read from disk until `start()`.
  */
@@ -142,10 +155,15 @@ export class RemoteAccessService {
   private tunnelUrl: string | null = null
   /** The relay tickets sockets have opened with, so each opens one socket. */
   private readonly spentTickets = new SpentTickets()
+  /** The device proof nonces already used, so each proof admits one request or socket. */
+  private readonly spentNonces = new SpentNonces()
+  /** The browsers approved for the linked account, and those waiting. */
+  private readonly devices: DevicesService
 
   constructor(private readonly options: RemoteAccessServiceOptions) {
     this.env = { SERVER_URL: options.env?.SERVER_URL || undefined, CLIENT_URL: options.env?.CLIENT_URL || undefined }
     this.defaultServerUrl = options.defaultServerUrl ?? DEFAULT_SERVER_URL
+    this.devices = new DevicesService(options.devices)
   }
 
   /**
@@ -164,6 +182,7 @@ export class RemoteAccessService {
     } catch (error) {
       console.error(`no linked account: ${error instanceof Error ? error.message : 'it could not be read'}`)
     }
+    this.devices.start()
     if (this.env.CLIENT_URL && !parseClientUrl(this.env.CLIENT_URL)) {
       console.error('CLIENT_URL must be an http:// or https:// URL. Ignoring it')
     }
@@ -264,6 +283,8 @@ export class RemoteAccessService {
     }
     // Linked while this call waited: keep the first account rather than overwrite it.
     if (this.linked) throw new LinkError(409, 'Unlink first')
+    // Approvals belong to an account, so none left from an earlier one carries over.
+    this.devices.clear()
     const account = {
       ...answer.account,
       serverUrl: inUse,
@@ -277,14 +298,41 @@ export class RemoteAccessService {
   }
 
   /**
-   * Forgets the linked account on this machine and closes the sockets it
-   * opened. The server still lists the machine until it is unlinked there.
+   * Forgets the linked account on this machine, with its approved and waiting
+   * devices, and closes the sockets it opened. The server still lists the
+   * machine until it is unlinked there.
    */
   unlink(): RemoteAccessStatus {
     this.options.linkedAccounts.remove()
     this.linked = null
+    this.devices.clear()
     this.tunnel?.closeChannels((principal) => principal.kind === 'account', 'account unlinked')
     return this.status()
+  }
+
+  /** The browsers approved to open this machine through the linked account, and those waiting. */
+  listDevices(): DevicesResponse {
+    return this.devices.list()
+  }
+
+  /** Approves a waiting browser. Throws `UnknownDevice` for an id that is neither waiting nor approved. */
+  approveDevice(id: string): DevicesResponse {
+    if (!this.devices.approve(id)) throw new UnknownDevice('No browser with this id is waiting')
+    return this.devices.list()
+  }
+
+  /**
+   * Dismisses a waiting browser, or revokes an approved one and closes the
+   * sockets it opened. An unknown id changes nothing.
+   */
+  removeDevice(id: string): DevicesResponse {
+    if (this.devices.remove(id) === 'approved') {
+      this.tunnel?.closeChannels(
+        (principal) => principal.kind === 'account' && principal.deviceId === id,
+        'device revoked',
+      )
+    }
+    return this.devices.list()
   }
 
   /**
@@ -292,20 +340,31 @@ export class RemoteAccessService {
    * alone. A relay ticket opens the machine as the linked account only when
    * it is signed with one of the server's saved public keys, names this
    * machine and the linked account, hasn't expired, and comes through the
-   * server address the account was linked through. With `once`, as for a
+   * server address the account was linked through, and only with a device
+   * proof for this request whose nonce is unspent, from a device approved on
+   * this machine. A valid ticket and proof from any other device records it
+   * as waiting and answers `DEVICE_NOT_APPROVED`. With `once`, as for a
    * socket, a ticket that already opened one is refused. A linked file
    * without `accountId` or `relayKeys` accepts no ticket.
    */
-  authorize({ key, ticket, once = false }: Credentials): Principal | null {
+  authorize({ key, ticket, device = null, once = false }: Credentials): Authorization {
     if (key !== null) return this.keys?.authorize(key) ?? null
     const linked = this.linked
     const machineId = this.machineId()
-    if (!ticket || !linked?.accountId || !linked.relayKeys || !machineId) return null
+    if (!ticket || !device || !linked?.accountId || !linked.relayKeys || !machineId) return null
     if (linked.serverUrl !== this.serverUrl()) return null
     const now = Date.now()
     const payload = verifyRelayTicket(ticket, { keys: linked.relayKeys, machineId, accountId: linked.accountId, now })
-    if (!payload || (once && !this.spentTickets.spend(payload, now))) return null
-    return { kind: 'account', accountId: payload.sub }
+    if (!payload) return null
+    const { proof, ...request } = device
+    const verified = verifyDeviceProof(proof, { machineId, ...request, now })
+    if (!verified || !this.spentNonces.spend(verified.nonce, now)) return null
+    if (once && !this.spentTickets.spend(payload, now)) return null
+    if (!this.devices.isApproved(verified.deviceId)) {
+      this.devices.recordPending(verified.deviceId, verified.publicKey)
+      return DEVICE_NOT_APPROVED
+    }
+    return { kind: 'account', accountId: payload.sub, deviceId: verified.deviceId }
   }
 
   /**

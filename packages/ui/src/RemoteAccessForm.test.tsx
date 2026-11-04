@@ -55,6 +55,7 @@ function setup(overrides: Partial<Props> = {}) {
     onNewLink: mock(),
     link: null,
     accountLink: accountLinkProps(),
+    devices: { devices: undefined, onApprove: mock(), onDismiss: mock(), onRevoke: mock() },
     error: null,
     busy: false,
     onClose: mock(),

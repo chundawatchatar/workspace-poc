@@ -1,4 +1,4 @@
-import { ACCESS_KEY_HEADER, RELAY_TICKET_HEADER } from '@orch/shared'
+import { ACCESS_KEY_HEADER, DEVICE_PROOF_HEADER, RELAY_TICKET_HEADER } from '@orch/shared'
 import type { Context, MiddlewareHandler } from 'hono'
 
 /** The headers every response from the server carries, relayed ones included. */
@@ -22,7 +22,7 @@ export const SANDBOX_CSP = "sandbox; default-src 'none'; frame-ancestors 'none'"
 // What a cross-origin page may send to a machine. The key or ticket header is
 // the one that makes every machine request non-simple, so browsers preflight it.
 const ALLOWED_METHODS = 'GET, HEAD, POST, PUT, PATCH, DELETE'
-const ALLOWED_HEADERS = `${ACCESS_KEY_HEADER}, ${RELAY_TICKET_HEADER}, content-type`
+const ALLOWED_HEADERS = `${ACCESS_KEY_HEADER}, ${RELAY_TICKET_HEADER}, ${DEVICE_PROOF_HEADER}, content-type`
 const PREFLIGHT_MAX_AGE_SECONDS = '600'
 
 /** Adds `SECURITY_HEADERS` to every response, after the handler has made it. */

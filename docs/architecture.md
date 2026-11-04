@@ -53,6 +53,7 @@ interface TerminalUIProps {
   header?: ReactNode            // client only: back to the machine list, account menu
   offlineHint?: ReactNode       // what to do when the host is offline
   deniedHint?: ReactNode        // what to do when the host rejects the access key
+  unapprovedHint?: ReactNode    // what to do while the machine waits to approve this browser
   titleSuffix?: string          // follows the workspace name in the document title
   children: ReactNode           // the main area, from the app's router outlet (home, workspace or not found)
 }
@@ -61,8 +62,9 @@ interface TerminalUIProps {
 The remote transport sends requests to `/m/<machineId>/api/*` and sockets to `/m/<machineId>/ws/*` on the server.
 The machine's access key goes in the `x-orch-access-key` header, or in an `{ type: 'auth', key }` first message on a
 socket, never in a URL. Without a key, a signed-in account sends a relay ticket in the `x-orch-relay-ticket` header,
-or as a socket subprotocol with `{ type: 'auth', account: true }` as the first message. These pieces live in
-`packages/shared/src/contracts/remote.ts` and `relayTicket.ts`.
+or as a socket subprotocol, together with a fresh device proof from this browser's key: in the
+`x-orch-device-proof` header, or in the first message, `{ type: 'auth', account: true, device }`. These pieces live
+in `packages/shared/src/contracts/remote.ts`, `relayTicket.ts` and `deviceProof.ts`.
 
 `apps/web` becomes a thin shell that renders `terminal-ui` with the local transport. `apps/client` renders it with
 the remote transport for the machine the user picked. Neither app reimplements anything inside the page. When a new
@@ -110,8 +112,9 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   sign-out and password reset, and sends its emails through the mailer. It reaches the database only through
   `domain.forAuthLibrary()`. Sessions live in the database, and the cookie cache is off, so every request reads the
   session there and a sign-out or a password reset (which revokes every session) ends a session on its very next
-  request. An account opens a machine only through a relay ticket the machine verifies, and only when the machine
-  linked that account with an enrollment key; see [accounts.md](accounts.md#7-accounts-and-machine-access-keys).
+  request. An account opens a machine only through a relay ticket the machine verifies, with a proof from a browser
+  the machine's owner approved on the machine, and only when the machine linked that account with an enrollment
+  key; see [accounts.md](accounts.md#7-accounts-and-machine-access-keys).
 - Sessions can be listed and ended, and each revocation takes effect on the session's very next request, both in
   Better Auth and in our `auth: 'user'` endpoints. A user has Better Auth's core endpoints:
   `GET /api/auth/list-sessions` (their own sessions only), `POST /api/auth/revoke-session` (one session by its token,
@@ -136,10 +139,10 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   ticket instead: a 60-second Ed25519 signature from `serverRoutes.machines.relayTicket`, sent in a header or a socket
   subprotocol and checked by the host against the public keys it saved when it linked. The relay passes it through
   unread. The alternative, moving the cookie to `Path=/` and attaching the account in the tunnel envelope, was
-  rejected: it would put the session on every `/m/*` request, including cross-site navigations. Accepted risk: the
-  server is trusted to issue tickets, so a leaked `RELAY_SIGNING_KEY` or a compromised server could open every linked
-  machine of every account, until device approval and end-to-end encryption (REM-2, REM-5). Its name has the `__Secure-` prefix when
-  `BETTER_AUTH_URL` is `https://` and none on `http://`.
+  rejected: it would put the session on every `/m/*` request, including cross-site navigations. A ticket alone
+  opens nothing: the host also needs a device proof from a browser approved on the machine (see "Device approval"
+  below), so a leaked `RELAY_SIGNING_KEY` or a compromised server can't open a machine by itself. The cookie's name
+  has the `__Secure-` prefix when `BETTER_AUTH_URL` is `https://` and none on `http://`.
 - In `apps/client`, `src/lib/auth.ts` is the one place that knows who is signed in. The session is a TanStack Query
   entry under `['session']` (`sessionQuery`, through Better Auth's client on the page's own origin), holding only the
   user's `id`, `email` and `name`, never a token; the root layout observes it, so it refetches when the window
@@ -236,12 +239,40 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   `online` when the in-memory `MachineRegistry` holds its tunnel, so `index.ts` builds the registry before the
   accounts modules and hands the same one to both; with more than one server instance this would be wrong (see
   "More than one server instance" below).
-- Accepted risk, server trust: the server is trusted for access until device approval. It says who is signed in, so
-  it decides who owns an enrollment key and who gets relay tickets. A leaked `RELAY_SIGNING_KEY` or a compromised
-  server could open every linked machine. Device approval (the next backlog item) and end-to-end encryption remove
-  this. Knowing a machine's id no longer puts it on an account: a machine links only by redeeming an enrollment key
-  over its own tunnel, and the host still guards every request by its access key or a relay ticket for the one
-  account it linked.
+- Device approval: the server is no longer trusted for access through the account. It still says who is signed in,
+  so it decides who owns an enrollment key and who gets relay tickets, but a ticket is not enough. Each browser
+  profile keeps one ECDSA P-256 key pair in IndexedDB (`orch-device`, `apps/client/src/lib/deviceKey.ts`), generated
+  with `extractable: false`. Every relayed request and socket carries a fresh proof
+  (`packages/terminal-ui/src/lib/deviceProof.ts`): a compact JWS (`ES256`, `typ: orch-device`) whose header holds
+  the public JWK and whose payload names the machine (`aud`), `iat`, a random 16-byte `nonce`, the method (`WS` for
+  a socket), the host path with its query string and the body's SHA-256. The host
+  (`modules/remote-access/device-proof.service.ts`) accepts an account request only with a valid ticket, then a
+  valid proof whose `iat` is within 5 minutes of its clock and whose nonce it hasn't seen (kept 10 minutes), from a
+  device it approved. The device id is the SHA-256 of the canonical JWK, and its fingerprint (`ABCD-EFGH-JKMN-PQRS`,
+  `deviceFingerprint` in `packages/shared`) is shown by the browser and by the machine. A valid ticket and proof
+  from any other device get a 403 `device_not_approved` or a 4403 close, with no `auth.failed`, and put the device
+  in a pending list in memory (at most 5, newest kept, 15 minutes each). The owner approves it in the machine's
+  local Remote access setting, which the tunnel can't reach (`routes.remoteAccess.devices`, `approveDevice`,
+  `removeDevice`, 403 through the tunnel); approved devices are saved in `apps/host/.data/devices.json` as
+  `{ id, publicKey, approvedAt }`. Revoking one closes its sockets, and unlinking the account forgets every device.
+  A fresh proof per request, rather than one bound to the ticket, is deliberate: HTTP tickets are reused for up to a
+  minute and the server mints them, so it could reuse a `jti`; the browser's `iat` plus the host's spent nonces
+  bound replay without trusting the server's clock or ids. Knowing a machine's id puts nothing on an account: a
+  machine links only by redeeming an enrollment key over its own tunnel.
+- Accepted risks that remain with device approval:
+  - Phishing the approval: a compromised server can still mint tickets, so it can push its own key into the pending
+    list and hope the owner approves it. The browser shows its own fingerprint, the setting asks the owner to approve
+    only a fingerprint shown in their own browser, and the list is capped and expires.
+  - Without end-to-end encryption (REM-2), a compromised server can read, and inject into, a session an approved
+    browser opens. It just can't open one by itself.
+  - Access keys from connect links still pass through the server in a header, so a compromised server could capture
+    and reuse one. Device approval doesn't cover key access.
+  - A non-exportable key stops a script from copying the key out of the browser. It doesn't stop script on the
+    client origin from asking the browser to sign while the page is open.
+  - A browser whose clock is more than 5 minutes off is refused, and its page can't tell that apart from a bad
+    proof.
+  - Closing open sockets when a session is revoked on the server is not done; revoking the device on the machine
+    is.
 - Enrollment keys are the only way to link a machine to an account. A signed-in user creates one with
   `serverRoutes.machines.createEnrollment` (`modules/machines/enrollment.service.ts`): `oek_` plus 32 random bytes,
   shown once with its last 4 characters as a fingerprint. The `machine_enrollments` table stores only the key's
@@ -258,7 +289,8 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   a database error) describe the machine or the server. Nothing on this path logs the key, its hash, the email or the
   account name. `enroll.redeemed` carries the owner's user id (`accountId`) and the server's relay public keys
   (`relayKeys`), which the host saves to check relay tickets later. The server is trusted to say who is signed in,
-  and so who owns a key and who gets tickets (see the server-trust risk above). Expired rows are not
+  and so who owns a key and who gets tickets, but a ticket opens a machine only with a proof from a device approved
+  on it (see "Device approval" above). Expired rows are not
   cleaned up yet, and there is no cap on outstanding keys per user.
 - Better Auth checks the `Origin` of non-GET requests against `SERVER_TRUSTED_ORIGINS` plus the origin of
   `BETTER_AUTH_URL`, and rate limits by client IP in memory (per process, reset on restart). The IP comes from the

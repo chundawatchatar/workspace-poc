@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, mock, spyOn, test } from 'bun:test'
 import {
   CLOSE_ACCESS_DENIED,
+  CLOSE_DEVICE_NOT_APPROVED,
   CLOSE_MACHINE_OFFLINE,
   type ClientEvent,
   makeWorkspace,
@@ -138,6 +139,25 @@ describe('connection status', () => {
     advance(2000)
     fake.close(CLOSE_ACCESS_DENIED)
     expect(getSnapshot().status).toBe('denied')
+  })
+
+  test('a browser waiting for approval keeps retrying with the backoff, and opens once approved', () => {
+    const fake = fakeTransport()
+    const { timer, advance, delays } = fakeTimer()
+    disconnect = connect(fake.transport, timer)
+
+    fake.close(CLOSE_DEVICE_NOT_APPROVED)
+    expect(getSnapshot().status).toBe('unapproved')
+    advance(1000)
+    fake.close(CLOSE_DEVICE_NOT_APPROVED)
+    advance(2000)
+    fake.close(CLOSE_DEVICE_NOT_APPROVED)
+    expect(delays).toEqual([1000, 2000, 4000])
+    expect(getSnapshot().status).toBe('unapproved')
+
+    advance(4000)
+    fake.hello('approved')
+    expect(getSnapshot().status).toBe('open')
   })
 
   test('a socket that opens and is closed as offline before any hello never shows open', () => {

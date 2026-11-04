@@ -71,6 +71,7 @@ function setup() {
             header: <p>Account</p>,
             offlineHint: null,
             deniedHint: null,
+            unapprovedHint: null,
             titleSuffix: 'Workspaces',
             remoteAccessSetting: false,
           }}

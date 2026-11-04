@@ -71,6 +71,15 @@ class FakeRemoteAccess {
     this.current = { ...this.current, linkedAccount: null }
     return this.current
   }
+  listDevices() {
+    return { pending: [], approved: [] }
+  }
+  approveDevice() {
+    return this.listDevices()
+  }
+  removeDevice() {
+    return this.listDevices()
+  }
 }
 
 let dir: string

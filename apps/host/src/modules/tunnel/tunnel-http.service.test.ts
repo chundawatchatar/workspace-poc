@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import {
   ACCESS_KEY_HEADER,
+  DEVICE_NOT_APPROVED_CODE,
+  DEVICE_PROOF_HEADER,
   encodeFrame,
   MAX_TUNNEL_FRAME_BYTES,
   type MachineFrame,
@@ -13,7 +15,9 @@ import { HOST_ORIGIN } from '../../lib/localOrigin'
 import { type Principal, tunnelEnv } from '../../lib/principal'
 import {
   type Authorize,
+  bodySha256,
   type Credentials,
+  DEVICE_NOT_APPROVED,
   MAX_BODY_CHUNK_BYTES,
   type TunnelHandler,
   TunnelHttp,
@@ -84,12 +88,15 @@ describe('TunnelHttp', () => {
 
   test('refuses a missing, wrong, repeated or query-string key with auth.failed, 401 and end, never calling handle', async () => {
     const seen: Credentials[] = []
-    // Accepts the key `good`, and the ticket `t-good` as the account `u1`.
+    // Accepts the key `good`, and the ticket `t-good` with the proof `p-good` as the account `u1`; the proof
+    // `p-new` stands for a device the machine hasn't approved.
     const authorize: Authorize = (credentials) => {
       seen.push(credentials)
-      const { key, ticket } = credentials
+      const { key, ticket, device } = credentials
       if (key === 'good') return principal
-      return key === null && ticket === 't-good' ? { kind: 'account', accountId: 'u1' } : null
+      if (key !== null || ticket !== 't-good') return null
+      if (device?.proof === 'p-new') return DEVICE_NOT_APPROVED
+      return device?.proof === 'p-good' ? { kind: 'account', accountId: 'u1', deviceId: 'd1' } : null
     }
     const handled: Principal[] = []
     const handledHeaders: Headers[] = []
@@ -107,34 +114,71 @@ describe('TunnelHttp', () => {
       [ACCESS_KEY_HEADER, 'good'],
     ])
     send(4, [], `/api/health?${ACCESS_KEY_HEADER}=good&key=good`)
-    // With a key header the key alone decides, even when the ticket would pass.
+    // With a key header the key alone decides, even when the ticket and proof would pass.
     send(5, [
       [ACCESS_KEY_HEADER, 'bad'],
       [RELAY_TICKET_HEADER, 't-good'],
+      [DEVICE_PROOF_HEADER, 'p-good'],
     ])
     send(6, [[RELAY_TICKET_HEADER, 't-bad']])
     send(7, [[RELAY_TICKET_HEADER, 't-good']])
-    await until(() => [1, 2, 3, 4, 5, 6, 7].every((id) => ended(frames, id)))
-
-    expect(handled).toEqual([{ kind: 'account', accountId: 'u1' }])
-    // The ticket has done its job, so the handler never sees it.
-    expect(handledHeaders[0]?.has(RELAY_TICKET_HEADER)).toBe(false)
-    expect(seen).toEqual([
-      { key: null, ticket: null },
-      { key: 'bad', ticket: null },
-      { key: null, ticket: null },
-      { key: null, ticket: null },
-      { key: 'bad', ticket: null },
-      { key: null, ticket: 't-bad' },
-      { key: null, ticket: 't-good' },
+    const body = new TextEncoder().encode('{"a":1}')
+    http.request({
+      type: 'http.request',
+      id: 8,
+      method: 'POST',
+      path: '/api/git/status?cwd=%2Ftmp',
+      headers: [
+        [RELAY_TICKET_HEADER, 't-good'],
+        [DEVICE_PROOF_HEADER, 'p-good'],
+      ],
+      body,
+    })
+    send(9, [
+      [RELAY_TICKET_HEADER, 't-good'],
+      [DEVICE_PROOF_HEADER, 'p-new'],
     ])
-    for (const id of [1, 2, 3, 4, 5, 6]) {
+    await until(() => [1, 2, 3, 4, 5, 6, 7, 8, 9].every((id) => ended(frames, id)))
+
+    expect(handled).toEqual([{ kind: 'account', accountId: 'u1', deviceId: 'd1' }])
+    // The ticket and proof have done their job, so the handler never sees them.
+    expect(handledHeaders[0]?.has(RELAY_TICKET_HEADER)).toBe(false)
+    expect(handledHeaders[0]?.has(DEVICE_PROOF_HEADER)).toBe(false)
+    const emptyHash = bodySha256()
+    expect(seen).toEqual([
+      { key: null, ticket: null, device: null },
+      { key: 'bad', ticket: null },
+      { key: null, ticket: null },
+      { key: null, ticket: null, device: null },
+      { key: 'bad', ticket: null },
+      { key: null, ticket: 't-bad', device: null },
+      { key: null, ticket: 't-good', device: null },
+      {
+        key: null,
+        ticket: 't-good',
+        device: { proof: 'p-good', method: 'POST', path: '/api/git/status?cwd=%2Ftmp', bodySha256: bodySha256(body) },
+      },
+      {
+        key: null,
+        ticket: 't-good',
+        device: { proof: 'p-new', method: 'GET', path: '/api/health', bodySha256: emptyHash },
+      },
+    ])
+    for (const id of [1, 2, 3, 4, 5, 6, 7]) {
       expect(frames.filter((f) => 'id' in f && f.id === id)).toEqual([
         { type: 'auth.failed', id },
         { type: 'http.response', id, status: 401, headers: [] },
         { type: 'http.end', id },
       ])
     }
+    // A device waiting for approval is no bad credential: a JSON 403 and no `auth.failed`.
+    expect(frames.filter((f) => 'id' in f && f.id === 9).map((f) => f.type)).toEqual([
+      'http.response',
+      'http.body',
+      'http.end',
+    ])
+    expect(frames.find((f) => f.type === 'http.response' && f.id === 9)).toMatchObject({ status: 403 })
+    expect(JSON.parse(bodyOf(frames, 9))).toMatchObject({ code: DEVICE_NOT_APPROVED_CODE })
   })
 
   test('refuses a CORS preflight without a key like any other request, since the server answers preflights', async () => {
