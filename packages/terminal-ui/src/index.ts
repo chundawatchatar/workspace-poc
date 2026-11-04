@@ -5,5 +5,6 @@ export {
   createLocalTransport,
   createRemoteTransport,
   type HostTransport,
+  type RelayTicketSource,
   type RemoteTransportOptions,
 } from './transport'

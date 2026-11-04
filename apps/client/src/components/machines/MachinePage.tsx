@@ -1,10 +1,10 @@
 import { createRemoteTransport, TerminalUI, type TerminalUIProps } from '@orch/terminal-ui'
-import { Button, FormError } from '@orch/ui'
+import { Button } from '@orch/ui'
 import { ArrowLeft } from '@orch/ui/icons'
 import { useQuery } from '@tanstack/react-query'
 import { Link, Outlet, useNavigate, useParams } from '@tanstack/react-router'
 import { type ReactNode, useCallback, useMemo } from 'react'
-import { machinesQuery } from '../../lib/accountMachines'
+import { machinesQuery, relayTicketFor } from '../../lib/accountMachines'
 import { sessionQuery } from '../../lib/auth'
 import { machinePath, useMachines } from '../../lib/machines'
 import { AccountMenu } from '../account/AccountMenu'
@@ -15,7 +15,7 @@ function serverUrl(): string {
   return import.meta.env.VITE_SERVER_URL || location.origin
 }
 
-/** The machine a page opens: with `key` through its access key, without it through the signed-in account. */
+/** The machine a page opens: with `key` through its access key, without it through the signed-in account's tickets. */
 interface OpenedMachine {
   id: string
   name: string
@@ -55,7 +55,7 @@ function AccountMachinePage({ machineId, userId }: { machineId: string; userId: 
   if (list.isError) {
     return (
       <Centered>
-        <FormError message="Loading your machines failed." />
+        <p role="alert">Loading the machine failed.</p>
         <Button variant="secondary" pending={list.isFetching} onClick={() => void list.refetch()}>
           Retry
         </Button>
@@ -68,10 +68,7 @@ function AccountMachinePage({ machineId, userId }: { machineId: string; userId: 
 function NotLinked() {
   return (
     <Centered>
-      <p>
-        This machine isn't linked to your account or in this browser. Link it with Connect a machine on the home page,
-        or open its connect link on this device.
-      </p>
+      <p>This machine isn't linked to your account.</p>
       <Link to="/" className={`text-xs ${linkClass}`}>
         Back to your machines
       </Link>
@@ -104,9 +101,14 @@ function MachineTerminalUI({ machine }: { machine: OpenedMachine }) {
   const routerNavigate = useNavigate()
 
   // One transport per machine and key, so moving between workspaces keeps the connection. Without a key, the
-  // account opens the machine.
+  // account opens the machine with relay tickets.
   const transport = useMemo(
-    () => createRemoteTransport({ serverUrl: serverUrl(), machineId: id, ...(key ? { accessKey: key } : {}) }),
+    () =>
+      createRemoteTransport({
+        serverUrl: serverUrl(),
+        machineId: id,
+        ...(key ? { accessKey: key } : { relayTicket: () => relayTicketFor(id) }),
+      }),
     [id, key],
   )
   const deniedHint: ReactNode = key ? keyDeniedHint : accountDeniedHint

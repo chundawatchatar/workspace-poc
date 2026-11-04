@@ -108,8 +108,14 @@ describe('client routes', () => {
     const at = '2026-10-30T12:00:00.000Z'
     const listed = { machineId: 'account-machine', name: 'Desktop', createdAt: at, lastOpenedAt: at, online: true }
     const firstMessages: string[] = []
+    const ticketsFor: string[] = []
+    const expiresAt = new Date(Date.now() + 60_000).toISOString()
     server.use(
       http.get('*/api/machines', () => HttpResponse.json({ machines: [listed] })),
+      http.post('*/api/machines/:machineId/relay-ticket', ({ params }) => {
+        ticketsFor.push(String(params.machineId))
+        return HttpResponse.json({ ticket: 'fake.relay.ticket', expiresAt })
+      }),
       ws
         .link(`*/m/account-machine${routes.sockets.events.path}`)
         .addEventListener('connection', ({ client }) =>
@@ -119,10 +125,12 @@ describe('client routes', () => {
     await show('/m/account-machine')
     expect((await screen.findAllByText('Desktop')).length).toBeGreaterThan(0)
     await waitFor(() => expect(firstMessages).toEqual([JSON.stringify({ type: 'auth', account: true })]))
+    // The events socket asked for its own ticket for this machine before it opened.
+    expect(ticketsFor[0]).toBe('account-machine')
     cleanup()
 
     await show('/m/other-machine')
-    expect(await screen.findByText(/isn't linked to your account or in this browser/)).toBeInTheDocument()
+    expect(await screen.findByText("This machine isn't linked to your account.")).toBeInTheDocument()
   })
 
   test('pages share the root query client', async () => {

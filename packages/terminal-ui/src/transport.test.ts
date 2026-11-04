@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { ACCESS_KEY_HEADER, buildRequest, buildSocketUrl, routes } from '@orch/shared'
+import {
+  ACCESS_KEY_HEADER,
+  buildRequest,
+  buildSocketUrl,
+  CLOSE_ACCESS_DENIED,
+  RELAY_TICKET_HEADER,
+  relaySocketProtocols,
+  routes,
+} from '@orch/shared'
 import { callApi } from './lib/api'
 import { connect, getSnapshot } from './lib/store'
 import { createLocalTransport, createRemoteTransport, type HostTransport } from './transport'
@@ -26,12 +34,10 @@ function fakeTransport() {
 let disconnect = () => {}
 const servers: Bun.Server<unknown>[] = []
 const RealWebSocket = globalThis.WebSocket
-const realFetch = globalThis.fetch
 afterEach(() => {
   disconnect()
   for (const server of servers.splice(0)) server.stop(true)
   globalThis.WebSocket = RealWebSocket
-  globalThis.fetch = realFetch
 })
 
 /** A server that records each request's URL and headers and each socket message, resolving once `count` arrive. */
@@ -117,25 +123,45 @@ describe('the page transport', () => {
     expect(seen.every((s) => !s.url.includes(accessKey))).toBe(true)
   })
 
-  test('without a key, the remote transport sends no key, includes credentials and asks for the account', async () => {
+  test('without a key, requests share a relay ticket header and each socket opens with a fresh ticket', async () => {
     const { base, seen, messages, received } = recordingServer(2)
-    const inits: RequestInit[] = []
-    globalThis.fetch = ((input: RequestInfo | URL, init: RequestInit = {}) => {
-      inits.push(init)
-      return realFetch(input, init)
-    }) as typeof fetch
-    const transport = createRemoteTransport({ serverUrl: base, machineId: 'm1' })
+    let issued = 0
+    const relayTicket = async () => ({
+      ticket: `t${++issued}`,
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    })
+    const transport = createRemoteTransport({ serverUrl: base, machineId: 'm1', relayTicket })
 
-    await transport.request('/api/git/status', { headers: { 'content-type': 'application/json' } })
-    expect(seen[0].headers[ACCESS_KEY_HEADER]).toBeUndefined()
-    expect(seen[0].headers['content-type']).toBe('application/json')
-    expect(inits[0].credentials).toBe('include')
+    await Promise.all([
+      transport.request('/api/git/status', { headers: { 'content-type': 'application/json' } }),
+      transport.request('/api/system/health', {}),
+    ])
+    expect(seen.map((s) => [s.headers[RELAY_TICKET_HEADER], ACCESS_KEY_HEADER in s.headers])).toEqual([
+      ['t1', false],
+      ['t1', false],
+    ])
+    expect(seen[0].headers.cookie).toBeUndefined()
 
     const socket = transport.openSocket('/ws/events')
+    expect(socket.url).toBe(`${base.replace('http', 'ws')}/m/m1/ws/events`)
     socket.onopen = () => socket.send('from the page')
     await received
     socket.close()
+    expect(seen[2].headers['sec-websocket-protocol']).toBe(relaySocketProtocols('t2').join(', '))
+    expect(seen[2].url).not.toContain('t2')
     expect(messages).toEqual([JSON.stringify({ type: 'auth', account: true }), 'from the page'])
+  })
+
+  test('without a key, an account that cannot open the machine gets 401 and a denied socket', async () => {
+    const { base, seen } = recordingServer(1)
+    const transport = createRemoteTransport({ serverUrl: base, machineId: 'm1', relayTicket: async () => null })
+    expect((await transport.request('/api/system/health', {})).status).toBe(401)
+    const socket = transport.openSocket('/ws/events')
+    const closed = await new Promise<CloseEvent>((resolve) => {
+      socket.onclose = resolve
+    })
+    expect(closed.code).toBe(CLOSE_ACCESS_DENIED)
+    expect(seen).toEqual([])
   })
 
   test('the remote transport uses wss:// for an https server and rejects other schemes', () => {

@@ -9,6 +9,7 @@ import { server } from '../test/msw'
 import {
   machinesQuery,
   newMachine,
+  relayTicketFor,
   renameMachineFormOptions,
   renameMachineMutation,
   sendPendingMachineLink,
@@ -297,6 +298,33 @@ describe('sendPendingMachineLink', () => {
     expect(readPendingMachineLink()).toBeNull()
     expect(posts(state).filter((r) => r.body.includes(idOne))).toHaveLength(1)
     expect(state.machines[userB.id] ?? []).toEqual([])
+  })
+})
+
+describe('relayTicketFor', () => {
+  test('answers the ticket for a listed machine, null for one the account lacks, and throws on other failures', async () => {
+    const answer = { ticket: 'fake.relay.ticket', expiresAt: '2026-10-30T12:01:00.000Z' }
+    const asked: unknown[] = []
+    server.use(
+      http.post(`*/api/machines/${idOne}/relay-ticket`, async ({ request }) => {
+        asked.push(await request.json())
+        return HttpResponse.json(answer)
+      }),
+      http.post(`*/api/machines/${idTwo}/relay-ticket`, () =>
+        HttpResponse.json({ error: { code: 'not_found', message: 'Not found.' } }, { status: 404 }),
+      ),
+    )
+    expect(await relayTicketFor(idOne)).toEqual(answer)
+    // The machine id goes in the path, so the body is empty.
+    expect(asked).toEqual([{}])
+    expect(await relayTicketFor(idTwo)).toBeNull()
+
+    server.use(
+      http.post(`*/api/machines/${idOne}/relay-ticket`, () =>
+        HttpResponse.json({ error: { code: 'internal', message: 'Failed.' } }, { status: 500 }),
+      ),
+    )
+    await expect(relayTicketFor(idOne)).rejects.toThrow()
   })
 })
 

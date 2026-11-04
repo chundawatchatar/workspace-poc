@@ -1,4 +1,10 @@
-import { type CreateEnrollmentResponse, machineNameSchema, type ServerMachine, serverRoutes } from '@orch/shared'
+import {
+  type CreateEnrollmentResponse,
+  machineNameSchema,
+  type RelayTicketResponse,
+  type ServerMachine,
+  serverRoutes,
+} from '@orch/shared'
 import { formOptions } from '@tanstack/react-form'
 import type { QueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
@@ -68,6 +74,20 @@ export function unlinkMachineMutation(queryClient: QueryClient, userId: string) 
       forgetMachine(machineId)
       return invalidateMachines(queryClient, userId)
     },
+  }
+}
+
+/**
+ * Gets a relay ticket that opens `machineId` as the signed-in account, for the machine page's transport. Null means
+ * the account doesn't list the machine. It goes around TanStack Query on purpose: a ticket is a short-lived
+ * credential, so it never sits in a query cache, storage, a URL or a log.
+ */
+export async function relayTicketFor(machineId: string): Promise<RelayTicketResponse | null> {
+  try {
+    return await callServer(serverRoutes.machines.relayTicket, { machineId })
+  } catch (error) {
+    if (error instanceof ServerError && error.code === 'not_found') return null
+    throw error
   }
 }
 
