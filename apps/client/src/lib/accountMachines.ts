@@ -1,4 +1,4 @@
-import { machineNameSchema, serverRoutes } from '@orch/shared'
+import { type CreateEnrollmentResponse, machineNameSchema, type ServerMachine, serverRoutes } from '@orch/shared'
 import { formOptions } from '@tanstack/react-form'
 import type { QueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
@@ -13,9 +13,36 @@ import { callServer, ServerError, serverMutation } from './server'
 /** How often the list is read again while it is on screen, so each machine's online state stays current. */
 export const MACHINES_REFETCH_INTERVAL = 10_000
 
-/** The query for the account's machines, in the server's order, with each one's online state. */
-export function machinesQuery(userId: string) {
-  return { ...accountQuery(userId, serverRoutes.machines.list, {}), refetchInterval: MACHINES_REFETCH_INTERVAL }
+/** How often the list is read again while the Connect a machine dialog waits for the machine to link. */
+export const MACHINES_LINKING_REFETCH_INTERVAL = 2_000
+
+/**
+ * The query for the account's machines, in the server's order, with each one's online state. With `linking` it is
+ * read every 2 seconds instead of every 10, so a machine that redeems an enrollment key shows up quickly.
+ */
+export function machinesQuery(userId: string, { linking = false }: { linking?: boolean } = {}) {
+  return {
+    ...accountQuery(userId, serverRoutes.machines.list, {}),
+    refetchInterval: linking ? MACHINES_LINKING_REFETCH_INTERVAL : MACHINES_REFETCH_INTERVAL,
+  }
+}
+
+/**
+ * Creates a single-use enrollment key. It goes around TanStack Query on purpose: the key is shown once, so the caller
+ * holds it in component state and it is gone when the dialog closes, never kept in a query or mutation cache.
+ */
+export function createEnrollment(): Promise<CreateEnrollmentResponse> {
+  return callServer(serverRoutes.machines.createEnrollment, {})
+}
+
+/**
+ * The first machine in `machines` whose id isn't in `baseline`, the ids listed when an enrollment key was created.
+ * Undefined means none is new. The client hears nothing when a key is redeemed, so a machine that appears is taken to
+ * be the one that redeemed it.
+ */
+export function newMachine(baseline: readonly string[], machines: readonly ServerMachine[]): ServerMachine | undefined {
+  const known = new Set(baseline)
+  return machines.find((machine) => !known.has(machine.machineId))
 }
 
 function invalidateMachines(queryClient: QueryClient, userId: string) {

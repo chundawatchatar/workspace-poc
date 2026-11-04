@@ -223,6 +223,14 @@ and accounts don't replace that check.
   the connect link on that device.
 - Opening a connect link also records a pending link (`apps/client/src/lib/pendingLink.ts`) with the machine's id and
   name, never the key, which is sent to `serverRoutes.machines.link` once the user is signed in.
+- The home page's Connect a machine button (`apps/client/src/components/machines/ConnectMachineDialog.tsx`) creates
+  an enrollment key with `serverRoutes.machines.createEnrollment` and shows it once: the key and the
+  `bun run host:remote link <key>` command, each with a Copy button, its fingerprint and a countdown to its expiry.
+  The key lives only in the dialog's state, never in the query cache, storage, the URL or a log, so closing the dialog
+  forgets it and opening it again creates a new one. While it is open the machines list is read every 2 seconds, and
+  the first machine that wasn't listed when the key was created is taken to be the one that redeemed it. The
+  `host:remote` command comes in a later release, and a machine linked this way has no Open link until a browser
+  holds its access key.
 - The relay still sees access keys in transit, in the header and first socket message it forwards, until end-to-end
   encryption (REM-2). It never checks or stores them.
 - A machine's online state comes from the server's in-memory `MachineRegistry`, the same one the relay uses. Offline
