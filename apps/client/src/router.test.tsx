@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
 import { PRODUCT_NAME, PRODUCT_TAGLINE } from '@orch/brand'
 import { routes } from '@orch/shared'
 import { QueryClientProvider, useQueryClient } from '@tanstack/react-query'
@@ -8,9 +8,11 @@ import { HttpResponse, http, ws } from 'msw'
 import type { ReactNode } from 'react'
 import { CheckInbox } from './components/auth/CheckInbox'
 import { signInWithEmail, signOut } from './lib/auth'
+import { deviceKeyStores, indexedDbKeyStore } from './lib/deviceKey'
 import { acceptEmailLinkToken, type EmailLinkPage, takeEmailLinkToken } from './lib/emailLink'
 import { saveMachine } from './lib/machines'
 import { authSession, authUser } from './test/betterAuth'
+import { memoryKeyStore } from './test/deviceKeyStore'
 import { server } from './test/msw'
 
 // Vite turns `?url` imports into the asset's URL; Bun would hand the root route the stylesheet's module instead.
@@ -23,6 +25,10 @@ const user = { id: 'u1', email: 'u1@example.com', name: 'U' }
 let signedIn = true
 
 // Every test here reads the session, and most read the machine list, so these answer by default.
+afterEach(() => {
+  deviceKeyStores.default = indexedDbKeyStore
+})
+
 beforeEach(() => {
   signedIn = true
   saveMachine({ id: 'saved-machine', name: 'Laptop', key: 'k1' })
@@ -122,9 +128,12 @@ describe('client routes', () => {
           client.addEventListener('message', (event) => firstMessages.push(String(event.data)), { once: true }),
         ),
     )
+    deviceKeyStores.default = memoryKeyStore().store
     await show('/m/account-machine')
     expect((await screen.findAllByText('Desktop')).length).toBeGreaterThan(0)
-    await waitFor(() => expect(firstMessages).toEqual([JSON.stringify({ type: 'auth', account: true })]))
+    await waitFor(() => expect(firstMessages).toHaveLength(1))
+    // The first message asks to be judged by the account's ticket and carries this browser's device proof.
+    expect(JSON.parse(firstMessages[0] ?? '')).toEqual({ type: 'auth', account: true, device: expect.any(String) })
     // The events socket asked for its own ticket for this machine before it opened.
     expect(ticketsFor[0]).toBe('account-machine')
     cleanup()
