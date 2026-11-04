@@ -1,5 +1,4 @@
 import { FAVICON_HREF } from '@orch/brand'
-import { HOST_PORT } from '@orch/shared'
 import {
   createLocalTransport,
   NotFound,
@@ -13,7 +12,7 @@ import { type ReactNode, useCallback } from 'react'
 import appCss from '../styles.css?url'
 
 // The host listens on the loopback address only.
-const transport = createLocalTransport(`http://127.0.0.1:${HOST_PORT}`)
+const transport = createLocalTransport(import.meta.env.VITE_HOST_URL)
 
 export const Route = createRootRoute({
   head: () => ({

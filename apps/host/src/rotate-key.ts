@@ -1,5 +1,7 @@
+import './env'
 import { resolve } from 'node:path'
-import { buildRequest, HOST_PORT, type RotateAccessResponse, rotateAccessResponse, routes } from '@orch/shared'
+import { buildRequest, type RotateAccessResponse, rotateAccessResponse, routes } from '@orch/shared'
+import { hostUrl } from './env'
 import { AccessKeyRepository, accessKeysPath } from './modules/access/access.repository'
 import { AccessKeys, machineIdFromSecret, rotateAccess } from './modules/access/access.service'
 import {
@@ -16,12 +18,12 @@ import { loadOrCreateMachineSecret, machineSecretFile } from './modules/tunnel/t
 
 const hostRoot = resolve(import.meta.dir, '..')
 
-/** The running host's answer, or null when no host with remote access answers on `HOST_PORT`. */
+/** The running host's answer, or null when no host with remote access answers at `HOST_HOST`:`HOST_PORT`. */
 async function rotateThroughHost(): Promise<RotateAccessResponse | null> {
   const { url, body } = buildRequest(routes.access.rotate, {})
   let response: Response
   try {
-    response = await fetch(`http://127.0.0.1:${HOST_PORT}${url}`, {
+    response = await fetch(`${hostUrl()}${url}`, {
       method: routes.access.rotate.method,
       headers: { 'content-type': 'application/json' },
       body,

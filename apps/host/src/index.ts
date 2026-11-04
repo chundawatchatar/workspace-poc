@@ -1,7 +1,9 @@
+import './env'
 import { homedir } from 'node:os'
 import { resolve } from 'node:path'
 import { websocket } from '@hono/bun'
-import { HOST_PORT, type HostInfo } from '@orch/shared'
+import type { HostInfo } from '@orch/shared'
+import { requiredEnv } from '@orch/shared/env'
 import { SessionManager, shellProgram } from '@orch/terminal'
 import { createApp } from './app'
 import { tunnelEnv } from './lib/principal'
@@ -75,9 +77,12 @@ const { app, sockets } = createApp({
   remoteAccess,
   agentTracking,
 })
+// The host controls this machine's shells, so it listens on loopback only; remote access goes through the relay.
+const hostname = requiredEnv('HOST_HOST')
+if (!['127.0.0.1', 'localhost', '::1'].includes(hostname)) throw new Error('HOST_HOST must be a loopback address')
 const server = Bun.serve({
-  hostname: '127.0.0.1',
-  port: HOST_PORT,
+  hostname,
+  port: Number(requiredEnv('HOST_PORT')),
   fetch: app.fetch,
   websocket,
 })

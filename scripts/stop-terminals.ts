@@ -1,12 +1,15 @@
+import '../apps/host/src/env'
 import { resolve } from 'node:path'
+import { requiredEnv } from '@orch/shared/env'
 import { DaemonRepository } from '../apps/host/src/modules/terminals/daemon.repository'
 import { stopDaemon } from '../apps/host/src/modules/terminals/daemon.service'
-import { HOST_PORT } from '../packages/shared/src'
+
+const host = { hostname: requiredEnv('HOST_HOST'), port: Number(requiredEnv('HOST_PORT')) }
 
 /** Whether a host is listening. A running host starts the daemon again for its open tabs and keeps their records. */
 async function hostRunning(): Promise<boolean> {
   try {
-    const socket = await Bun.connect({ hostname: '127.0.0.1', port: HOST_PORT, socket: { data() {} } })
+    const socket = await Bun.connect({ hostname: host.hostname, port: host.port, socket: { data() {} } })
     socket.end()
     return true
   } catch {
@@ -16,7 +19,7 @@ async function hostRunning(): Promise<boolean> {
 
 if (await hostRunning()) {
   console.error(
-    `A host is running on port ${HOST_PORT}. Stop \`bun run dev\` first: it would start the daemon again for its open tabs.`,
+    `A host is running on port ${host.port}. Stop \`bun run dev\` first: it would start the daemon again for its open tabs.`,
   )
   process.exit(1)
 }

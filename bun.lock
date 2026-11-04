@@ -84,6 +84,7 @@
         "@astrojs/mdx": "^8.1.2",
         "@astrojs/react": "^7.1.2",
         "@orch/brand": "workspace:*",
+        "@orch/shared": "workspace:*",
         "@orch/terminal-ui": "workspace:*",
         "@orch/ui": "workspace:*",
         "@tailwindcss/vite": "^4.3.3",

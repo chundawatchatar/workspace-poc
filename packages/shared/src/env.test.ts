@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { loadRootEnv } from './env'
+import { loadRootEnv, requiredEnv, urlFromEnv } from './env'
 
 let dir: string | undefined
 
@@ -59,5 +59,21 @@ describe('loadRootEnv', () => {
       URL: 'https://example.com/#frag',
       EMPTY: '',
     })
+  })
+})
+
+describe('requiredEnv', () => {
+  test('returns a set value and names a missing or blank one without echoing anything', () => {
+    expect(requiredEnv('HOST_PORT', { HOST_PORT: ' 4599 ' })).toBe('4599')
+    expect(() => requiredEnv('HOST_PORT', {})).toThrow(/^HOST_PORT is not set/)
+    expect(() => requiredEnv('HOST_PORT', { HOST_PORT: '  ' })).toThrow(/^HOST_PORT is not set/)
+  })
+})
+
+describe('urlFromEnv', () => {
+  test('builds a URL from host and port settings, bracketing an IPv6 address', () => {
+    expect(urlFromEnv('H', 'P', { H: '127.0.0.1', P: '4599' })).toBe('http://127.0.0.1:4599')
+    expect(urlFromEnv('H', 'P', { H: '::1', P: '4599' })).toBe('http://[::1]:4599')
+    expect(urlFromEnv('H', 'P', { H: '[::1]', P: '4599' })).toBe('http://[::1]:4599')
   })
 })

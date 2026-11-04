@@ -9,10 +9,10 @@ export const SITE = {
   tagline: PRODUCT_TAGLINE,
   description:
     'A free, local-first workspace for terminals and coding agents. Split panes, tabs and real shells that run on your own machine and live in your browser.',
-  domain: 'orchestrator.example.com',
+  domain: new URL(import.meta.env.PUBLIC_SITE_URL).host,
   githubUrl: 'https://github.com/your-org/orchestrator',
   installCommand: 'git clone https://github.com/your-org/orchestrator && cd orchestrator && bun install && bun run dev',
-  localUrl: 'http://127.0.0.1:3210',
+  localUrl: import.meta.env.PUBLIC_LOCAL_URL,
 }
 
 export interface Plan {

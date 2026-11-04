@@ -1,6 +1,7 @@
 import './env'
 import { join } from 'node:path'
 import { createDomain, type Domain, type Principal } from '@orch/domain'
+import { requiredEnv } from '@orch/shared/env'
 import { type ApiModule, createApp } from './app'
 import { type ClientIpOf, clientIpReader } from './lib/clientIp'
 import { type AccountsConfig, loadServerConfig, ServerConfigError } from './lib/config'
@@ -135,8 +136,8 @@ if (config.accounts) {
   console.log('DATABASE_URL is not set, so accounts are off')
 }
 
-const hostname = process.env.SERVER_HOST || '127.0.0.1'
-const port = Number(process.env.SERVER_PORT || 4600)
+const hostname = requiredEnv('SERVER_HOST')
+const port = Number(requiredEnv('SERVER_PORT'))
 const requestTimeoutMs = Number(process.env.SERVER_REQUEST_TIMEOUT_MS || 30_000)
 const maxChannelsPerMachine = Number(process.env.SERVER_MAX_CHANNELS || 128)
 // Resolved from this file, so the server finds the client however it is started.

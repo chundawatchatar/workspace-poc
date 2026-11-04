@@ -12,10 +12,12 @@ the end.
 bun run dev:client
 ```
 
-This starts the server on 127.0.0.1:4600, with
-`SERVER_ALLOWED_ORIGINS=http://127.0.0.1:3220`, and the Vite client on
-127.0.0.1:3220, with `VITE_SERVER_URL=http://127.0.0.1:4600`. It does not start
-the host or the local app, so run them in a second terminal:
+This starts the server on `<SERVER_HOST>:<SERVER_PORT>` and the Vite client on
+`<CLIENT_HOST>:<CLIENT_PORT>`. In this guide, a name in angle brackets stands for
+that setting's value in `.env`, the one place every address and port is set. The client proxies the accounts API and the relayed
+machine requests and sockets to the server, so they share one origin, as they do
+in production. It does not start the host or the local app, so run them in a
+second terminal:
 
 ```bash
 bun run dev
@@ -29,23 +31,23 @@ bun run --filter @orch/client build
 bun run --filter @orch/server start
 ```
 
-The server then serves `apps/client/dist` on 127.0.0.1:4600, and no CORS is
+The server then serves `apps/client/dist` on `<SERVER_HOST>:<SERVER_PORT>`, and no CORS is
 needed. Without a build it only relays, and logs that it found no client build.
 
 With a `.env` copied from `.env.example`, `DATABASE_URL` is set, so the server
 turns accounts on and refuses to start until Postgres is up and migrated:
 `bun run db:up`, then `bun run db:migrate` (section 6). Unset `DATABASE_URL`
 (or leave it out of `.env`) to run the relay alone. Either way,
-`curl -s http://127.0.0.1:4600/api/health` answers `{"ok":true}`. How to work
+`curl -s http://<SERVER_HOST>:<SERVER_PORT>/api/health` answers `{"ok":true}`. How to work
 on accounts is in [accounts](accounts.md).
 
 ## 2. Connect a machine
 
-Open the local app at http://127.0.0.1:3210 and pick "Remote access…" from the
+Open the local app at `http://<WEB_HOST>:<WEB_PORT>` and pick "Remote access…" from the
 command palette. Fill in:
 
-- "Server address": `ws://127.0.0.1:4600`
-- "Client address (optional)": `http://127.0.0.1:3220` when you use the Vite
+- "Server address": `ws://<SERVER_HOST>:<SERVER_PORT>`
+- "Client address (optional)": `http://<CLIENT_HOST>:<CLIENT_PORT>` when you use the Vite
   client from `bun run dev:client`. Leave it empty when the server serves the
   client build.
 
@@ -55,10 +57,12 @@ no server address set, the host uses its built-in default (section 5).
 The host accepts `ws://` only for a loopback host (`127.0.0.1`, `[::1]` or
 `localhost`). Any other server needs `wss://`.
 
-The other way is to set the addresses in the host's environment:
+The other way is to set the addresses in the host's environment, by uncommenting
+`SERVER_URL` and `CLIENT_URL` in `.env` and giving them the same values:
 
 ```bash
-SERVER_URL=ws://127.0.0.1:4600 CLIENT_URL=http://127.0.0.1:3220 bun run dev
+SERVER_URL=ws://<SERVER_HOST>:<SERVER_PORT>
+CLIENT_URL=http://<CLIENT_HOST>:<CLIENT_PORT>
 ```
 
 `SERVER_URL` and `CLIENT_URL` override the saved setting, and `SERVER_URL` turns
@@ -95,8 +99,8 @@ The `<client>` part is picked in this order:
 3. The server address, with `ws` swapped for `http` (and `wss` for `https`).
 
 The trap: with `bun run dev:client` and no client address, the link points at
-`http://127.0.0.1:4600`, which serves the app only after a client build. Enter
-`http://127.0.0.1:3220` as the client address, press "Save", and make a new connect
+`http://<SERVER_HOST>:<SERVER_PORT>`, which serves the app only after a client build. Enter
+`http://<CLIENT_HOST>:<CLIENT_PORT>` as the client address, press "Save", and make a new connect
 link (section 4).
 
 ## 4. Rotate the key
@@ -227,9 +231,9 @@ a web inbox instead of delivering it. This setup is for developing this repo onl
 
 | Service | Address |
 | --- | --- |
-| Postgres | `127.0.0.1:5432`, the `DATABASE_URL` in `.env` |
-| Mailpit SMTP | `127.0.0.1:1025`, the `SMTP_URL` in `.env` |
-| Mailpit inbox | http://127.0.0.1:8025 |
+| Postgres | `127.0.0.1:<POSTGRES_PORT>`, the `DATABASE_URL` in `.env` |
+| Mailpit SMTP | `127.0.0.1:<SMTP_PORT>`, the `SMTP_URL` in `.env` |
+| Mailpit inbox | `http://127.0.0.1:<MAILPIT_PORT>` |
 
 Every port is published on `127.0.0.1` only, so nothing is reachable from the network.
 
@@ -250,7 +254,7 @@ factory backlog) must handle:
 - TLS in front of the server.
 - `wss://` server addresses and `https://` client addresses. This is also what a
   second computer needs, since `ws://` works only on loopback.
-- `SERVER_HOST`, so the server listens on more than 127.0.0.1 (the default).
+- A `SERVER_HOST` beyond loopback, so the server is reachable from the network.
 - `SERVER_TRUST_PROXY=1` behind a proxy that sets `X-Forwarded-For`, so the rate
   limits see the client's IP and not the proxy's.
 - A single server instance, because the server keeps machines in memory. See

@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite dev --port 3210 --strictPort",
-    "build": "vite build",
+    "dev": "vite dev --configLoader runner",
+    "build": "vite build --configLoader runner",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {

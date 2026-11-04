@@ -18,6 +18,8 @@ factory/jobs/
 # The live backlog is local; finished sections are copied to factory/archive/ and committed
 factory/backlog.md
 .env
+.env.*
+!.env.example
 
 # Coverage reports (`bun run test:coverage` writes lcov.info per workspace)
 coverage/

@@ -1,11 +1,14 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 // Server-side only: this file uses `node:fs`, so it is published as `@orch/shared/env` and kept out of `index.ts`,
 // which browser code imports.
 
-/** The repo's `.env`, found from this file so it loads whatever the working directory is. */
-export const rootEnvPath = join(import.meta.dir, '../../../.env')
+/**
+ * The repo's `.env`, found from this file so it loads whatever the working directory is. Resolved from
+ * `import.meta.url`, so it also works where Node runs it: the Vite and Astro configs.
+ */
+export const rootEnvPath = fileURLToPath(new URL('../../../.env', import.meta.url))
 
 /**
  * Parses `.env` text into key/value pairs. Supports blank lines, `#` comments,
@@ -51,4 +54,24 @@ export function loadRootEnv(options: { path?: string; env?: Record<string, strin
   for (const [key, value] of Object.entries(parseEnv(readFileSync(path, 'utf8')))) {
     if (env[key] === undefined) env[key] = value
   }
+}
+
+/**
+ * Reads a setting that must come from the env, such as an address or a port: nothing has a default in code, so the
+ * env is the one place to change it. Throws with the variable's name, never a value, when it is unset or blank.
+ */
+export function requiredEnv(key: string, env: Record<string, string | undefined> = process.env): string {
+  const value = env[key]?.trim()
+  if (!value)
+    throw new Error(`${key} is not set. Copy .env.example to .env at the repo root, or set it in the environment.`)
+  return value
+}
+
+/**
+ * `http://<host>:<port>` from a host and a port setting, such as `HOST_HOST` and `HOST_PORT`. An IPv6 address such
+ * as `::1` gets the brackets a URL needs.
+ */
+export function urlFromEnv(hostKey: string, portKey: string, env: Record<string, string | undefined> = process.env) {
+  const host = requiredEnv(hostKey, env)
+  return `http://${host.includes(':') && !host.startsWith('[') ? `[${host}]` : host}:${requiredEnv(portKey, env)}`
 }

@@ -4,15 +4,16 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev:site": "astro dev --host 127.0.0.1 --port 3230",
+    "dev:site": "astro dev",
     "build": "astro build",
-    "preview": "astro preview --host 127.0.0.1 --port 3230",
+    "preview": "astro preview",
     "typecheck": "astro check"
   },
   "dependencies": {
     "@astrojs/mdx": "^8.1.2",
     "@astrojs/react": "^7.1.2",
     "@orch/brand": "workspace:*",
+    "@orch/shared": "workspace:*",
     "@orch/terminal-ui": "workspace:*",
     "@orch/ui": "workspace:*",
     "@tailwindcss/vite": "^4.3.3",

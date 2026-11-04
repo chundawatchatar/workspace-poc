@@ -1,6 +1,7 @@
+import './env'
 import { resolve } from 'node:path'
 import { createInterface } from 'node:readline'
-import { HOST_PORT } from '@orch/shared'
+import { hostUrl } from './env'
 import { createHostCaller, runRemote } from './remote-cli'
 
 // `bun run host:remote <command>`: configures remote access from a terminal.
@@ -25,7 +26,7 @@ function prompt(question: string): Promise<string | null> {
 
 try {
   process.exitCode = await runRemote(process.argv.slice(2), {
-    callHost: createHostCaller(`http://127.0.0.1:${HOST_PORT}`),
+    callHost: createHostCaller(hostUrl()),
     hostRoot: resolve(import.meta.dir, '..'),
     env: { SERVER_URL: process.env.SERVER_URL, CLIENT_URL: process.env.CLIENT_URL },
     prompt,

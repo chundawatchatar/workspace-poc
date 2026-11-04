@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test'
 import {
   ACCESS_KEY_HEADER,
   encodeFrame,
-  HOST_PORT,
   MAX_TUNNEL_FRAME_BYTES,
   type MachineFrame,
   RELAY_TICKET_HEADER,
@@ -10,6 +9,7 @@ import {
 } from '@orch/shared'
 import type { SessionManager } from '@orch/terminal'
 import { type AppDeps, createApp } from '../../app'
+import { HOST_ORIGIN } from '../../lib/localOrigin'
 import { type Principal, tunnelEnv } from '../../lib/principal'
 import {
   type Authorize,
@@ -69,15 +69,15 @@ describe('TunnelHttp', () => {
     http.request({ type: 'http.request', id: 1, method: 'GET', path: `${routes.system.health.path}?probe=1`, headers })
     await until(() => ended(frames, 1))
 
-    expect(seen?.request.url).toBe(`http://127.0.0.1:${HOST_PORT}/api/health?probe=1`)
+    expect(seen?.request.url).toBe(`${HOST_ORIGIN}/api/health?probe=1`)
     expect(seen?.request.headers.has(ACCESS_KEY_HEADER)).toBe(false)
     expect(seen?.principal).toEqual(principal)
-    const direct = await app.fetch(new Request(`http://127.0.0.1:${HOST_PORT}${routes.system.health.path}`))
+    const direct = await app.fetch(new Request(`${HOST_ORIGIN}${routes.system.health.path}`))
     expect(frames[0]).toMatchObject({ type: 'http.response', id: 1, status: direct.status })
     expect(JSON.parse(bodyOf(frames, 1))).toEqual(await direct.json())
     // The same foreign origin without the tunnel's authorization is still refused.
     const foreign = await app.fetch(
-      new Request(`http://127.0.0.1:${HOST_PORT}${routes.system.health.path}`, { headers: [headers[1]] }),
+      new Request(`${HOST_ORIGIN}${routes.system.health.path}`, { headers: [headers[1]] }),
     )
     expect(foreign.status).toBe(403)
   })

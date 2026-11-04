@@ -3,9 +3,6 @@ import type { eventsSocket } from './contracts/events'
 import type { termColors, terminalSocket } from './contracts/terminals'
 import type { AppState } from './model'
 
-export const HOST_PORT = 4599
-export const WEB_PORT = 3210
-
 export interface HostInfo {
   home: string
   shell: string
