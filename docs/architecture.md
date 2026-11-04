@@ -147,9 +147,8 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   `['account', userId, ...]` through `accountKey` or `accountQuery` (signed-in `serverRoutes` endpoints), and
   `serverQuery` takes only `auth: 'public'` endpoints. An identity watcher on the router's query client acts
   whenever the user id changes (sign-in, sign-out, another account): it cancels in-flight queries, so a late answer
-  for the old user never lands, removes every query and mutation but the session, clears the pending machine link
-  (`src/lib/pendingLink.ts`) on a sign-out or an account switch but keeps it when a signed-out session signs in, and
-  invalidates the router so the guards run again. A query or
+  for the old user never lands, removes every query and mutation but the session, and invalidates the router so the
+  guards run again. A query or
   mutation that fails with `unauthorized` reads the session again, so a session revoked elsewhere takes the same
   path. Guarded routes (`/`, `/settings` with its children and `/m/$machineId` with its children) use `requireSession` as `beforeLoad`, which sends
   a signed-out user to `/auth/sign-in?redirect=<path and search>`. `/auth/sign-in` itself is never guarded, and
@@ -221,36 +220,29 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   per user, and they no longer decide what the home page lists or which rows open. Every listed machine has an Open
   link; its page uses a saved key when there is one and relay tickets otherwise, and an id that is neither saved nor
   listed says it isn't linked to the account.
-  A machine saved locally that the account doesn't have is not listed (linking those is not done). The keys stay in
+  A machine saved locally that the account doesn't have is not listed, since a connect link adds nothing to the
+  account; it is listed once it is linked with an enrollment key. The keys stay in
   `localStorage`, readable by any script on this origin, and the host still checks the key on every request.
-- A connect link opened in the client saves the key locally and records a pending link in `localStorage`
-  (`orch-pending-machine-link`, `src/lib/pendingLink.ts`): `{ machineId, name, savedAt }` with the default name and
-  never the key. It is in `localStorage` rather than `sessionStorage` because the verification email opens a new tab,
-  which must see it after the user signs in there. Reading it ignores and removes a corrupt entry, one with a `key`
-  field and one older than 24 hours. The root layout calls `sendPendingMachineLink` whenever the session holds a user
-  (loading a page while signed in, signing in, and a connect link opened on an open page), after the identity watcher
-  has decided whether to clear it, so a link left while user A was signed in is never sent for user B. It posts
-  `{ machineId, name }` to `serverRoutes.machines.link`, one send at a time, and clears the link on success (then
-  invalidates the list) or on a 4xx, such as a malformed id; a network error or 5xx keeps it for the next session
-  read. Linking is idempotent and keeps an existing name, so a duplicate send never overwrites a rename. Accepted
-  risk: a link opened while signed out and never followed by a sign-in can be picked up by the next user to sign in
-  in this browser within 24 hours; it holds only an id, and the key check still guards the machine.
-- The machines module (`apps/server/src/modules/machines/`, `serverRoutes.machines`) lists, links, renames and
-  unlinks the signed-in user's machines in the `machines` table (one row per user and machine id), only through
+- A connect link opened in the client (`acceptConnectLink`, on load or on `hashchange`) saves the key in
+  `orch-machines`, removes the fragment and opens `/m/<id>`. It writes nothing else and sends nothing to the server,
+  signed in or not, so the machine opens in that browser only.
+- The machines module (`apps/server/src/modules/machines/`, `serverRoutes.machines`) lists, renames and unlinks the
+  signed-in user's machines in the `machines` table (one row per user and machine id), only through
   `data.machines`. The accounts API stores and returns only machine ids and names, never access keys: no schema has a
   key field and every input is strict, so a body carrying `key` gets 400, and the module never reads request headers
-  or logs input. Linking a machine again keeps its name and refreshes `lastOpenedAt`, which is when its connect link
-  was last opened; a link that loses a race to the unique index returns the winning row. Each listed machine is
+  or logs input. It has no endpoint that links a machine by id: `MachinesService.link` is called only when an
+  enrollment key is redeemed. Linking a machine again keeps its name and refreshes `lastOpenedAt`, which is when it
+  was last linked; a link that loses a race to the unique index returns the winning row. Each listed machine is
   `online` when the in-memory `MachineRegistry` holds its tunnel, so `index.ts` builds the registry before the
   accounts modules and hands the same one to both; with more than one server instance this would be wrong (see
   "More than one server instance" below).
-- Accepted risk, linking: the server can't prove that a user holds a machine's key, so anyone who knows a machine id
-  can link it. That reveals only whether the machine is online. Ids are SHA-256 hashes of 32-byte secrets, so they
-  can't be guessed, but they do appear in `/m/<id>` URLs and connect links. The host still guards every request to
-  the machine: by its access key, or by a relay ticket for the one account it linked with an enrollment key. The
-  server signs tickets for any listed machine, so its list alone opens nothing. Open question: a cap on linked machines per
-  user would limit probing; there is none yet.
-- Enrollment keys are the stronger way to link a machine. A signed-in user creates one with
+- Accepted risk, server trust: the server is trusted for access until device approval. It says who is signed in, so
+  it decides who owns an enrollment key and who gets relay tickets. A leaked `RELAY_SIGNING_KEY` or a compromised
+  server could open every linked machine. Device approval (the next backlog item) and end-to-end encryption remove
+  this. Knowing a machine's id no longer puts it on an account: a machine links only by redeeming an enrollment key
+  over its own tunnel, and the host still guards every request by its access key or a relay ticket for the one
+  account it linked.
+- Enrollment keys are the only way to link a machine to an account. A signed-in user creates one with
   `serverRoutes.machines.createEnrollment` (`modules/machines/enrollment.service.ts`): `oek_` plus 32 random bytes,
   shown once with its last 4 characters as a fingerprint. The `machine_enrollments` table stores only the key's
   SHA-256 hash, and a key works once, for 15 minutes. The machine sends it over its own tunnel as `enroll.preview`
@@ -265,8 +257,8 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   `enroll.failed { code: 'invalid_key' }`, which names no account; `rate_limited` and `unavailable` (accounts off, or
   a database error) describe the machine or the server. Nothing on this path logs the key, its hash, the email or the
   account name. `enroll.redeemed` carries the owner's user id (`accountId`) and the server's relay public keys
-  (`relayKeys`), which the host saves to check relay tickets later. Accepted risk: the server is trusted to say who
-  is signed in, and so who owns a key and who gets tickets (see the session cookie above). Expired rows are not
+  (`relayKeys`), which the host saves to check relay tickets later. The server is trusted to say who is signed in,
+  and so who owns a key and who gets tickets (see the server-trust risk above). Expired rows are not
   cleaned up yet, and there is no cap on outstanding keys per user.
 - Better Auth checks the `Origin` of non-GET requests against `SERVER_TRUSTED_ORIGINS` plus the origin of
   `BETTER_AUTH_URL`, and rate limits by client IP in memory (per process, reset on restart). The IP comes from the

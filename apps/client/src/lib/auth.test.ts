@@ -24,7 +24,6 @@ import {
   verifyEmailToken,
   watchIdentity,
 } from './auth'
-import { readPendingMachineLink, setPendingMachineLink } from './pendingLink'
 import { serverQuery } from './server'
 
 const userA: SessionUser = { id: 'user-a', email: 'a@example.com', name: 'Ada' }
@@ -121,7 +120,7 @@ describe('sessionQuery', () => {
 })
 
 describe('watchIdentity', () => {
-  test('switching users leaves nothing of the previous one in the cache or the pending link', async () => {
+  test('switching users leaves nothing of the previous one in the cache', async () => {
     const { queryClient, changes } = await setup(userA)
     server.use(http.get('*/api/auth/list-sessions', () => HttpResponse.json([authSession('s-a', userA.id)])))
     await queryClient.fetchQuery({ queryKey: accountKey(userA.id, 'machines'), queryFn: () => ['A laptop'] })
@@ -137,7 +136,6 @@ describe('watchIdentity', () => {
         queryFn: () => new Promise<string[]>((resolve) => (answerLate = resolve)),
       })
       .catch(() => undefined)
-    setPendingMachineLink({ machineId: 'm1', name: 'Machine m1' })
     expect(cacheDump(queryClient)).toContain('token-s-a')
 
     await signOut(queryClient)
@@ -153,21 +151,11 @@ describe('watchIdentity', () => {
     for (const secret of [userA.id, 'A laptop', 'A desktop', 'token-s-a']) expect(dump).not.toContain(secret)
     expect(bMachines).toEqual(['B laptop'])
     expect(queryClient.getQueryData(sessionQuery.queryKey)).toEqual(userB)
-    expect(readPendingMachineLink()).toBeNull()
     expect(changes()).toBe(2)
-  })
-
-  test('signing in from signed out keeps the pending link for the new user', async () => {
-    const { queryClient, changes } = await setup(null)
-    setPendingMachineLink({ machineId: 'm1', name: 'Machine m1' })
-    expect(await signInWithEmail(queryClient, userA.email, 'pw')).toBeNull()
-    expect(readPendingMachineLink()).toMatchObject({ machineId: 'm1', name: 'Machine m1' })
-    expect(changes()).toBe(1)
   })
 
   test('an unauthorized answer rereads the session and clears the cache when it ended', async () => {
     const { queryClient, account, changes } = await setup(userA)
-    setPendingMachineLink({ machineId: 'm1', name: 'Machine m1' })
     // The session was revoked elsewhere, so the server now refuses it.
     account.user = null
     server.use(
@@ -184,7 +172,6 @@ describe('watchIdentity', () => {
         .getAll()
         .map((q) => q.queryKey),
     ).toEqual([['session']])
-    expect(readPendingMachineLink()).toBeNull()
     expect(changes()).toBe(1)
   })
 })

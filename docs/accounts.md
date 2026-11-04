@@ -220,8 +220,10 @@ through a relay ticket. The host decides both on every request and socket; the s
 - The accounts API (`serverRoutes.machines`, `apps/server/src/modules/machines/`) stores and returns only machine
   ids and names. It never receives or stores an access key: every input is strict, so a body carrying a `key` field
   gets 400, and the module never reads request headers.
-- Keys stay in the browser's `localStorage` (`orch-machines`), saved when a connect link is opened. The home page
-  lists the account's machines, each with an Open link. A machine page uses a saved key when this browser holds one;
+- Keys stay in the browser's `localStorage` (`orch-machines`), saved when a connect link is opened. Opening a connect
+  link adds nothing to the account: it sends no request to the server, so the machine opens in that browser only and
+  joins the account's list once it is linked with an enrollment key. The home page lists the account's machines, each
+  with an Open link. A machine page uses a saved key when this browser holds one;
   otherwise it opens a machine the account lists with relay tickets (`createRemoteTransport` with `relayTicket`).
 - Relay tickets: `serverRoutes.machines.relayTicket` (`POST /api/machines/:machineId/relay-ticket`, `auth: 'user'`)
   signs one only when the machine is in the caller's scoped list, and answers `not_found` otherwise. A ticket is a
@@ -240,13 +242,11 @@ through a relay ticket. The host decides both on every request and socket; the s
 - Key rotation: put the next key's public half in `RELAY_EXTRA_PUBLIC_KEYS`, so machines that link from then on trust
   both; switch `RELAY_SIGNING_KEY` once they have. A machine linked before the next key was announced must link
   again.
-- Accepted risk, server trust: the server is trusted to issue tickets only to a machine's owner, so a leaked signing
-  key or a compromised server could open every linked machine of every account, until device approval and end-to-end
-  encryption. A revoked session or a machine unlinked on the server gets no new ticket, but an issued one works for up
+- Accepted risk, server trust: the server is trusted for access until device approval. It says who is signed in, so
+  it decides who owns an enrollment key and who gets relay tickets, and a leaked `RELAY_SIGNING_KEY` or a compromised
+  server could open every linked machine of every account. Device approval and end-to-end encryption remove this. A revoked session or a machine unlinked on the server gets no new ticket, but an issued one works for up
   to a minute and an open socket stays until it closes (unlinking on the host closes them). A refused ticket sends
   `auth.failed` and counts against the browser's bad-key limit. Each socket costs one ticket request.
-- Opening a connect link also records a pending link (`apps/client/src/lib/pendingLink.ts`) with the machine's id and
-  name, never the key, which is sent to `serverRoutes.machines.link` once the user is signed in.
 - The home page's Connect a machine button (`apps/client/src/components/machines/ConnectMachineDialog.tsx`) creates
   an enrollment key with `serverRoutes.machines.createEnrollment` and shows it once: the key and the
   `bun run host:remote link <key>` command, each with a Copy button, its fingerprint and a countdown to its expiry.
@@ -260,6 +260,6 @@ through a relay ticket. The host decides both on every request and socket; the s
   can also mean a host that is up with remote access off. With more than one server instance this would be wrong (see
   [keeping the machine connected](architecture.md#keeping-the-machine-connected)).
 
-Accepted risk, linking: the server can't prove that a user holds a machine's key, so anyone who knows a machine id can
-link it to their account. That reveals only whether the machine is online, and the server will sign tickets for it;
-the host still refuses them, since it accepts only the account it linked with an enrollment key.
+Linking: a machine reaches an account's list only by redeeming an enrollment key over its own tunnel, so knowing a
+machine's id no longer puts it on an account. The accounts API has no endpoint that links a machine by id
+(`POST /api/machines` answers `not_found`).

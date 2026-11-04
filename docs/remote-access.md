@@ -118,9 +118,11 @@ rewrites `access-keys.json`, and the host uses the new key at its next start.
 
 ## 5. Link the machine to an account
 
-A signed-in user can link this machine to their account with a one-time
-enrollment key instead of a connect link. Create the key on the client's home
-page, then, on this machine, open "Remote access…", paste it into "Link key"
+A signed-in user links this machine to their account with a one-time
+enrollment key, the only way to put a machine on an account's list. A connect
+link only opens the machine in the browser that holds its key: it adds nothing
+to the account, even when that browser is signed in. Create the key on the
+client's home page, then, on this machine, open "Remote access…", paste it into "Link key"
 and press "Preview". Linking needs remote access on and the tunnel connected,
 since the key is checked over the tunnel; the host never opens a tunnel just
 to check one.
@@ -175,9 +177,9 @@ machine until you unlink it from the client's home page, but the machine
 refuses that account's tickets from then on.
 
 Accepted risks, until device approval and end-to-end encryption: the server is
-trusted to issue tickets only to the signed-in owner, so a server whose signing
-key leaks, or which is compromised, could open every linked machine of every
-account. Revoking a session or unlinking on the server stops new tickets at
+trusted for access. It says who is signed in, so it decides who owns an
+enrollment key and who gets relay tickets, and a leaked `RELAY_SIGNING_KEY` or
+a compromised server could open every linked machine of every account. Revoking a session or unlinking on the server stops new tickets at
 once, but a ticket already issued works for up to a minute, and an open socket
 stays until it closes; unlinking on the host closes them. A refused ticket sends
 `auth.failed`, so it counts against the browser's bad-key limit like a wrong

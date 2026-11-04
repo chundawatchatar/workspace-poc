@@ -2,7 +2,6 @@ import type { ServerEndpointInput, ServerEndpointOutput, ServerErrorCode, Server
 import { type Query, type QueryClient, queryOptions } from '@tanstack/react-query'
 import { redirect } from '@tanstack/react-router'
 import { createAuthClient } from 'better-auth/react'
-import { clearPendingMachineLink } from './pendingLink'
 import { callServer, ServerError } from './server'
 
 // Who is signed in, and the rules that keep one account's data away from the next. The session lives in the query
@@ -192,10 +191,9 @@ function isUnauthorized(error: unknown) {
 /**
  * Watches the session in `queryClient` and, whenever the signed-in user changes (sign-in, sign-out, or another
  * account), drops everything but the session: in-flight queries are cancelled so a late answer for the old user
- * never lands, and cached queries and mutations are removed. Signing out or switching accounts also clears the
- * pending machine link; signing in from signed out keeps it, so the connect link that led to the sign-in is sent for
- * the new user. Then it calls `onChange`, which reruns the route guards. A query or mutation that fails as `unauthorized` reads the session
- * again, so a session revoked elsewhere goes the same way. Returns a function that stops watching.
+ * never lands, and cached queries and mutations are removed. Then it calls `onChange`, which reruns the route guards.
+ * A query or mutation that fails as `unauthorized` reads the session again, so a session revoked elsewhere goes the
+ * same way. Returns a function that stops watching.
  */
 export function watchIdentity(queryClient: QueryClient, onChange: () => void) {
   const cached = queryClient.getQueryData(sessionQuery.queryKey)
@@ -213,8 +211,6 @@ export function watchIdentity(queryClient: QueryClient, onChange: () => void) {
     void queryClient.cancelQueries(others)
     queryClient.removeQueries(others)
     queryClient.getMutationCache().clear()
-    // This runs before anything reacts to the new session, so a link left by one user is never sent for another.
-    if (previous !== null) clearPendingMachineLink()
     onChange()
   }
 

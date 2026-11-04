@@ -44,8 +44,9 @@ async function signedIn(): Promise<User> {
 const freshMachineId = () => machineIdFromProof(randomUUID())
 const path = (machineId: string) => `/api/machines/${machineId}`
 
-async function link(user: User, machineId: string, name: string) {
-  return ctx.client.call('POST', '/api/machines', { ...user, body: { machineId, name } })
+/** Links `machineId` to `user` the way redeeming an enrollment key does, without HTTP. */
+function link(user: User, machineId: string, name: string) {
+  return new MachinesService(domain.forUser({ userId: user.userId }).machines, ctx.registry).link(machineId, name)
 }
 
 async function list(user: User): Promise<ServerMachine[]> {
@@ -68,32 +69,13 @@ async function errorOf(response: Response) {
 }
 
 describe('machines module', () => {
-  test('linking again keeps the name and refreshes `lastOpenedAt`; another user gets their own row', async () => {
+  test('has no endpoint that links a machine by id: `POST /api/machines` answers 404 and writes nothing', async () => {
     const ada = await signedIn()
     const machineId = freshMachineId()
-    const before = Date.now()
-    const first = await link(ada, machineId, '  Laptop  ')
-    expect(first.status).toBe(200)
-    const machine = (await first.json()) as ServerMachine
-    expect(machine).toMatchObject({ machineId, name: 'Laptop', online: false })
-    expect(machine.createdAt).toBe(machine.lastOpenedAt)
-    expect(Date.parse(machine.createdAt)).toBeGreaterThanOrEqual(before - 1000)
-    expect(Object.keys(machine).sort()).toEqual(['createdAt', 'lastOpenedAt', 'machineId', 'name', 'online'])
-
-    await Bun.sleep(5)
-    const again = (await (await link(ada, machineId, 'Other name')).json()) as ServerMachine
-    expect(again).toMatchObject({ machineId, name: 'Laptop', createdAt: machine.createdAt })
-    expect(Date.parse(again.lastOpenedAt)).toBeGreaterThan(Date.parse(machine.lastOpenedAt))
-
-    const bob = await signedIn()
-    expect(await (await link(bob, machineId, 'Bob box')).json()).toMatchObject({ machineId, name: 'Bob box' })
-    const rows = await rowsOf(machineId)
-    expect(rows.map((row) => [row.userId, row.name]).sort()).toEqual(
-      [
-        [ada.userId, 'Laptop'],
-        [bob.userId, 'Bob box'],
-      ].sort(),
-    )
+    const response = await ctx.client.call('POST', '/api/machines', { ...ada, body: { machineId, name: 'Laptop' } })
+    expect(await errorOf(response)).toEqual({ status: 404, code: 'not_found' })
+    expect(await rowsOf(machineId)).toEqual([])
+    expect(await list(ada)).toEqual([])
   })
 
   test('signs a relay ticket only for a machine the caller lists, and only for a signed-in caller', async () => {
@@ -199,46 +181,43 @@ describe('machines module', () => {
   test('refuses bad input, a key, no session, a foreign origin and a non-JSON body before writing', async () => {
     const ada = await signedIn()
     const machineId = freshMachineId()
+    await link(ada, machineId, 'Laptop')
     const key = `secret-key-${randomUUID()}`
     const bad = [
-      { machineId: 'too-short', name: 'Laptop' },
-      { machineId, name: '   ' },
-      { machineId, name: 'x'.repeat(65) },
-      { machineId, name: 'Laptop', key },
+      { url: path('too-short'), body: { name: 'Desk' } },
+      { url: path(machineId), body: { name: '   ' } },
+      { url: path(machineId), body: { name: 'x'.repeat(65) } },
+      { url: path(machineId), body: { name: 'Desk', key } },
     ]
-    for (const body of bad) {
-      const response = await ctx.client.call('POST', '/api/machines', { ...ada, body })
+    for (const { url, body } of bad) {
+      const response = await ctx.client.call('PATCH', url, { ...ada, body })
       expect(response.status).toBe(400)
       expect(await response.text()).not.toContain(key)
     }
-    const renameWithKey = await ctx.client.call('PATCH', path(machineId), { ...ada, body: { name: 'X', key } })
-    expect(renameWithKey.status).toBe(400)
-    expect(await rowsOf(machineId)).toEqual([])
 
     const anonymous = { ip: ada.ip }
     for (const [method, url] of [
       ['GET', '/api/machines'],
-      ['POST', '/api/machines'],
       ['PATCH', path(machineId)],
       ['DELETE', path(machineId)],
     ] as const) {
-      const body = method === 'GET' ? undefined : { machineId, name: 'Laptop' }
+      const body = method === 'GET' ? undefined : { name: 'Desk' }
       expect(await errorOf(await ctx.client.call(method, url, { ...anonymous, body }))).toEqual({
         status: 401,
         code: 'unauthorized',
       })
     }
 
-    const body = { machineId, name: 'Laptop' }
-    const evil = await ctx.client.call('POST', '/api/machines', { ...ada, body, origin: 'https://evil.example' })
+    const body = { name: 'Desk' }
+    const evil = await ctx.client.call('PATCH', path(machineId), { ...ada, body, origin: 'https://evil.example' })
     expect(await errorOf(evil)).toEqual({ status: 403, code: 'forbidden_origin' })
-    const plain = await ctx.client.call('POST', '/api/machines', {
+    const plain = await ctx.client.call('PATCH', path(machineId), {
       ...ada,
       body,
       headers: { 'content-type': 'text/plain' },
     })
     expect(await errorOf(plain)).toEqual({ status: 415, code: 'unsupported_media_type' })
-    expect(await rowsOf(machineId)).toEqual([])
+    expect(await rowsOf(machineId)).toMatchObject([{ userId: ada.userId, name: 'Laptop' }])
   })
 
   test('creates an enrollment key that only its hash is stored for, and refuses a body or no session', async () => {

@@ -18,9 +18,9 @@ export interface MachinesModuleDeps {
 }
 
 /**
- * Builds the module that serves `serverRoutes.machines`: list, link, rename
- * and unlink the signed-in user's machines, create enrollment keys, and sign
- * relay tickets for machines the user lists. It handles machine ids, names,
+ * Builds the module that serves `serverRoutes.machines`: list, rename and
+ * unlink the signed-in user's machines, create enrollment keys, and sign relay
+ * tickets for machines the user lists. It handles machine ids, names,
  * enrollment keys and tickets only, never reads a request header or an access
  * key, and never logs input or a ticket.
  */
@@ -35,7 +35,6 @@ export function createMachinesModule({
       serverRoutes.machines,
       {
         list: async (_input, { data }) => ({ machines: await machinesOf(data).list() }),
-        link: async ({ machineId, name }, { data }) => machinesOf(data).link(machineId, name),
         rename: async ({ machineId, name }, { data, fail }) =>
           (await machinesOf(data).rename(machineId, name)) ?? fail('not_found'),
         unlink: async ({ machineId }, { data, fail }) => {

@@ -29,8 +29,8 @@ export class MachinesService {
 
   /**
    * Links `machineId` to the user. Linking it again keeps the name the user
-   * chose and only refreshes `lastOpenedAt`, so opening a connect link twice
-   * never undoes a rename.
+   * chose and only refreshes `lastOpenedAt`, so linking twice never undoes a
+   * rename.
    */
   async link(machineId: string, name: string): Promise<ServerMachine> {
     const now = new Date()
