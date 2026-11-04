@@ -17,7 +17,7 @@ export const machines = pgTable(
     machineId: text('machine_id').notNull(),
     name: text('name').notNull(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
-    /** When the machine was last linked or opened through a connect link. */
+    /** When the machine was last linked. */
     lastOpenedAt: timestamp('last_opened_at').notNull(),
   },
   (table) => [

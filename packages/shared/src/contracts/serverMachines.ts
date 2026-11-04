@@ -16,7 +16,7 @@ export const serverMachine = z.object({
   machineId: z.string(),
   name: z.string(),
   createdAt: z.iso.datetime(),
-  /** When the machine was last linked or opened through a connect link. */
+  /** When the machine was last linked. */
   lastOpenedAt: z.iso.datetime(),
   /** True when the machine's tunnel is connected to this server right now. */
   online: z.boolean(),
@@ -25,9 +25,6 @@ export type ServerMachine = z.infer<typeof serverMachine>
 
 export const listMachinesResponse = z.object({ machines: z.array(serverMachine) })
 export type ListMachinesResponse = z.infer<typeof listMachinesResponse>
-
-export const linkMachineBody = z.strictObject({ machineId: machineIdSchema, name: machineNameSchema })
-export type LinkMachineBody = z.infer<typeof linkMachineBody>
 
 export const renameMachineBody = z.strictObject({ machineId: machineIdSchema, name: machineNameSchema })
 export type RenameMachineBody = z.infer<typeof renameMachineBody>
@@ -64,14 +61,6 @@ export const serverMachinesContract = defineServerContract({
     description: "Lists the signed-in user's machines, newest `lastOpenedAt` first, each marked online or offline.",
     input: z.strictObject({}),
     output: listMachinesResponse,
-  },
-  link: {
-    method: 'POST',
-    path: '/api/machines',
-    description:
-      'Links a machine to the account when a connect link is opened. Linking it again keeps its name and refreshes `lastOpenedAt`.',
-    input: linkMachineBody,
-    output: serverMachine,
   },
   rename: {
     method: 'PATCH',

@@ -8,9 +8,8 @@ import {
 import { formOptions } from '@tanstack/react-form'
 import type { QueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
-import { accountQuery, sessionQuery } from './auth'
+import { accountQuery } from './auth'
 import { forgetMachine } from './machines'
-import { clearPendingMachineLink, readPendingMachineLink } from './pendingLink'
 import { callServer, ServerError, serverMutation } from './server'
 
 // The machines linked to the signed-in account, from the accounts API. It only ever sends machine ids and names: the
@@ -108,32 +107,4 @@ export function renameMachineFormOptions(name: string, rename: (name: string) =>
       await rename(renameMachineSchema.parse(value).name)
     },
   })
-}
-
-async function sendOnce(queryClient: QueryClient) {
-  const user = queryClient.getQueryData(sessionQuery.queryKey)
-  const link = readPendingMachineLink()
-  if (!user || !link) return
-  try {
-    await callServer(serverRoutes.machines.link, { machineId: link.machineId, name: link.name })
-  } catch (error) {
-    // A refusal won't change on a retry, such as an id that isn't a machine's. A network error or a server failure
-    // might, so the link waits for the next session read.
-    if (error instanceof ServerError && error.status >= 400 && error.status < 500) clearPendingMachineLink(link)
-    return
-  }
-  clearPendingMachineLink(link)
-  await invalidateMachines(queryClient, user.id)
-}
-
-let sending: Promise<void> = Promise.resolve()
-
-/**
- * Links the waiting connect link's machine, if any, to the user signed in in `queryClient`, then clears the link and
- * reads the list again. Calls run one after another, so a second call while one is on its way finds the link already
- * gone instead of sending it twice. It never throws.
- */
-export function sendPendingMachineLink(queryClient: QueryClient): Promise<void> {
-  sending = sending.then(() => sendOnce(queryClient).catch(() => {}))
-  return sending
 }

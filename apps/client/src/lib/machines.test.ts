@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { formatConnectFragment } from '@orch/shared'
 import { acceptConnectLink, type ConnectWindow, forgetMachine, loadMachines } from './machines'
-import { readPendingMachineLink } from './pendingLink'
 
 /** A window at `url`, whose `replaceState` moves it like a browser's would. */
 function fakeWindow(url: string) {
@@ -19,7 +18,7 @@ function fakeWindow(url: string) {
 }
 
 describe('connect links', () => {
-  test('a valid fragment saves the machine, records it to link without its key, and leaves the URL', () => {
+  test('a valid fragment saves the machine, writes nothing else to storage, and leaves the URL', () => {
     const first = fakeWindow(
       `https://app.test/anything${formatConnectFragment({ machineId: 'abcdef123456', key: 'k1' })}`,
     )
@@ -27,9 +26,8 @@ describe('connect links', () => {
     expect(first.current.href).toBe('https://app.test/m/abcdef123456')
     expect(first.current.href).not.toContain('#')
     expect(loadMachines()).toEqual([{ id: 'abcdef123456', name: 'Machine abcdef12', key: 'k1' }])
-    // The account gets the machine once a user is signed in, without its key.
-    expect(readPendingMachineLink()).toMatchObject({ machineId: 'abcdef123456', name: 'Machine abcdef12' })
-    expect(localStorage.getItem('orch-pending-machine-link')).not.toContain('k1')
+    // Only the machine's own entry: nothing is recorded for the account.
+    expect(Object.keys(localStorage)).toEqual(['orch-machines'])
 
     const again = fakeWindow(`https://app.test/${formatConnectFragment({ machineId: 'abcdef123456', key: 'k2' })}`)
     acceptConnectLink(again.win)
@@ -49,7 +47,6 @@ describe('connect links', () => {
       expect(current.href).toBe('https://app.test/page?q=1')
     }
     expect(loadMachines()).toEqual([])
-    expect(readPendingMachineLink()).toBeNull()
   })
 
   test('forget removes the machine and its key', () => {

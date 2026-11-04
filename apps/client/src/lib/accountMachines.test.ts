@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, jest, test } from 'bun:test'
-import { formatConnectFragment, linkMachineBody, type ServerMachine, serverRoutes } from '@orch/shared'
+import { formatConnectFragment, type ServerMachine, serverRoutes } from '@orch/shared'
 import { FormApi } from '@tanstack/react-form'
 import { MutationObserver, QueryClient, QueryObserver } from '@tanstack/react-query'
 import { waitFor } from '@testing-library/react'
 import { HttpResponse, http } from 'msw'
-import { authError, authSession, authUser } from '../test/betterAuth'
+import { authSession, authUser } from '../test/betterAuth'
 import { server } from '../test/msw'
 import {
   machinesQuery,
@@ -12,15 +12,12 @@ import {
   relayTicketFor,
   renameMachineFormOptions,
   renameMachineMutation,
-  sendPendingMachineLink,
   unlinkMachineMutation,
 } from './accountMachines'
-import { accountKey, refetchSession, type SessionUser, signInWithEmail, signOut, watchIdentity } from './auth'
+import { accountKey, refetchSession, type SessionUser, watchIdentity } from './auth'
 import { acceptConnectLink, type ConnectWindow, loadMachines, saveMachine } from './machines'
-import { readPendingMachineLink, setPendingMachineLink } from './pendingLink'
 
 const userA: SessionUser = { id: 'user-a', email: 'a@example.com', name: 'Ada' }
-const userB: SessionUser = { id: 'user-b', email: 'b@example.com', name: 'Bob' }
 
 // Machine ids have the relay's shape: 43 base64url characters.
 const idOne = 'A'.repeat(43)
@@ -38,13 +35,12 @@ const serverError = (status: number, code: string) =>
 
 /**
  * Answers the cloud server's session and machines endpoints for whoever the cookie belongs to (`state.user`): each
- * user's machines, whether a proxy in front answers links as unavailable, whether writes fail, and every request.
+ * user's machines, whether writes fail, and every request.
  */
 function fakeServer(user: SessionUser | null) {
   const state = {
     user,
     machines: {} as Record<string, ServerMachine[]>,
-    unavailable: false,
     failWrites: false,
     requests: [] as { method: string; path: string; body: string }[],
   }
@@ -68,30 +64,9 @@ function fakeServer(user: SessionUser | null) {
         current && { user: authUser(current), session: authSession(`s-${current.id}`, current.id) },
       )
     }),
-    http.post('*/api/auth/sign-in/email', async ({ request }) => {
-      const { email } = (await request.json()) as { email: string }
-      state.user = [userA, userB].find((u) => u.email === email) ?? null
-      if (!state.user) return authError(401, 'INVALID_EMAIL_OR_PASSWORD', 'Invalid email or password')
-      return HttpResponse.json({ redirect: false, token: 't1', user: authUser(state.user) })
-    }),
-    http.post('*/api/auth/sign-out', () => {
-      state.user = null
-      return HttpResponse.json({ success: true })
-    }),
     http.get(`*${serverRoutes.machines.list.path}`, () => {
       const list = mine()
       return list ? HttpResponse.json({ machines: list }) : unauthorized()
-    }),
-    http.post(`*${serverRoutes.machines.link.path}`, async ({ request }) => {
-      const list = mine()
-      if (!list) return unauthorized()
-      if (state.unavailable) return new HttpResponse('Service Unavailable', { status: 503 })
-      const parsed = linkMachineBody.safeParse(await request.json())
-      if (!parsed.success) return serverError(400, 'bad_request')
-      const { machineId, name } = parsed.data
-      const linked = list.find((m) => m.machineId === machineId) ?? machine(machineId, name)
-      if (!list.includes(linked)) list.unshift(linked)
-      return HttpResponse.json(linked)
     }),
     http.patch(`*${serverRoutes.machines.rename.path}`, async ({ request, params }) => {
       if (!mine()) return unauthorized()
@@ -136,9 +111,6 @@ async function settle() {
     await new Promise((resolve) => setImmediate(resolve))
   }
 }
-
-const posts = (state: { requests: { method: string; path: string; body: string }[] }) =>
-  state.requests.filter((r) => r.method === 'POST' && r.path === serverRoutes.machines.link.path)
 
 /** A window that has just opened a connect link for `machineId`. */
 function connectWindow(machineId: string): ConnectWindow {
@@ -225,79 +197,22 @@ describe('the machine list', () => {
   })
 })
 
-describe('sendPendingMachineLink', () => {
-  test('a connect link opened while signed in links the machine with its id and name only', async () => {
-    const { queryClient, state } = await setup(userA)
-    const stop = watchList(queryClient, userA.id)
-    await queryClient.fetchQuery(machinesQuery(userA.id))
-    acceptConnectLink(connectWindow(idOne))
-    expect(localStorage.getItem('orch-pending-machine-link')).not.toContain(accessKey)
+describe('a connect link', () => {
+  test('opens the machine in this browser only: nothing is sent to the account, signed in or out', async () => {
+    for (const user of [null, userA]) {
+      const { queryClient, state } = await setup(user)
+      const stop = user ? watchList(queryClient, user.id) : () => {}
+      if (user) await queryClient.fetchQuery(machinesQuery(user.id))
+      state.requests.length = 0
 
-    await sendPendingMachineLink(queryClient)
-    expect(posts(state)).toHaveLength(1)
-    const body = String(posts(state)[0]?.body)
-    expect(JSON.parse(body)).toEqual({ machineId: idOne, name: `Machine ${idOne.slice(0, 8)}` })
-    expect(body).not.toContain(accessKey)
-    expect(readPendingMachineLink()).toBeNull()
-    expect(loadMachines()[0]?.key).toBe(accessKey)
-
-    // The list was read again and now holds the machine; the key is in no query.
-    expect(queryClient.getQueryData(machinesQuery(userA.id).queryKey)?.machines.map((m) => m.machineId)).toEqual([
-      idOne,
-    ])
-    const keys = JSON.stringify(
-      queryClient
-        .getQueryCache()
-        .getAll()
-        .map((q) => [q.queryKey, q.state.data]),
-    )
-    expect(keys).not.toContain(accessKey)
-    expect(state.requests.some((r) => r.body.includes(accessKey))).toBe(false)
-    stop()
-  })
-
-  test('a link opened while signed out is sent once after signing in, and a refusal drops it', async () => {
-    const { queryClient, state } = await setup(null)
-    acceptConnectLink(connectWindow(idOne))
-    await sendPendingMachineLink(queryClient)
-    expect(posts(state)).toEqual([])
-
-    expect(await signInWithEmail(queryClient, userA.email, 'pw')).toBeNull()
-    // The root layout's effect can run twice, as it does under StrictMode.
-    await Promise.all([sendPendingMachineLink(queryClient), sendPendingMachineLink(queryClient)])
-    expect(posts(state)).toHaveLength(1)
-    expect(readPendingMachineLink()).toBeNull()
-
-    // A proxy's 503 keeps the link to try again; the server refusing the id drops it.
-    for (const [unavailable, kept] of [
-      [true, true],
-      [false, false],
-    ] as const) {
-      setPendingMachineLink({ machineId: 'not-a-machine-id', name: 'Machine not-a-ma' })
-      state.unavailable = unavailable
-      await sendPendingMachineLink(queryClient)
-      expect(readPendingMachineLink() !== null).toBe(kept)
+      acceptConnectLink(connectWindow(idOne))
+      // Gives a request that something sent a moment to arrive.
+      await Bun.sleep(20)
+      expect(state.requests).toEqual([])
+      expect(loadMachines()).toEqual([{ id: idOne, name: `Machine ${idOne.slice(0, 8)}`, key: accessKey }])
+      if (user) expect(queryClient.getQueryData(machinesQuery(user.id).queryKey)?.machines).toEqual([])
+      stop()
     }
-  })
-
-  test('signing out or switching accounts drops the link before anything is sent for the next user', async () => {
-    const { queryClient, state } = await setup(userA)
-    state.unavailable = true
-    acceptConnectLink(connectWindow(idOne))
-    await sendPendingMachineLink(queryClient)
-    expect(readPendingMachineLink()).not.toBeNull()
-
-    state.unavailable = false
-    state.user = userB
-    await refetchSession(queryClient)
-    await sendPendingMachineLink(queryClient)
-    expect(readPendingMachineLink()).toBeNull()
-
-    acceptConnectLink(connectWindow(idTwo))
-    await signOut(queryClient)
-    expect(readPendingMachineLink()).toBeNull()
-    expect(posts(state).filter((r) => r.body.includes(idOne))).toHaveLength(1)
-    expect(state.machines[userB.id] ?? []).toEqual([])
   })
 })
 
