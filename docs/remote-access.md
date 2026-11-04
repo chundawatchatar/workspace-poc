@@ -144,6 +144,41 @@ key) in `apps/host/.data/linked-account.json`, and the dialog shows it with an
 only: the server still lists the machine until you unlink it from the client's
 home page. A linked account grants no access to the machine yet.
 
+`bun run host:remote link <key>` does the same from a terminal (next part). It
+also needs the running host with the tunnel connected.
+
+### From the terminal
+
+On a machine where you don't open the host page (over SSH, a headless box, a
+setup script), `bun run host:remote` does what the dialog does:
+
+```bash
+bun run host:remote status             # server address, remote access, machine id, linked account
+bun run host:remote server wss://host  # set the server address
+bun run host:remote on                 # or off
+bun run host:remote link <key>         # add --yes to skip the question
+bun run host:remote unlink
+```
+
+With the host running, every command goes through its local-only Remote access
+endpoints, so the host stays the one owner of the setting. `link` prints the
+server address (with the warning), the account and the fingerprint, then asks
+`Link this machine to <name>? [y/N]`; `--yes` skips the question but still
+prints them. `on` makes the host print a new connect link in its own log, as
+the switch does. A host started with `SERVER_URL` refuses `server`: change the
+variable instead.
+
+With the host stopped, the command reads and writes `apps/host/.data/` itself,
+and the host picks the change up at its next start. `status` shows the tunnel as
+"host not running", and `SERVER_URL` in the command's own environment only
+changes what `status` shows. `link` needs the running host. The command never
+rewrites a `remote-access.json` that isn't valid, and `status` never creates the
+machine secret or the access keys.
+
+The key is passed on the command line, so it can end up in your shell history
+and in `ps`. It is single-use and expires after 15 minutes, which makes that an
+accepted risk.
+
 ## 6. Database and email
 
 `apps/server` uses Postgres for accounts and sends email over SMTP. For development, `compose.yaml` at the repo root

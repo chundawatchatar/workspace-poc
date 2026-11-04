@@ -79,6 +79,21 @@ export class LinkError extends Error {
   }
 }
 
+/**
+ * The server address to save from what the user entered: trimmed, or null when
+ * empty, which means the default. Throws `InvalidRemoteAccessSetting` for an
+ * address `parseServerUrl` refuses.
+ */
+export function enteredServerUrl(value: string): string | null {
+  const trimmed = value.trim()
+  if (trimmed && !parseServerUrl(trimmed)) {
+    throw new InvalidRemoteAccessSetting(
+      'The server address must be wss://<host>, or ws:// on 127.0.0.1, [::1] or localhost',
+    )
+  }
+  return trimmed || null
+}
+
 /** The name a link gives this machine: its host name, trimmed and cut to 64 characters, or `this machine`. */
 export function hostMachineName(name = hostname()): string {
   return name.trim().slice(0, 64).trim() || 'this machine'
@@ -279,13 +294,7 @@ export class RemoteAccessService {
         throw new InvalidRemoteAccessSetting('SERVER_URL is not a valid server address. Fix it and restart the host')
       }
     } else {
-      const trimmed = serverUrl.trim()
-      if (trimmed && !parseServerUrl(trimmed)) {
-        throw new InvalidRemoteAccessSetting(
-          'The server address must be wss://<host>, or ws:// on 127.0.0.1, [::1] or localhost',
-        )
-      }
-      savedServer = trimmed || null
+      savedServer = enteredServerUrl(serverUrl)
     }
     let savedClient = this.saved?.clientUrl ?? null
     if (!this.env.CLIENT_URL) {
