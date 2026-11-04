@@ -60,7 +60,9 @@ interface TerminalUIProps {
 
 The remote transport sends requests to `/m/<machineId>/api/*` and sockets to `/m/<machineId>/ws/*` on the server.
 The machine's access key goes in the `x-orch-access-key` header, or in an `{ type: 'auth', key }` first message on a
-socket, never in a URL. These pieces live in `packages/shared/src/contracts/remote.ts`.
+socket, never in a URL. Without a key, requests include the session cookie and sockets send
+`{ type: 'auth', account: true }`, so the machine judges the account the server attached. These pieces live in
+`packages/shared/src/contracts/remote.ts`.
 
 `apps/web` becomes a thin shell that renders `terminal-ui` with the local transport. `apps/client` renders it with
 the remote transport for the machine the user picked. Neither app reimplements anything inside the page. When a new
@@ -108,7 +110,8 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   sign-out and password reset, and sends its emails through the mailer. It reaches the database only through
   `domain.forAuthLibrary()`. Sessions live in the database, and the cookie cache is off, so every request reads the
   session there and a sign-out or a password reset (which revokes every session) ends a session on its very next
-  request. Accounts never replace a machine's access key.
+  request. An account opens a machine only when the machine linked it with an enrollment key; see
+  [accounts.md](accounts.md#7-accounts-and-machine-access-keys).
 - Sessions can be listed and ended, and each revocation takes effect on the session's very next request, both in
   Better Auth and in our `auth: 'user'` endpoints. A user has Better Auth's core endpoints:
   `GET /api/auth/list-sessions` (their own sessions only), `POST /api/auth/revoke-session` (one session by its token,
@@ -128,8 +131,16 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   without the token, and `revokeSession` lists the sessions again at revoke time and keeps the token only in that
   call. The tokens still reach page JavaScript briefly in those responses, which weakens `HttpOnly`; removing them
   means our own revoke-by-id endpoint in `serverRoutes`.
-- The session cookie is `Path=/api`, `HttpOnly`, `Secure` and `SameSite=Lax`. Browsers never send it to the relayed
-  machines under `/m/*`, and the relay drops `Cookie` there as well. Its name has the `__Secure-` prefix when
+- The session cookie is `Path=/`, `HttpOnly`, `Secure` and `SameSite=Lax`. Browsers send it to the relayed machines
+  under `/m/*`, where the relay reads the session through `getSession` (never the cookie itself) to attach the
+  account's user id to `http.request` and `ws.open` when the account lists the machine, then drops `Cookie` from what
+  it relays. What still guards the cookie: the relay drops `Cookie` and `Set-Cookie` by name, relayed responses are
+  sandboxed by `SANDBOX_CSP`, the cookie is `HttpOnly` and `SameSite=Lax`, and `/m/*` keeps its origin check. An
+  allowed cross origin (`SERVER_ALLOWED_ORIGINS`) gets `Access-Control-Allow-Credentials: true` on `/m/*`. The
+  alternative, a short-lived relay ticket from a `serverRoutes` endpoint, would keep `Path=/api` but needs a header on
+  requests and a `Sec-WebSocket-Protocol` echo on sockets. Accepted risk: the server is trusted to say who is signed
+  in, so a compromised server could open every linked machine of every account, until device approval and end-to-end
+  encryption (REM-2, REM-5). Its name has the `__Secure-` prefix when
   `BETTER_AUTH_URL` is `https://` and none on `http://`.
 - In `apps/client`, `src/lib/auth.ts` is the one place that knows who is signed in. The session is a TanStack Query
   entry under `['session']` (`sessionQuery`, through Better Auth's client on the page's own origin), holding only the
@@ -209,8 +220,9 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   the session as signed out. A 401 from any of these calls reads the session again, so a session revoked elsewhere
   lands on sign-in.
 - Resolved, saved machines: the access keys saved in `localStorage` (`orch-machines`) are still per browser, not
-  per user, but they no longer decide what the home page lists. They only decide whether a listed machine has an
-  Open link; a machine without a key here says "Open the connect link on this device", as its `/m/<id>` page does.
+  per user, and they no longer decide what the home page lists or which rows open. Every listed machine has an Open
+  link; its page uses a saved key when there is one and the account otherwise, and an id that is neither saved nor
+  listed says it isn't linked.
   A machine saved locally that the account doesn't have is not listed (linking those is not done). The keys stay in
   `localStorage`, readable by any script on this origin, and the host still checks the key on every request.
 - A connect link opened in the client saves the key locally and records a pending link in `localStorage`
@@ -236,8 +248,8 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   "More than one server instance" below).
 - Accepted risk, linking: the server can't prove that a user holds a machine's key, so anyone who knows a machine id
   can link it. That reveals only whether the machine is online. Ids are SHA-256 hashes of 32-byte secrets, so they
-  can't be guessed, but they do appear in `/m/<id>` URLs and connect links. The host's access-key check still guards
-  every request to the machine, and the account list never replaces it. Open question: a cap on linked machines per
+  can't be guessed, but they do appear in `/m/<id>` URLs and connect links. The host still guards every request to
+  the machine: by its access key, or by the one account it linked with an enrollment key, never by the server's list. Open question: a cap on linked machines per
   user would limit probing; there is none yet.
 - Enrollment keys are the stronger way to link a machine. A signed-in user creates one with
   `serverRoutes.machines.createEnrollment` (`modules/machines/enrollment.service.ts`): `oek_` plus 32 random bytes,
@@ -253,8 +265,9 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   not IP), and a refused frame touches no database. An unknown, used, expired or malformed key all get the same
   `enroll.failed { code: 'invalid_key' }`, which names no account; `rate_limited` and `unavailable` (accounts off, or
   a database error) describe the machine or the server. Nothing on this path logs the key, its hash, the email or the
-  account name. Accepted risk: the server is trusted to say who is signed in, and so who owns a key; the job that lets
-  an account's browsers open its enrolled machines records the access-model risk that adds. Expired rows are not
+  account name. `enroll.redeemed` carries the owner's user id (`accountId`), which the host saves and later accepts
+  from relayed requests. Accepted risk: the server is trusted to say who is signed in, and so who owns a key and who
+  opens a machine (see the session cookie above). Expired rows are not
   cleaned up yet, and there is no cap on outstanding keys per user.
 - Better Auth checks the `Origin` of non-GET requests against `SERVER_TRUSTED_ORIGINS` plus the origin of
   `BETTER_AUTH_URL`, and rate limits by client IP in memory (per process, reset on restart). The IP comes from the
