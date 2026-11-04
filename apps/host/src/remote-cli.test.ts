@@ -37,6 +37,8 @@ class FakeRemoteAccess {
     linkedAccount: null,
   }
   calls: [string, unknown][] = []
+  /** The account the key belongs to, as the server names it. */
+  account = account
   /** What `previewLink` and `link` throw, standing for a host refusal. */
   linkError: LinkError | null = null
 
@@ -54,7 +56,7 @@ class FakeRemoteAccess {
     return {
       serverUrl: this.current.serverUrl,
       serverUrlIsDefault: this.current.serverUrlIsDefault,
-      account,
+      account: this.account,
       fingerprint: key.slice(-4),
       expiresAt: '2026-11-04T12:15:00.000Z',
     }
@@ -188,10 +190,14 @@ describe('host:remote with the host running', () => {
 
   test('link --yes skips the prompt, a host refusal is printed, and a bad key sends nothing', async () => {
     const url = runningHost()
+    // A name that would erase the warning and fake a line in a terminal.
+    host.account = { name: 'Eve\x1b[1A\x1b[2K\nFingerprint: kkkk', maskedEmail: 'e***@example.com' }
     const yes = await run(url, ['link', '--yes', key])
     expect(yes.code).toBe(0)
     expect(yes.text).toContain('Fingerprint:')
     expect(yes.text).not.toContain('[y/N]')
+    expect(yes.text).not.toContain('\x1b')
+    expect(yes.text).toContain('Account:     Eve?[1A?[2K?Fingerprint: kkkk (e***@example.com)')
 
     host.calls = []
     host.linkError = new LinkError(409, 'Turn remote access on and wait until it is connected')

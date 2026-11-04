@@ -186,8 +186,9 @@ async function updateThroughHost(command: SettingCommand, current: RemoteAccessS
     clientUrl: current.clientUrl,
   })
   if (!answer?.ok) return refused(answer, deps)
-  if (command.name === 'server') deps.out(`Server address set to ${answer.data.serverUrl}.`)
+  if (command.name === 'server') deps.out(`Server address set to ${printable(answer.data.serverUrl)}.`)
   deps.out(remoteAccessLine(answer.data.enabled, answer.data.tunnel))
+  if (command.name === 'on') deps.out('A newly created connect link is printed in the host log, not here.')
   return 0
 }
 
@@ -197,12 +198,13 @@ async function linkThroughHost(command: Extract<Command, { name: 'link' }>, deps
   if (!preview?.ok) return refused(preview, deps)
   printPreview(preview.data, deps.out)
   if (!command.yes) {
-    const answer = await deps.prompt(`Link this machine to ${preview.data.account.name}? [y/N] `)
+    const answer = await deps.prompt(`Link this machine to ${printable(preview.data.account.name)}? [y/N] `)
     if (!/^(y|yes)$/i.test(answer?.trim() ?? '')) {
       deps.err('Not linked')
       return 1
     }
   }
+  deps.out('Linking...')
   const linked = await deps.callHost(routes.remoteAccess.link, { key: command.key, serverUrl: preview.data.serverUrl })
   if (!linked?.ok) return refused(linked, deps)
   deps.out(`Linked: ${accountLine(linked.data.linkedAccount)}`)
@@ -274,7 +276,7 @@ function saveSetting(command: SettingCommand, deps: RemoteCliDeps): number {
   new RemoteAccessRepository(remoteAccessPath(deps.hostRoot)).save(next)
   deps.out(
     command.name === 'server'
-      ? `Server address saved: ${next.serverUrl}. The host uses it from its next start.`
+      ? `Server address saved: ${printable(next.serverUrl ?? '')}. The host uses it from its next start.`
       : `Remote access turned ${command.name}. The change applies when the host next starts.`,
   )
   if (deps.env.SERVER_URL && command.name !== 'on') {
@@ -298,9 +300,9 @@ interface StatusView {
 
 function printStatus(view: StatusView, out: (line: string) => void) {
   const marks = [view.serverUrlIsDefault && '(default)', view.serverUrlFromEnv && '(from SERVER_URL)'].filter(Boolean)
-  out(`Server address: ${[view.serverUrl, ...marks].join(' ')}`)
+  out(`Server address: ${[printable(view.serverUrl), ...marks].join(' ')}`)
   out(view.enabled === null ? 'Remote access:  setting not readable' : remoteAccessLine(view.enabled, view.tunnel))
-  out(`Machine id:     ${view.machineId ?? 'none yet'}`)
+  out(`Machine id:     ${view.machineId === null ? 'none yet' : printable(view.machineId)}`)
   out(`Account:        ${view.linkedAccount === undefined ? 'not readable' : accountLine(view.linkedAccount)}`)
 }
 
@@ -310,22 +312,23 @@ function remoteAccessLine(enabled: boolean, tunnel: string): string {
 
 function accountLine(account: LinkedAccount | null): string {
   if (!account) return 'not linked'
-  return `${account.name} (${account.maskedEmail}) through ${account.serverUrl}, linked ${formatLocalDateTime(account.linkedAt)}`
+  const { name, maskedEmail, serverUrl } = account
+  return `${printable(name)} (${printable(maskedEmail)}) through ${printable(serverUrl)}, linked ${formatLocalDateTime(account.linkedAt)}`
 }
 
 /** Prints the three things to check before a key is used. */
 function printPreview(preview: PreviewLinkResponse, out: (line: string) => void) {
-  out(`Server:      ${preview.serverUrl}`)
+  out(`Server:      ${printable(preview.serverUrl)}`)
   if (!preview.serverUrlIsDefault) {
     out('Warning:     this is not the default server. Link only if you run it or trust who does.')
   }
-  out(`Account:     ${preview.account.name} (${preview.account.maskedEmail})`)
-  out(`Fingerprint: ${preview.fingerprint} (the same 4 characters must show in the client)`)
+  out(`Account:     ${printable(preview.account.name)} (${printable(preview.account.maskedEmail)})`)
+  out(`Fingerprint: ${printable(preview.fingerprint)} (the same 4 characters must show in the client)`)
 }
 
 /** Prints a host's refusal and answers the exit code. Null stands for a host that went away mid-command. */
 function refused(answer: { status: number; message: string } | null, deps: RemoteCliDeps): number {
-  deps.err(answer ? answer.message : 'The host stopped. Run the command again')
+  deps.err(answer ? printable(answer.message) : 'The host stopped. Run the command again')
   return 1
 }
 
@@ -358,5 +361,15 @@ function isDefaultServer(serverUrl: string): boolean {
 }
 
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return printable(error instanceof Error ? error.message : String(error))
+}
+
+/**
+ * `value` with every control character (C0, DEL and C1) replaced by `?`. Names
+ * and messages come from the server or a file, and a terminal would run escape
+ * sequences in them, which could rewrite the lines the user checks before linking.
+ */
+function printable(value: string): string {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point.
+  return value.replace(/[\u0000-\u001f\u007f-\u009f]/g, '?')
 }
