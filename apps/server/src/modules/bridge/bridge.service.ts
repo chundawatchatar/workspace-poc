@@ -100,8 +100,7 @@ export class ChannelBridge {
    * Opens a channel to the machine for a browser socket and sends its
    * `ws.open`. Returns null after closing the socket when the machine is offline
    * (`CLOSE_MACHINE_OFFLINE`) or has too many channels (1013). `clientIp` is
-   * kept with the channel, for `authFailed`. `accountId` goes in the `ws.open`
-   * envelope when set.
+   * kept with the channel, for `authFailed`.
    */
   open(
     machineId: string,
@@ -109,7 +108,6 @@ export class ChannelBridge {
     headers: [string, string][],
     socket: BrowserSocket,
     clientIp = '',
-    accountId: string | null = null,
   ): BrowserChannel | null {
     const conn = this.registry.get(machineId)
     if (!conn || this.closed.has(conn)) {
@@ -134,7 +132,7 @@ export class ChannelBridge {
       authFailed: false,
     }
     state.channels.set(channel.id, channel)
-    conn.send({ type: 'ws.open', channel: channel.id, path, headers, ...(accountId ? { accountId } : {}) })
+    conn.send({ type: 'ws.open', channel: channel.id, path, headers })
     return {
       message: (data) => this.fromBrowser(conn, channel, data),
       closed: (code, reason) => this.browserClosed(conn, channel, code, reason),

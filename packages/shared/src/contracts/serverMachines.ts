@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { relayTicketResponse } from './relayTicket'
 import { defineServerContract } from './server'
 
 // The machines linked to an account. The accounts API only ever handles machine ids and names: no schema here has a
@@ -54,6 +55,8 @@ export const createEnrollmentResponse = z.object({
 })
 export type CreateEnrollmentResponse = z.infer<typeof createEnrollmentResponse>
 
+export const relayTicketBody = z.strictObject({ machineId: machineIdSchema })
+
 export const serverMachinesContract = defineServerContract({
   list: {
     method: 'GET',
@@ -91,5 +94,13 @@ export const serverMachinesContract = defineServerContract({
       'Creates a single-use enrollment key, valid for 15 minutes, that a machine redeems over its tunnel to link itself.',
     input: z.strictObject({}),
     output: createEnrollmentResponse,
+  },
+  relayTicket: {
+    method: 'POST',
+    path: '/api/machines/:machineId/relay-ticket',
+    description:
+      "Signs a relay ticket that opens one of the signed-in user's machines for 60 seconds, without its access key. A machine the user doesn't list answers `not_found`.",
+    input: relayTicketBody,
+    output: relayTicketResponse,
   },
 })

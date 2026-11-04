@@ -1,8 +1,13 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash, createPublicKey, randomUUID, verify } from 'node:crypto'
 import { schema } from '@orch/domain'
 import { createTestDomain, type TestDomain } from '@orch/domain/testing'
-import { type CreateEnrollmentResponse, enrollmentKeySchema, type ServerMachine } from '@orch/shared'
+import {
+  type CreateEnrollmentResponse,
+  enrollmentKeySchema,
+  type RelayTicketResponse,
+  type ServerMachine,
+} from '@orch/shared'
 import { eq } from 'drizzle-orm'
 import { accountsTestApp, cookiePair } from '../auth/auth.testing'
 import { type MachineConnection, machineIdFromProof } from '../tunnel/tunnel.service'
@@ -89,6 +94,41 @@ describe('machines module', () => {
         [bob.userId, 'Bob box'],
       ].sort(),
     )
+  })
+
+  test('signs a relay ticket only for a machine the caller lists, and only for a signed-in caller', async () => {
+    const ada = await signedIn()
+    const bob = await signedIn()
+    const machineId = freshMachineId()
+    await link(ada, machineId, 'Box')
+    const ticketOf = (user: User | Omit<User, 'cookie'>) =>
+      ctx.client.call('POST', `${path(machineId)}/relay-ticket`, { ...user, body: {} })
+
+    const issued = await ticketOf(ada)
+    expect(issued.status).toBe(200)
+    const { ticket, expiresAt } = (await issued.json()) as RelayTicketResponse
+    expect(expiresAt).toBe(new Date(NOW.getTime() + 60_000).toISOString())
+    const [header = '', payload = '', signature = ''] = ticket.split('.')
+    const decode = (part: string) => JSON.parse(Buffer.from(part, 'base64url').toString())
+    const [key] = ctx.relayTickets.publicKeys
+    expect(decode(header)).toEqual({ alg: 'EdDSA', typ: 'orch-relay', kid: key?.kid })
+    expect(decode(payload)).toEqual({
+      sub: ada.userId,
+      aud: machineId,
+      exp: NOW.getTime() / 1000 + 60,
+      jti: expect.stringMatching(/^[A-Za-z0-9_-]{22}$/),
+    })
+    const publicKey = createPublicKey({
+      key: { kty: 'OKP', crv: 'Ed25519', x: key?.publicKey ?? '' },
+      format: 'jwk',
+    })
+    const signed = Buffer.from(`${header}.${payload}`)
+    expect(verify(null, signed, publicKey, Buffer.from(signature, 'base64url'))).toBe(true)
+
+    // Bob doesn't list the machine, and nobody signed in gets nothing either.
+    expect(await errorOf(await ticketOf(bob))).toEqual({ status: 404, code: 'not_found' })
+    const { cookie: _, ...signedOut } = ada
+    expect((await ticketOf(signedOut)).status).toBe(401)
   })
 
   test('a link that loses a race to the unique index returns the row that won', async () => {

@@ -68,8 +68,7 @@ export function forwardedPath(url: string): string | null {
 /**
  * Relays browser HTTP requests to machines over their tunnels and streams the
  * answers back. It routes on the frame envelope only (connection, request id,
- * sizes, the account the routes attach) and never looks at the method, path,
- * headers, body or status.
+ * sizes) and never looks at the method, path, headers, body or status.
  */
 export class HttpForwarder {
   private readonly registry: MachineRegistry
@@ -88,14 +87,9 @@ export class HttpForwarder {
    * arrives. Resolves with 502 when the machine is offline or its tunnel drops,
    * 504 when the head takes longer than `requestTimeoutMs`, and 413 when the
    * request does not fit in one tunnel frame. `clientIp` is kept with the
-   * request, for `authFailed`. `accountId` goes in the frame's envelope when set.
+   * request, for `authFailed`.
    */
-  async forward(
-    machineId: string,
-    request: Request,
-    clientIp = '',
-    accountId: string | null = null,
-  ): Promise<Response> {
+  async forward(machineId: string, request: Request, clientIp = ''): Promise<Response> {
     const path = forwardedPath(request.url)
     if (!path) return new Response('Not Found', { status: 404 })
     if (!this.live(machineId)) return offline()
@@ -116,7 +110,6 @@ export class HttpForwarder {
       path,
       headers: relayedRequestHeaders(request.headers),
       ...(body && body.byteLength > 0 ? { body } : {}),
-      ...(accountId ? { accountId } : {}),
     }
     if (frameBytes(frame) > MAX_TUNNEL_FRAME_BYTES) return tooLarge()
 

@@ -7,7 +7,6 @@ import { type BridgeSocketDeps, createBridgeSocket } from './modules/bridge/brid
 import { createForwardRoutes, type ForwardRoutesDeps } from './modules/forward/forward.routes'
 import type { LimitsDeps } from './modules/limits/limits.middleware'
 import { answerEnrollmentFrame, type EnrollmentFrameDeps } from './modules/machines/enrollment.service'
-import { createRelayAccount } from './modules/machines/relay-account.service'
 import { createStaticRoutes, type StaticRoutesDeps } from './modules/static/static.routes'
 import { createSystemRoutes } from './modules/system/system.routes'
 import type { MachineConnection } from './modules/tunnel/tunnel.service'
@@ -18,18 +17,14 @@ export type ApiModule = (options: ServerRouterOptions) => Hono
 
 /** Everything the server's modules need, built once in `index.ts`. Add another module's deps with `&`. */
 export type AppDeps = Omit<TunnelSocketDeps, 'onFrame' | 'onClose' | 'clientIp'> &
-  Omit<ForwardRoutesDeps, 'clientIp' | 'relayAccount'> &
-  Omit<BridgeSocketDeps, 'clientIp' | 'relayAccount'> &
+  Omit<ForwardRoutesDeps, 'clientIp'> &
+  Omit<BridgeSocketDeps, 'clientIp'> &
   StaticRoutesDeps & {
     /** Exact origins, besides the server's own, that may call machines. Defaults to none. */
     allowedOrigins?: readonly string[]
     /** True behind a proxy that sets `X-Forwarded-For`, which then gives the client IP. Defaults to false. */
     trustProxy?: boolean
-    /**
-     * What the server API's routers share: the trusted origins and the
-     * `authenticate` hook. With accounts on, the relay reads the account it
-     * attaches to machine requests through the same `authenticate` and `forUser`.
-     */
+    /** What the server API's routers share: the trusted origins and the `authenticate` hook. */
     api?: ServerRouterOptions
     /** The accounts modules of the server API. Null or missing means accounts are off, and none is mounted. */
     accounts?: { modules: readonly ApiModule[] } | null
@@ -57,12 +52,6 @@ export function createApp(deps: AppDeps): Hono {
           : undefined
     if (ip !== undefined) limiter.badKey(ip)
   }
-
-  const api = deps.api ?? {}
-  const relayAccount =
-    deps.accounts && api.authenticate && api.forUser
-      ? createRelayAccount({ authenticate: api.authenticate, forUser: api.forUser })
-      : null
 
   const app = new Hono()
   app.use(securityHeaders())
@@ -92,8 +81,9 @@ export function createApp(deps: AppDeps): Hono {
       },
     }),
   )
-  app.route('/', createForwardRoutes({ ...deps, ...limits, relayAccount }))
-  app.route('/', createBridgeSocket({ ...deps, ...limits, relayAccount }))
+  app.route('/', createForwardRoutes({ ...deps, ...limits }))
+  app.route('/', createBridgeSocket({ ...deps, ...limits }))
+  const api = deps.api ?? {}
   app.route('/', createSystemRoutes(api))
   for (const module of deps.accounts?.modules ?? []) app.route('/', module(api))
   app.all('/api', () => serverErrorResponse(404, 'not_found'))

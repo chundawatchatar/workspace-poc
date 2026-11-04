@@ -4,6 +4,7 @@ import {
   enrollmentFingerprint,
   enrollmentKeySchema,
   type MachineFrame,
+  type RelayKey,
   type ServerFrame,
 } from '@orch/shared'
 import { and, eq, gt, isNull } from 'drizzle-orm'
@@ -60,11 +61,15 @@ export interface EnrollmentPreview {
   expiresAt: string
 }
 
-/** What redeeming a key did: `machineId` is now linked to `account`, whose user id is `accountId`. */
+/**
+ * What redeeming a key did: `machineId` is now linked to `account`, whose user
+ * id is `accountId`, and should trust relay tickets signed by `relayKeys`.
+ */
 export interface EnrollmentRedeemed {
   machineId: string
   accountId: string
   account: EnrollmentAccount
+  relayKeys: RelayKey[]
 }
 
 /** What the enrollment service needs. */
@@ -79,6 +84,8 @@ export interface EnrollmentServiceDeps {
   forUser: ForUser
   /** The registry the linked machine's online state is read from. */
   registry: MachineRegistry
+  /** The server's relay public keys, handed to every machine that links. */
+  relayKeys: RelayKey[]
   /** The clock. Defaults to the current time. */
   now?: () => Date
 }
@@ -136,7 +143,12 @@ export class EnrollmentService {
       .where(eq(schema.user.id, userId))
       .limit(1)
     if (!owner) throw new Error('The enrollment key owner is gone.')
-    return { machineId, accountId: userId, account: { name: owner.name, maskedEmail: maskEmail(owner.email) } }
+    return {
+      machineId,
+      accountId: userId,
+      account: { name: owner.name, maskedEmail: maskEmail(owner.email) },
+      relayKeys: this.deps.relayKeys,
+    }
   }
 
   /** The rows `key` matches while it is unused and unexpired at `now`. */

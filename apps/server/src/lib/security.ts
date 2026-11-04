@@ -1,4 +1,4 @@
-import { ACCESS_KEY_HEADER } from '@orch/shared'
+import { ACCESS_KEY_HEADER, RELAY_TICKET_HEADER } from '@orch/shared'
 import type { Context, MiddlewareHandler } from 'hono'
 
 /** The headers every response from the server carries, relayed ones included. */
@@ -19,10 +19,10 @@ export const SECURITY_HEADERS: Readonly<Record<string, string>> = {
  */
 export const SANDBOX_CSP = "sandbox; default-src 'none'; frame-ancestors 'none'"
 
-// What a cross-origin page may send to a machine. The key header is the one
-// that makes every machine request non-simple, so browsers preflight it.
+// What a cross-origin page may send to a machine. The key or ticket header is
+// the one that makes every machine request non-simple, so browsers preflight it.
 const ALLOWED_METHODS = 'GET, HEAD, POST, PUT, PATCH, DELETE'
-const ALLOWED_HEADERS = `${ACCESS_KEY_HEADER}, content-type`
+const ALLOWED_HEADERS = `${ACCESS_KEY_HEADER}, ${RELAY_TICKET_HEADER}, content-type`
 const PREFLIGHT_MAX_AGE_SECONDS = '600'
 
 /** Adds `SECURITY_HEADERS` to every response, after the handler has made it. */
@@ -73,9 +73,8 @@ export class OriginPolicy {
  * The CORS handling for `/m/*`. A request from an origin outside the policy
  * gets 403 and goes no further. A preflight is answered here and never reaches
  * a machine. Other responses get `Access-Control-Allow-Origin` for an allowed
- * cross origin, with `Access-Control-Allow-Credentials`, so such a page can
- * open a machine with its account's session; the machine's own
- * `Access-Control-*` headers are dropped by the forwarder.
+ * cross origin; the machine's own `Access-Control-*` headers are dropped by
+ * the forwarder.
  */
 export function machineCors(policy: OriginPolicy): MiddlewareHandler {
   return async (c, next) => {
@@ -88,7 +87,6 @@ export function machineCors(policy: OriginPolicy): MiddlewareHandler {
         status: 204,
         headers: {
           'Access-Control-Allow-Origin': origin ?? '',
-          'Access-Control-Allow-Credentials': 'true',
           Vary: 'Origin',
           'Access-Control-Allow-Methods': ALLOWED_METHODS,
           'Access-Control-Allow-Headers': ALLOWED_HEADERS,
@@ -98,10 +96,7 @@ export function machineCors(policy: OriginPolicy): MiddlewareHandler {
     }
     await next()
     if (verdict === 'cross' && origin) {
-      setHeaders(c, [
-        ['Access-Control-Allow-Origin', origin],
-        ['Access-Control-Allow-Credentials', 'true'],
-      ])
+      setHeaders(c, [['Access-Control-Allow-Origin', origin]])
       c.res.headers.append('Vary', 'Origin')
     }
   }

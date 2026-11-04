@@ -9,6 +9,7 @@ import { HttpForwarder } from '../forward/forward.service'
 import { ConnectionLimiter } from '../limits/limits.service'
 import { ENROLLMENT_LOOKUP_REASON, EnrollmentService } from '../machines/enrollment.service'
 import { createMachinesModule } from '../machines/machines.routes'
+import { RelayTickets } from '../machines/relay-ticket.service'
 import { createMailer } from '../mailer/mailer.service'
 import { type CaptureTransport, createCaptureTransport } from '../mailer/mailer.testing'
 import { MachineRegistry } from '../tunnel/tunnel.service'
@@ -26,6 +27,9 @@ export const TEST_TRUSTED_ORIGIN = 'https://app.example'
 
 /** The test password every `verifiedUser` signs up with. */
 export const TEST_PASSWORD = 'correct horse battery'
+
+/** The relay signing key test apps use. A fixed, public test value. */
+export const TEST_RELAY_SIGNING_KEY = { kid: 'test-1', seed: Buffer.alloc(32, 7).toString('base64url') }
 
 /** The session cookie's name on an `http://` base URL, where it has no `__Secure-` prefix. */
 export const SESSION_COOKIE = 'better-auth.session_token'
@@ -171,6 +175,7 @@ export function accountsTestApp(domain: TestDomain, ipPrefix: string, { now, lim
   })
   const registry = new MachineRegistry()
   const forUser = (principal: Principal) => domain.forUser(principal)
+  const relayTickets = new RelayTickets({ signingKey: TEST_RELAY_SIGNING_KEY, now })
   const app = createApp({
     registry,
     forwarder: new HttpForwarder({ registry }),
@@ -186,14 +191,15 @@ export function accountsTestApp(domain: TestDomain, ipPrefix: string, { now, lim
       forUser,
       registry,
       now,
+      relayKeys: relayTickets.publicKeys,
     }),
     accounts: {
       modules: [
         createAuthModule({ auth, clientIp: clientIpReader({ trustProxy: false }) }),
         createAccountModule(),
-        createMachinesModule({ registry, now }),
+        createMachinesModule({ registry, now, relayTickets }),
       ],
     },
   })
-  return { app, mail, registry, client: authTestClient({ app, mail, base: TEST_BASE, ipPrefix }) }
+  return { app, mail, registry, relayTickets, client: authTestClient({ app, mail, base: TEST_BASE, ipPrefix }) }
 }

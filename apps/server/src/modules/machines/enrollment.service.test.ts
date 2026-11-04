@@ -161,6 +161,7 @@ describe('enrollment over the tunnel', () => {
       machineId: box.machineId,
       accountId: ada.userId,
       account,
+      relayKeys: ctx.relayTickets.publicKeys,
     })
     expect((await enrollmentRow(created.key))?.usedAt).toBeInstanceOf(Date)
     const [linked] = await machinesOf(ada)

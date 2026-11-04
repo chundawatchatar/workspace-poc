@@ -6,6 +6,7 @@ import {
   MAX_TUNNEL_FRAME_BYTES,
   type MachineFrame,
   machinePathPrefix,
+  RELAY_TICKET_HEADER,
   type ServerFrame,
   serverFrame,
   TUNNEL_PATH,
@@ -95,19 +96,25 @@ describe('forward routes', () => {
       const body = new Uint8Array([0, 1, 2, 250, 255])
       const pending = fetch(url('/api/git/status?cwd=%2Ftmp'), {
         method: 'POST',
-        headers: { [ACCESS_KEY_HEADER]: 'secret-key', 'x-thing': 'a', connection: 'keep-alive', Cookie: 'session=abc' },
+        headers: {
+          [ACCESS_KEY_HEADER]: 'secret-key',
+          [RELAY_TICKET_HEADER]: 'a.relay.ticket',
+          'x-thing': 'a',
+          connection: 'keep-alive',
+          Cookie: 'session=abc',
+        },
         body,
       })
       await until(() => m.requests.length === 1)
       const request = m.requests[0]
       expect(request).toMatchObject({ type: 'http.request', id: 1, method: 'POST', path: '/api/git/status?cwd=%2Ftmp' })
       expect(request?.headers).toContainEqual([ACCESS_KEY_HEADER, 'secret-key'])
+      // A relay ticket is the machine's to check, so it passes through as sent.
+      expect(request?.headers).toContainEqual([RELAY_TICKET_HEADER, 'a.relay.ticket'])
       expect(request?.headers).toContainEqual(['x-thing', 'a'])
       expect(request?.headers.some(([name]) => name === 'connection' || name === 'host')).toBe(false)
       // The account session cookie lives on the server's origin, so a machine never sees it.
       expect(request?.headers.some(([name]) => name.toLowerCase() === 'cookie')).toBe(false)
-      // Accounts are off here, so no account is attached whatever the cookie says.
-      expect(request?.accountId).toBeUndefined()
       expect([...(request?.body ?? [])]).toEqual([...body])
 
       m.send({

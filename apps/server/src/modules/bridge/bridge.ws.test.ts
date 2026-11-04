@@ -212,8 +212,6 @@ describe('bridge socket', () => {
       expect(open?.headers).toContainEqual(['x-thing', 'a'])
       expect(open?.headers).toContainEqual(['sec-websocket-protocol', 'orch'])
       expect(open?.headers.some(([name]) => name.toLowerCase() === 'cookie')).toBe(false)
-      // Accounts are off here, so no account is attached whatever the cookie says.
-      expect(open?.accountId).toBeUndefined()
     } finally {
       socket.destroy()
     }

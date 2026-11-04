@@ -96,9 +96,8 @@ accounts are on.
 - Email and password, with required email verification. Sign-up sends a verification email, and a password reset ends
   every session of the account.
 - Sessions live in the database and the cookie cache is off, so every request reads the session there.
-- The session cookie is `Path=/`, `HttpOnly`, `Secure` and `SameSite=Lax`. Browsers send it to relayed machines
-  under `/m/*` too, so the relay can tell which account opened a machine (section 7); the relay drops `Cookie` before
-  anything reaches the machine. Its name has the `__Secure-` prefix when `BETTER_AUTH_URL` is `https://`, and none on
+- The session cookie is `Path=/api`, `HttpOnly`, `Secure` and `SameSite=Lax`, so browsers never send it to relayed
+  machines under `/m/*`. Its name has the `__Secure-` prefix when `BETTER_AUTH_URL` is `https://`, and none on
   `http://`.
 - Its origin check accepts `SERVER_TRUSTED_ORIGINS` plus the origin of `BETTER_AUTH_URL`. Its rate limits are in
   memory (per process, reset on restart) and keyed by the `x-orch-client-ip` header, which `auth.routes.ts` sets from
@@ -213,29 +212,15 @@ It sends one `verifyEmail` with a dummy link through `SMTP_URL` from `.env`.
 
 ## 7. Accounts and machine access keys
 
-A machine opens either with its access key from a connect link, or through the account it is linked to with an
-enrollment key. The host decides both on every request and socket.
+Signing in never grants access to a machine. The host checks the machine's access key on every request and socket,
+and accounts don't replace that check.
 
 - The accounts API (`serverRoutes.machines`, `apps/server/src/modules/machines/`) stores and returns only machine
   ids and names. It never receives or stores an access key: every input is strict, so a body carrying a `key` field
   gets 400, and the module never reads request headers.
 - Keys stay in the browser's `localStorage` (`orch-machines`), saved when a connect link is opened. The home page
-  lists the account's machines, each with an Open link. A machine page uses a saved key when this browser holds one;
-  otherwise it opens a machine the account lists through the account (`createRemoteTransport` without `accessKey`:
-  no key header, `credentials: 'include'`, and `{ type: 'auth', account: true }` as each socket's first message).
-- Account access: for each relayed HTTP request and socket upgrade, the relay reads the outer request's session
-  through `getSession` (`modules/machines/relay-account.service.ts`, built in `app.ts` from the same `authenticate`
-  and `forUser`), and when the account's list holds the machine it sets `accountId` (the user id) on `http.request`
-  or `ws.open`. The host accepts it only when it equals the `accountId` saved by `enroll.redeemed` and the account
-  was linked through the server address in use; a request with a key header is judged by the key alone. Any user can
-  add any machine id to their list, so the server's check proves nothing by itself; it only keeps user ids from
-  machines the user doesn't list. The host's comparison is the real check.
-- Accepted risk, server trust: the server is trusted to say who is signed in, so a compromised server could open
-  every linked machine of every account, until device approval and end-to-end encryption. A revoked session or a
-  machine unlinked on the server is refused on its next request, but an account socket already open stays until it
-  closes (unlinking on the host closes them). A refused account request sends `auth.failed` and counts against the
-  browser's bad-key limit, like a wrong key. Each relayed request and socket upgrade costs one session and one
-  machine lookup.
+  lists the account's machines, but a machine opens only in a browser that holds its key; elsewhere it says to open
+  the connect link on that device.
 - Opening a connect link also records a pending link (`apps/client/src/lib/pendingLink.ts`) with the machine's id and
   name, never the key, which is sent to `serverRoutes.machines.link` once the user is signed in.
 - The home page's Connect a machine button (`apps/client/src/components/machines/ConnectMachineDialog.tsx`) creates
@@ -244,7 +229,7 @@ enrollment key. The host decides both on every request and socket.
   The key lives only in the dialog's state, never in the query cache, storage, the URL or a log, so closing the dialog
   forgets it and opening it again creates a new one. While it is open the machines list is read every 2 seconds, and
   the first machine that wasn't listed when the key was created is taken to be the one that redeemed it. A machine
-  linked this way opens from any browser signed in to the account.
+  linked this way has no Open link until a browser holds its access key.
 - The relay still sees access keys in transit, in the header and first socket message it forwards, until end-to-end
   encryption (REM-2). It never checks or stores them.
 - A machine's online state comes from the server's in-memory `MachineRegistry`, the same one the relay uses. Offline
@@ -252,5 +237,5 @@ enrollment key. The host decides both on every request and socket.
   [keeping the machine connected](architecture.md#keeping-the-machine-connected)).
 
 Accepted risk, linking: the server can't prove that a user holds a machine's key, so anyone who knows a machine id can
-link it to their account. That reveals only whether the machine is online; the host still guards every request to it,
-and accepts an account only when it is the one the machine linked with an enrollment key.
+link it to their account. That reveals only whether the machine is online; the host's key check still guards every
+request to it.

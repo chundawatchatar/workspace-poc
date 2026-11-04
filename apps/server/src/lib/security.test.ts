@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { ACCESS_KEY_HEADER, machinePathPrefix } from '@orch/shared'
+import { ACCESS_KEY_HEADER, machinePathPrefix, RELAY_TICKET_HEADER } from '@orch/shared'
 import { createApp } from '../app'
 import { ChannelBridge } from '../modules/bridge/bridge.service'
 import { HttpForwarder } from '../modules/forward/forward.service'
@@ -58,8 +58,7 @@ describe('security', () => {
     expect(cross.status).toBe(502)
     expect(cross.headers.get('access-control-allow-origin')).toBe(allowed)
     expect(cross.headers.get('vary')).toBe('Origin')
-    // Credentials, so a listed origin can open a machine with its account's session cookie.
-    expect(cross.headers.get('access-control-allow-credentials')).toBe('true')
+    expect(cross.headers.has('access-control-allow-credentials')).toBe(false)
   })
 
   test('the server answers preflights itself: 204 for an allowed origin, 403 for any other', async () => {
@@ -78,9 +77,12 @@ describe('security', () => {
     expect(ok.headers.get('access-control-allow-origin')).toBe(allowed)
     expect(ok.headers.get('vary')).toBe('Origin')
     expect(ok.headers.get('access-control-allow-methods')).toContain('POST')
-    expect(ok.headers.get('access-control-allow-headers')).toBe(`${ACCESS_KEY_HEADER}, content-type`)
+    expect(ok.headers.get('access-control-allow-headers')).toBe(
+      `${ACCESS_KEY_HEADER}, ${RELAY_TICKET_HEADER}, content-type`,
+    )
+    // A ticket travels in a header, never a cookie, so the relay never allows credentials.
+    expect(ok.headers.has('access-control-allow-credentials')).toBe(false)
     expect(ok.headers.get('access-control-max-age')).toBe('600')
-    expect(ok.headers.get('access-control-allow-credentials')).toBe('true')
 
     const denied = await preflight('https://evil.example')
     expect(denied.status).toBe(403)

@@ -17,6 +17,7 @@ import { HttpForwarder } from './modules/forward/forward.service'
 import { ConnectionLimiter } from './modules/limits/limits.service'
 import { ENROLLMENT_LOOKUP_REASON, EnrollmentService } from './modules/machines/enrollment.service'
 import { createMachinesModule } from './modules/machines/machines.routes'
+import { RelayTickets } from './modules/machines/relay-ticket.service'
 import { createMailer, type Mailer } from './modules/mailer/mailer.service'
 import { createSmtpTransport } from './modules/mailer/mailer.transport'
 import { loadStaticSite } from './modules/static/static.service'
@@ -81,13 +82,22 @@ function createAccountsModules({
     trustedOrigins,
   })
   const forUser = (principal: Principal) => domain.forUser(principal)
+  const relayTickets = new RelayTickets({
+    signingKey: accounts.relaySigningKey,
+    extraPublicKeys: accounts.relayExtraPublicKeys,
+  })
   return {
-    modules: [createAuthModule({ auth, clientIp }), createAccountModule(), createMachinesModule({ registry })],
+    modules: [
+      createAuthModule({ auth, clientIp }),
+      createAccountModule(),
+      createMachinesModule({ registry, relayTickets }),
+    ],
     api: { authenticate: createAuthenticate({ auth }), forUser },
     enrollment: new EnrollmentService({
       byKey: () => domain.skipAuthorization(ENROLLMENT_LOOKUP_REASON),
       forUser,
       registry,
+      relayKeys: relayTickets.publicKeys,
     }),
   }
 }

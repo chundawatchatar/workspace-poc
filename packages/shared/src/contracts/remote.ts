@@ -3,8 +3,9 @@ import { API_PREFIX, WS_PREFIX } from './contract'
 
 // How a browser reaches a machine through the cloud server. The server forwards
 // `/m/<machineId>/api/*` and `/m/<machineId>/ws/*` to the machine, and the
-// machine checks the access key, or the account the server attached. The key
-// never goes in a URL, so it stays out of server logs, proxies and browser history.
+// machine checks the access key, or a relay ticket the server signed for the
+// account. Neither ever goes in a URL, so they stay out of server logs, proxies
+// and browser history.
 
 /** The request header that carries a machine's access key on HTTP requests. */
 export const ACCESS_KEY_HEADER = 'x-orch-access-key'
@@ -12,7 +13,7 @@ export const ACCESS_KEY_HEADER = 'x-orch-access-key'
 /**
  * The first text message on every remote socket, sent before anything else,
  * since browsers can't set socket headers. It carries the access key, or
- * `account: true` to be judged by the signed-in account the server attached.
+ * `account: true` to be judged by the relay ticket the socket opened with.
  */
 export const socketAuthMessage = z.union([
   z.object({ type: z.literal('auth'), key: z.string().min(1) }),

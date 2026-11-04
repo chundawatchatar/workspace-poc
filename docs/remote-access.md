@@ -136,33 +136,13 @@ Before anything is used, the dialog shows three values to check:
   created the key.
 
 "Link" redeems the key, so it can't be used again. The host then saves the
-account (name, masked email, server address, when it was linked and the
-account's user id, never the key) in `apps/host/.data/linked-account.json`, and
-the dialog shows it with an "Unlink" button. The user id stays on the machine:
-the dialog and the status never show it. A linked machine must unlink before it
-links again.
+account (name, masked email, server address and when it was linked, never the
+key) in `apps/host/.data/linked-account.json`, and the dialog shows it with an
+"Unlink" button. A linked machine must unlink before it links again.
 
-Once linked, any browser signed in to that account opens the machine from the
-client's home page, with no connect link. The server reads the browser's
-session and, when the account lists the machine, tells the machine the
-account's user id with each request and socket. The host accepts it only when
-it is the linked account's id and the account was linked through the server
-address in use; anything else gets the same refusal as a wrong key. Access keys
-from connect links keep working, and a request that carries a key is judged by
-the key alone. A `linked-account.json` saved before this (with no user id)
-still loads and shows the account, but grants no account access: unlink and
-link again with a new enrollment key.
-
-"Unlink" deletes that file, so this machine forgets the account, and closes the
-sockets the account has open. It is local only: the server still lists the
-machine until you unlink it from the client's home page, but the machine
-refuses that account from then on.
-
-Accepted risks: the server is trusted to say who is signed in, so a compromised
-server could open every linked machine of every account (until device approval
-and end-to-end encryption). Revoking a session or unlinking on the server
-refuses new requests at once, but a socket the account already has open stays
-until it closes; unlinking on the host closes them.
+"Unlink" deletes that file, so this machine forgets the account. It is local
+only: the server still lists the machine until you unlink it from the client's
+home page. A linked account grants no access to the machine yet.
 
 `bun run host:remote link <key>` does the same from a terminal (next part). It
 also needs the running host with the tunnel connected.

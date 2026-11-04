@@ -33,6 +33,24 @@ export {
 } from './fs'
 export { type GitInfo, gitStatusQuery, gitStatusResponse } from './git'
 export {
+  RELAY_SOCKET_PROTOCOL,
+  RELAY_TICKET_HEADER,
+  RELAY_TICKET_PROTOCOL_PREFIX,
+  RELAY_TICKET_TTL_SECONDS,
+  type RelayKey,
+  type RelayTicketHeader,
+  type RelayTicketPayload,
+  type RelayTicketResponse,
+  relayKey,
+  relayKeyId,
+  relayKeyList,
+  relaySocketProtocols,
+  relayTicketHeader,
+  relayTicketPayload,
+  relayTicketResponse,
+  ticketFromProtocols,
+} from './relayTicket'
+export {
   ACCESS_KEY_HEADER,
   CLOSE_ACCESS_DENIED,
   CLOSE_MACHINE_OFFLINE,

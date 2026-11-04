@@ -1,3 +1,4 @@
+import { type RelayKey, relayKey } from '@orch/shared'
 import { z } from 'zod'
 
 /** The settings for the accounts side: the database, Better Auth and the mailer. */
@@ -9,6 +10,10 @@ export interface AccountsConfig {
   betterAuthUrl: string
   smtpUrl: string
   mailFrom: string
+  /** `RELAY_SIGNING_KEY`: the Ed25519 key relay tickets are signed with. Never log its seed. */
+  relaySigningKey: { kid: string; seed: string }
+  /** `RELAY_EXTRA_PUBLIC_KEYS`: public keys machines also trust, for a key rotation. */
+  relayExtraPublicKeys: RelayKey[]
 }
 
 /** The server's validated settings. */
@@ -75,6 +80,37 @@ const baseSchema = z.object({
   SERVER_TRUSTED_ORIGINS: z.preprocess(blankAsUnset, trustedOrigins),
 })
 
+// `<kid>:<value>`, with a 1 to 32 character key id and a 32-byte value in unpadded base64url.
+const KEY_ENTRY = /^([A-Za-z0-9_-]{1,32}):([A-Za-z0-9_-]{43})$/
+
+const relaySigningKey = required
+  .regex(KEY_ENTRY, 'must be <kid>:<32-byte seed as base64url>; run `bun apps/server/scripts/relay-key.ts`')
+  .transform((value) => {
+    const [, kid = '', seed = ''] = KEY_ENTRY.exec(value) ?? []
+    return { kid, seed }
+  })
+
+const relayExtraPublicKeys = z
+  .string()
+  .optional()
+  .transform((value) =>
+    (value ?? '')
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean),
+  )
+  .pipe(
+    z.array(
+      z
+        .string()
+        .regex(KEY_ENTRY, 'each entry must be <kid>:<32-byte public key as base64url>')
+        .transform((entry): RelayKey => {
+          const [, kid = '', publicKey = ''] = KEY_ENTRY.exec(entry) ?? []
+          return relayKey.parse({ kid, publicKey })
+        }),
+    ),
+  )
+
 const accountsSchema = z.object({
   DATABASE_URL: z.preprocess(blankAsUnset, urlWithProtocol(['postgres:', 'postgresql:'], 'must be a postgres:// URL')),
   BETTER_AUTH_SECRET: z.preprocess(
@@ -90,6 +126,8 @@ const accountsSchema = z.object({
   ),
   SMTP_URL: z.preprocess(blankAsUnset, urlWithProtocol(['smtp:', 'smtps:'], 'must be an smtp:// or smtps:// URL')),
   MAIL_FROM: z.preprocess(blankAsUnset, required),
+  RELAY_SIGNING_KEY: z.preprocess(blankAsUnset, relaySigningKey),
+  RELAY_EXTRA_PUBLIC_KEYS: z.preprocess(blankAsUnset, relayExtraPublicKeys),
 })
 
 /**
@@ -115,6 +153,8 @@ export function loadServerConfig(env: Record<string, string | undefined>): Serve
           betterAuthUrl: accounts.data.BETTER_AUTH_URL,
           smtpUrl: accounts.data.SMTP_URL,
           mailFrom: accounts.data.MAIL_FROM,
+          relaySigningKey: accounts.data.RELAY_SIGNING_KEY,
+          relayExtraPublicKeys: accounts.data.RELAY_EXTRA_PUBLIC_KEYS,
         }
       : null,
   }

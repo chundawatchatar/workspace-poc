@@ -55,6 +55,13 @@ afterAll(async () => {
   await domain.close()
 })
 
+/** RFC 6265 section 5.1.4: whether a cookie with `cookiePath` is sent with a request for `requestPath`. */
+function pathMatches(cookiePath: string, requestPath: string): boolean {
+  if (requestPath === cookiePath) return true
+  if (!requestPath.startsWith(cookiePath)) return false
+  return cookiePath.endsWith('/') || requestPath[cookiePath.length] === '/'
+}
+
 async function sessionEmail(cookie: string, ip: string): Promise<string | null> {
   const response = await client.call('GET', '/api/auth/get-session', { ip, cookie })
   const body = (await response.json()) as { user?: { email: string } } | null
@@ -94,17 +101,20 @@ describe('auth module', () => {
     expect(mail.sent.filter((m) => m.to === email)).toHaveLength(1)
   })
 
-  test('the session cookie is on `/`, so the relay can read the account, and stays HttpOnly, Secure and Lax', async () => {
+  test('the session cookie is scoped to `/api`, so a browser never sends it to a relayed machine', async () => {
     const email = client.freshEmail()
     const ip = client.freshIp()
     const setCookie = await client.verifiedUser(email, ip)
     const attributes = setCookie.split(';').map((part) => part.trim().toLowerCase())
-    expect(attributes).toContain('path=/')
+    expect(attributes).toContain('path=/api')
     expect(attributes).toContain('httponly')
     expect(attributes).toContain('secure')
     expect(attributes).toContain('samesite=lax')
 
     expect(await sessionEmail(cookiePair(setCookie), ip)).toBe(email)
+    expect(pathMatches('/api', '/api/auth/get-session')).toBe(true)
+    expect(pathMatches('/api', '/m/abc123/api/health')).toBe(false)
+    expect(pathMatches('/api', '/apix')).toBe(false)
   })
 
   test('sign-out expires the cookie on the same path and ends the session', async () => {
@@ -114,7 +124,7 @@ describe('auth module', () => {
     const signOut = await client.call('POST', '/api/auth/sign-out', { ip, cookie })
     expect(signOut.status).toBe(200)
     const expired = (sessionSetCookie(signOut) as string).toLowerCase()
-    expect(expired.split(';').map((part) => part.trim())).toContain('path=/')
+    expect(expired).toContain('path=/api')
     expect(expired).toContain('max-age=0')
     expect(await sessionEmail(cookie, ip)).toBeNull()
   })
