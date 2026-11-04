@@ -109,7 +109,7 @@ function start(options: Partial<TunnelClientOptions> = {}) {
   const client = new TunnelClient({
     url,
     secret,
-    authorize: () => ({ keyId: 'k1', name: 'default' }),
+    authorize: () => ({ kind: 'key', keyId: 'k1', name: 'default' }),
     handle: async () => new Response('ok'),
     openSocket: () => ({ code: 1008, reason: 'no sockets here' }),
     timings,
@@ -288,7 +288,7 @@ describe('TunnelClient', () => {
     expect(r).toEqual({ type: 'enroll.redeem', id: r.id, key, name: 'box' })
     expect(p.id).not.toBe(r.id)
     // An answer of the wrong kind for the id is ignored; the right one resolves it.
-    send(conn, { type: 'enroll.redeemed', id: p.id, machineId: 'm', account })
+    send(conn, { type: 'enroll.redeemed', id: p.id, machineId: 'm', accountId: 'u1', account })
     const expiresAt = new Date(Date.now() + 60_000).toISOString()
     send(conn, { type: 'enroll.previewed', id: p.id, account, fingerprint: 'kkkk', expiresAt })
     send(conn, { type: 'enroll.failed', id: r.id, code: 'rate_limited' })

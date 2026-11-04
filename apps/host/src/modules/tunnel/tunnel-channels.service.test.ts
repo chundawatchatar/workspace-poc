@@ -29,9 +29,16 @@ afterEach(() => warn.mockRestore())
 /** The auth message for `key`. */
 const auth = (key: string) => JSON.stringify({ type: 'auth', key })
 
-/** Accepts the keys `good` (key id `k1`) and `other` (key id `k2`). */
-const authorize: Authorize = (key) =>
-  key === 'good' ? { keyId: 'k1', name: 'default' } : key === 'other' ? { keyId: 'k2', name: 'second' } : null
+/** The auth message that asks to be judged by the channel's account. */
+const accountAuth = JSON.stringify({ type: 'auth', account: true })
+
+/** Accepts the keys `good` (key id `k1`) and `other` (key id `k2`), and the account `u1`. */
+const authorize: Authorize = ({ key, accountId }) => {
+  if (key === 'good') return { kind: 'key', keyId: 'k1', name: 'default' }
+  if (key === 'other') return { kind: 'key', keyId: 'k2', name: 'second' }
+  if (key === null && accountId === 'u1') return { kind: 'account', accountId }
+  return null
+}
 
 /**
  * Channels whose `openSocket` accepts every path but `/ws/nope`, with the
@@ -97,7 +104,7 @@ describe('TunnelChannels', () => {
   test('opens with the principal of a valid key, and a bad path after it gets 1008 without auth.failed', () => {
     const { channels, openChannel, of } = setup()
     const run = openChannel(1, 'other')
-    expect(run.principal).toEqual({ keyId: 'k2', name: 'second' })
+    expect(run.principal).toEqual({ kind: 'key', keyId: 'k2', name: 'second' })
     expect(run.messages).toEqual([])
 
     channels.receive({ type: 'ws.open', channel: 2, path: '/ws/nope', headers: [] })
@@ -106,21 +113,60 @@ describe('TunnelChannels', () => {
     expect(of('auth.failed')).toEqual([])
   })
 
-  test('closeChannels closes only the channels of the revoked keys, each handler once', () => {
-    const { channels, openChannel, of } = setup()
+  test('an account auth message is judged by the account of its own ws.open, never by a key', () => {
+    const { channels, opened, of } = setup()
+    channels.receive({ type: 'ws.open', channel: 1, path: '/ws/events', headers: [], accountId: 'u1' })
+    channels.receive({ type: 'ws.data', channel: 1, data: accountAuth })
+    expect(opened.map((run) => run.principal)).toEqual([{ kind: 'account', accountId: 'u1' }])
+
+    // Another account, no account, and an account auth message on a channel whose key would pass.
+    channels.receive({ type: 'ws.open', channel: 2, path: '/ws/events', headers: [], accountId: 'u2' })
+    channels.receive({ type: 'ws.open', channel: 3, path: '/ws/events', headers: [] })
+    for (const channel of [2, 3]) channels.receive({ type: 'ws.data', channel, data: accountAuth })
+    expect(opened).toHaveLength(1)
+    expect(of('auth.failed')).toEqual([
+      { type: 'auth.failed', channel: 2 },
+      { type: 'auth.failed', channel: 3 },
+    ])
+    expect(of('ws.close').map((f) => f.code)).toEqual([CLOSE_ACCESS_DENIED, CLOSE_ACCESS_DENIED])
+
+    // A key auth message on a channel that carries the account is judged by the key.
+    channels.receive({ type: 'ws.open', channel: 4, path: '/ws/events', headers: [], accountId: 'u1' })
+    channels.receive({ type: 'ws.data', channel: 4, data: auth('wrong') })
+    expect(opened).toHaveLength(1)
+    expect(of('auth.failed').at(-1)).toEqual({ type: 'auth.failed', channel: 4 })
+    channels.close()
+  })
+
+  test('closeChannels closes only the channels it matches, each handler once', () => {
+    const { channels, openChannel, opened, of } = setup()
     const a = openChannel(1, 'good')
     const b = openChannel(2, 'other')
     const c = openChannel(3, 'good')
     channels.receive({ type: 'ws.open', channel: 4, path: '/ws/events', headers: [] })
+    channels.receive({ type: 'ws.open', channel: 5, path: '/ws/events', headers: [], accountId: 'u1' })
+    channels.receive({ type: 'ws.data', channel: 5, data: accountAuth })
+    const d = opened.at(-1)
 
-    channels.closeChannels(['k1'])
-    channels.closeChannels(['k1'])
+    const rotated = (p: Principal) => p.kind === 'key' && p.keyId === 'k1'
+    channels.closeChannels(rotated, 'key rotated')
+    channels.closeChannels(rotated, 'key rotated')
+    expect(d?.closes).toBe(0)
     expect([a.closes, b.closes, c.closes]).toEqual([1, 0, 1])
     expect(of('ws.close')).toEqual([
       { type: 'ws.close', channel: 1, code: CLOSE_ACCESS_DENIED, reason: 'key rotated' },
       { type: 'ws.close', channel: 3, code: CLOSE_ACCESS_DENIED, reason: 'key rotated' },
     ])
-    expect(channels.size).toBe(2)
+    expect(channels.size).toBe(3)
+
+    channels.closeChannels((p) => p.kind === 'account', 'account unlinked')
+    expect([b.closes, d?.closes]).toEqual([0, 1])
+    expect(of('ws.close').at(-1)).toEqual({
+      type: 'ws.close',
+      channel: 5,
+      code: CLOSE_ACCESS_DENIED,
+      reason: 'account unlinked',
+    })
     channels.close()
   })
 

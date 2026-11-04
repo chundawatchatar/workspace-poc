@@ -19,7 +19,7 @@ function setup() {
     outbox.send(frame)
     mostQueued = Math.max(mostQueued, outbox.bulkBytes)
   }
-  const authorize = () => ({ keyId: 'k1', name: 'default' })
+  const authorize = () => ({ kind: 'key' as const, keyId: 'k1', name: 'default' })
   const http = new TunnelHttp(
     async () => new Response(new Uint8Array(4 * 1024 * 1024).fill(1)),
     authorize,

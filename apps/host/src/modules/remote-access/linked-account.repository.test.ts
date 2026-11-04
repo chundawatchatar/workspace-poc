@@ -19,6 +19,7 @@ const account = {
   maskedEmail: 'a***@example.com',
   serverUrl: 'wss://relay.example.com',
   linkedAt: '2026-11-04T12:00:00.000Z',
+  accountId: 'u1',
 }
 
 describe('LinkedAccountRepository', () => {
@@ -34,6 +35,13 @@ describe('LinkedAccountRepository', () => {
     repository.remove()
     expect(existsSync(file)).toBe(false)
     repository.remove()
+  })
+
+  test('a file saved before account access, without `accountId`, still loads', () => {
+    const { accountId: _, ...older } = account
+    const repository = new LinkedAccountRepository(join(dir, 'older.json'))
+    writeFileSync(repository.file, JSON.stringify(older))
+    expect(repository.load()).toEqual(older)
   })
 
   test('a file that fails the schema throws and is left as it is', () => {

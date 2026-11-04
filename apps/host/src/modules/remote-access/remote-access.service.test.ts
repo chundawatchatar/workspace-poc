@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type Endpoint, type RotateAccessResponse, routes, type TunnelState } from '@orch/shared'
 import { type AppDeps, createApp } from '../../app'
+import type { Principal } from '../../lib/principal'
 import { AccessKeyRepository } from '../access/access.repository'
 import type { EnrollAnswer, EnrollRequest, TunnelClientOptions } from '../tunnel/tunnel.service'
 import { LinkedAccountRepository } from './linked-account.repository'
@@ -19,7 +20,8 @@ import {
 /** Stands in for `TunnelClient`, recording what the service asks of it. */
 class FakeTunnel {
   status: TunnelState = 'off'
-  closed: string[][] = []
+  /** Every `closeChannels` call: which principals it matches, and the reason. */
+  closed: { revoked: (principal: Principal) => boolean; reason: string }[] = []
   constructor(readonly options: TunnelClientOptions) {}
   start() {
     this.status = 'connecting'
@@ -27,8 +29,8 @@ class FakeTunnel {
   stop() {
     this.status = 'off'
   }
-  closeChannels(keyIds: string[]) {
-    this.closed.push(keyIds)
+  closeChannels(revoked: (principal: Principal) => boolean, reason: string) {
+    this.closed.push({ revoked, reason })
   }
   /** Every enrollment frame sent, in order. */
   sent: EnrollRequest[] = []
@@ -44,6 +46,8 @@ class FakeTunnel {
 
 const key = `oek_${'k'.repeat(43)}`
 const account = { name: 'Ada', maskedEmail: 'a***@example.com' }
+/** The key owner's user id, as the server sends it in `enroll.redeemed`. */
+const accountId = 'acct-ada-1'
 const expiresAt = '2026-11-04T12:15:00.000Z'
 
 let dir: string
@@ -228,7 +232,11 @@ describe('RemoteAccessService', () => {
     const revoked = storedKeys().map((k) => k.id)
     const derived = (await (await rotate()).json()) as RotateAccessResponse
     expect(derived.link).toBe(`http://127.0.0.1:4600/#machine=${derived.machineId}&key=${derived.key}`)
-    expect(tunnels[0]?.closed).toEqual([revoked])
+    const [closed] = tunnels[0]?.closed ?? []
+    expect(closed?.reason).toBe('key rotated')
+    expect(revoked.every((keyId) => closed?.revoked({ kind: 'key', keyId, name: 'default' }))).toBe(true)
+    // Account sockets stay open across a rotation.
+    expect(closed?.revoked({ kind: 'account', accountId })).toBe(false)
 
     service.update({ enabled: true, serverUrl: 'ws://127.0.0.1:4600', clientUrl: 'https://orch.example' })
     const saved = (await (await rotate()).json()) as RotateAccessResponse
@@ -257,7 +265,7 @@ describe('RemoteAccessService', () => {
     tunnel.answer = (request) =>
       request.type === 'enroll.preview'
         ? { type: 'enroll.previewed', id: 1, account, fingerprint: 'kkkk', expiresAt }
-        : { type: 'enroll.redeemed', id: 2, machineId: machineId ?? '', account }
+        : { type: 'enroll.redeemed', id: 2, machineId: machineId ?? '', accountId, account }
     const files = readdirSync(dir).sort()
 
     const preview = await post(app, routes.remoteAccess.previewLink, { key })
@@ -279,9 +287,12 @@ describe('RemoteAccessService', () => {
 
     const linked = await post(app, routes.remoteAccess.link, { key, serverUrl: 'ws://127.0.0.1:4600' })
     expect(tunnel.sent[1]).toEqual({ type: 'enroll.redeem', key, name: hostMachineName() })
-    const saved = JSON.parse(readFileSync(linkedFile(), 'utf8'))
+    const { accountId: savedId, ...saved } = JSON.parse(readFileSync(linkedFile(), 'utf8'))
+    expect(savedId).toBe(accountId)
     expect(saved).toEqual({ ...account, serverUrl: 'ws://127.0.0.1:4600', linkedAt: expect.any(String) })
+    // The account id stays on this machine: the status, and so the page, never shows it.
     expect(linked.json().linkedAccount).toEqual(saved)
+    expect(linked.text).not.toContain(accountId)
     expect(readFileSync(linkedFile(), 'utf8')).not.toContain(key)
 
     const again = await post(app, routes.remoteAccess.previewLink, { key })
@@ -317,7 +328,7 @@ describe('RemoteAccessService', () => {
         503,
       ],
       // A link to another machine id than this host's.
-      [() => ({ type: 'enroll.redeemed', id: 1, machineId: 'someone-else', account }), 502],
+      [() => ({ type: 'enroll.redeemed', id: 1, machineId: 'someone-else', accountId, account }), 502],
     ]
     for (const [answer, status, message] of cases) {
       tunnel.answer = answer
@@ -335,6 +346,43 @@ describe('RemoteAccessService', () => {
     const offline = await post(app, routes.remoteAccess.previewLink, { key })
     expect(offline).toMatchObject({ status: 409, text: 'Turn remote access on and wait until it is connected' })
     expect(tunnel.sent).toHaveLength(9)
+  })
+})
+
+describe('RemoteAccessService.authorize', () => {
+  /** Writes the linked account file a previous run saved. */
+  const writeLinked = (fields: Record<string, string>) =>
+    writeFileSync(
+      linkedFile(),
+      JSON.stringify({ ...account, serverUrl: 'ws://127.0.0.1:4600', linkedAt: expiresAt, ...fields }),
+    )
+  const asAccount = (id: string) => tunnels.at(-1)?.options.authorize({ key: null, accountId: id })
+
+  test('accepts only the linked account id, and a key alone decides when one is sent', () => {
+    writeLinked({ accountId })
+    const { tunnel } = connected()
+    expect(asAccount(accountId)).toEqual({ kind: 'account', accountId })
+    expect(asAccount('someone-else')).toBeNull()
+    expect(tunnel.options.authorize({ key: null, accountId: null })).toBeNull()
+    expect(tunnel.options.authorize({ key: 'wrong', accountId })).toBeNull()
+
+    service.unlink()
+    expect(tunnel.closed.map((c) => c.reason)).toEqual(['account unlinked'])
+    expect(tunnel.closed[0]?.revoked({ kind: 'account', accountId })).toBe(true)
+    expect(tunnel.closed[0]?.revoked({ kind: 'key', keyId: 'k1', name: 'default' })).toBe(false)
+    expect(asAccount(accountId)).toBeNull()
+  })
+
+  test('a file saved before account access still loads but grants no account, nor does another server', () => {
+    writeLinked({})
+    connected()
+    expect(service.status().linkedAccount).toMatchObject(account)
+    expect(asAccount(accountId)).toBeNull()
+    service.shutdown()
+
+    writeLinked({ accountId, serverUrl: 'wss://other.example.com' })
+    connected()
+    expect(asAccount(accountId)).toBeNull()
   })
 })
 

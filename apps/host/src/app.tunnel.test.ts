@@ -41,6 +41,8 @@ import { TunnelHttp } from './modules/tunnel/tunnel-http.service'
 // served locally to compare against.
 
 const secret = `${'S'.repeat(42)}s`
+/** The user id the fake server says owns every enrollment key. */
+const ACCOUNT_ID = 'acct-ada-1'
 const info: HostInfo = { home: '/home/me', shell: '/bin/zsh', platform: 'darwin', projectRoot: '/repo' }
 const OUTPUT = new Uint8Array([27, 91, 72, 104, 105])
 
@@ -124,6 +126,11 @@ beforeEach(() => {
         if (!conn || !frame) return
         conn.frames.push(frame)
         if (frame.type === 'hello') send(conn, { type: 'welcome', machineId: machineIdFromSecret(secret) })
+        if (frame.type === 'enroll.redeem') {
+          const account = { name: 'Ada', maskedEmail: 'a***@example.com' }
+          const machineId = machineIdFromSecret(secret)
+          send(conn, { type: 'enroll.redeemed', id: frame.id, machineId, accountId: ACCOUNT_ID, account })
+        }
         // Like the server, it acks what it has delivered to the browser.
         if (frame.type === 'ws.data') {
           send(conn, { type: 'ws.ack', channel: frame.channel, bytes: wsPayloadBytes(frame.data) })
@@ -357,6 +364,37 @@ describe('tunneled sockets', () => {
     expect(stub.ensured).toHaveLength(1)
   })
 
+  test('the linked account opens requests and sockets without a key, never local-only routes, and unlink closes it', async () => {
+    const conn = await welcomed()
+    const response = (id: number) => conn.frames.find((f) => f.type === 'http.response' && f.id === id)
+    const request = (id: number, path: string, method = 'GET') =>
+      send(conn, { type: 'http.request', id, method, path, headers: [], accountId: ACCOUNT_ID })
+    const locally = (endpoint: { path: string; method: string }, body: unknown) =>
+      fetch(`http://127.0.0.1:${local.port}${endpoint.path}`, {
+        method: endpoint.method,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    const linkBody = { key: `oek_${'k'.repeat(43)}`, serverUrl: `ws://127.0.0.1:${server.port}` }
+    expect((await locally(routes.remoteAccess.link, linkBody)).status).toBe(200)
+
+    request(1, routes.system.health.path)
+    request(2, routes.access.rotate.path, 'POST')
+    request(3, routes.remoteAccess.status.path)
+    await until(() => [1, 2, 3].every((id) => response(id) !== undefined))
+    expect([1, 2, 3].map(response)).toMatchObject([{ status: 200 }, { status: 403 }, { status: 403 }])
+
+    send(conn, { type: 'ws.open', channel: 1, path: '/ws/term/t1', headers: [], accountId: ACCOUNT_ID })
+    send(conn, { type: 'ws.data', channel: 1, data: JSON.stringify({ type: 'auth', account: true }) })
+    await until(() => stub.attached.size === 1)
+
+    expect((await locally(routes.remoteAccess.unlink, {})).status).toBe(200)
+    await until(() => stub.attached.size === 0)
+    expect(conn.frames.filter((f) => f.type === 'ws.close')).toEqual([
+      { type: 'ws.close', channel: 1, code: CLOSE_ACCESS_DENIED, reason: 'account unlinked' },
+    ])
+  })
+
   test('the agent reporting channel is out of reach: tunneled and local requests touch no session', async () => {
     const conn = await welcomed()
     const headers: [string, string][] = [
@@ -375,7 +413,7 @@ describe('tunneled sockets', () => {
     const direct: MachineFrame[] = []
     const http = new TunnelHttp(
       async (incoming, principal) => tunnelApp.fetch(incoming, tunnelEnv(principal)),
-      (presented) => keys.authorize(presented),
+      ({ key: presented }) => keys.authorize(presented),
       (frame) => direct.push(frame),
     )
     http.request(request(1, '/v1/state'))

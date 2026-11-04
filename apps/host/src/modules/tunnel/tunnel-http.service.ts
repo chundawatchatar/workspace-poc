@@ -5,11 +5,36 @@ import type { Principal } from '../../lib/principal'
 
 type HttpRequestFrame = z.infer<typeof httpRequestFrame>
 
-/** Answers one tunneled request, as the key that authorized it. In the host this is `app.fetch`. */
+/** Answers one tunneled request, as the principal that authorized it. In the host this is `app.fetch`. */
 export type TunnelHandler = (request: Request, principal: Principal) => Promise<Response>
 
-/** Decides whether an access key may in. In the host this is `AccessKeys.authorize`. */
-export type Authorize = (key: string | null) => Principal | null
+/**
+ * What a request or channel presents: its access key, or the account the
+ * server attached. A caller sets at most one, and a key always wins.
+ */
+export interface Credentials {
+  key: string | null
+  accountId: string | null
+}
+
+/**
+ * Decides whether a request or channel may in. In the host this is
+ * `RemoteAccessService`'s, which checks a key with `AccessKeys.authorize` and
+ * an account against the linked one.
+ */
+export type Authorize = (credentials: Credentials) => Principal | null
+
+/**
+ * What an `http.request` presents. With any `ACCESS_KEY_HEADER` the key alone
+ * decides, so a missing or wrong key is never rescued by the account; without
+ * one, the frame's `accountId` does.
+ */
+export function requestCredentials(frame: Pick<HttpRequestFrame, 'headers' | 'accountId'>): Credentials {
+  const hasKey = frame.headers.some(([name]) => name.toLowerCase() === ACCESS_KEY_HEADER)
+  return hasKey
+    ? { key: accessKeyOf(frame.headers), accountId: null }
+    : { key: null, accountId: frame.accountId ?? null }
+}
 
 /**
  * The access key of a request: the value of its one `ACCESS_KEY_HEADER`, or
@@ -48,11 +73,12 @@ export function tunneledRequest(frame: HttpRequestFrame, signal?: AbortSignal): 
 
 /**
  * Serves the `http.request` frames of one tunnel connection through `handle`,
- * once `authorize` has accepted the request's access key, streaming each response back as `http.response`, `http.body` and `http.end`.
+ * once `authorize` has accepted the request's access key or account, streaming
+ * each response back as `http.response`, `http.body` and `http.end`.
  * Each body chunk waits for `room`, so a large response is read only as fast
  * as the tunnel takes it. After `close()` it writes nothing more, so a dropped
- * connection's requests never reach the next one. A request without a valid
- * key gets `auth.failed`, then a 401, and never reaches `handle`.
+ * connection's requests never reach the next one. A request refused by
+ * `authorize` gets `auth.failed`, then a 401, and never reaches `handle`.
  */
 export class TunnelHttp {
   private readonly inFlight = new Map<number, AbortController>()
@@ -93,7 +119,7 @@ export class TunnelHttp {
     }
 
     // Preflights included: the server answers those itself, so one that gets here is an ordinary request.
-    const principal = this.authorize(accessKeyOf(frame.headers))
+    const principal = this.authorize(requestCredentials(frame))
     if (!principal) {
       // First, so the server still knows the request's browser when it reads it.
       send({ type: 'auth.failed', id })

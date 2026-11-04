@@ -2,12 +2,12 @@ import { existsSync } from 'node:fs'
 import { hostname } from 'node:os'
 import type {
   LinkBody,
-  LinkedAccount,
   PreviewLinkBody,
   PreviewLinkResponse,
   RemoteAccessStatus,
   UpdateRemoteAccessBody,
 } from '@orch/shared'
+import type { Principal } from '../../lib/principal'
 import { AccessKeyRepository } from '../access/access.repository'
 import {
   AccessKeys,
@@ -27,8 +27,8 @@ import {
   type TunnelClientOptions,
 } from '../tunnel/tunnel.service'
 import type { OpenSocket } from '../tunnel/tunnel-channels.service'
-import type { TunnelHandler } from '../tunnel/tunnel-http.service'
-import type { LinkedAccountRepository } from './linked-account.repository'
+import type { Credentials, TunnelHandler } from '../tunnel/tunnel-http.service'
+import type { LinkedAccountRepository, SavedLinkedAccount } from './linked-account.repository'
 import type { RemoteAccessRepository, RemoteAccessSettings } from './remote-access.repository'
 
 /**
@@ -133,7 +133,7 @@ export class RemoteAccessService {
   private readonly env: RemoteAccessEnv
   private readonly defaultServerUrl: string
   private saved: RemoteAccessSettings | null = null
-  private linked: LinkedAccount | null = null
+  private linked: SavedLinkedAccount | null = null
   private secret: string | null = null
   private keys: AccessKeys | null = null
   private tunnel: Tunnel | null = null
@@ -200,7 +200,12 @@ export class RemoteAccessService {
       clientUrlFromEnv: this.env.CLIENT_URL !== undefined,
       machineId: this.machineId(),
       tunnel: this.tunnel?.status ?? 'off',
-      linkedAccount: this.linked,
+      linkedAccount: this.linked && {
+        name: this.linked.name,
+        maskedEmail: this.linked.maskedEmail,
+        serverUrl: this.linked.serverUrl,
+        linkedAt: this.linked.linkedAt,
+      },
     }
   }
 
@@ -256,17 +261,41 @@ export class RemoteAccessService {
     }
     // Linked while this call waited: keep the first account rather than overwrite it.
     if (this.linked) throw new LinkError(409, 'Unlink first')
-    const account = { ...answer.account, serverUrl: inUse, linkedAt: new Date().toISOString() }
+    const account = {
+      ...answer.account,
+      serverUrl: inUse,
+      linkedAt: new Date().toISOString(),
+      accountId: answer.accountId,
+    }
     this.options.linkedAccounts.save(account)
     this.linked = account
     return this.status()
   }
 
-  /** Forgets the linked account on this machine. The server still lists the machine until it is unlinked there. */
+  /**
+   * Forgets the linked account on this machine and closes the sockets it
+   * opened. The server still lists the machine until it is unlinked there.
+   */
   unlink(): RemoteAccessStatus {
     this.options.linkedAccounts.remove()
     this.linked = null
+    this.tunnel?.closeChannels((principal) => principal.kind === 'account', 'account unlinked')
     return this.status()
+  }
+
+  /**
+   * Decides a tunneled request or socket. A key is judged by the access keys
+   * alone. An account is accepted only when it is the linked account's id and
+   * that account was linked through the server address in use, so neither
+   * another account nor another server can open this machine. A linked file
+   * without `accountId` accepts no account.
+   */
+  authorize({ key, accountId }: Credentials): Principal | null {
+    if (key !== null) return this.keys?.authorize(key) ?? null
+    const linked = this.linked
+    if (!accountId || !linked?.accountId) return null
+    if (linked.accountId !== accountId || linked.serverUrl !== this.serverUrl()) return null
+    return { kind: 'account', accountId }
   }
 
   /**
@@ -323,7 +352,7 @@ export class RemoteAccessService {
       url,
       secret,
       expectedMachineId: machineIdFromSecret(secret),
-      authorize: (key) => keys.authorize(key),
+      authorize: (credentials) => this.authorize(credentials),
       handle: (request, principal) => this.options.handle(request, principal),
       openSocket: (path, headers, conn, principal) => this.options.openSocket(path, headers, conn, principal),
     })
@@ -369,7 +398,11 @@ export class RemoteAccessService {
       this.secret ??= loadOrCreateMachineSecret(this.options.secretFile)
       this.keys = new AccessKeys(new AccessKeyRepository(this.options.keysFile), {
         // The tunnel open at the time of a rotation, not the one open when the keys were loaded.
-        onRevoked: (keyIds) => this.tunnel?.closeChannels(keyIds),
+        onRevoked: (keyIds) =>
+          this.tunnel?.closeChannels(
+            (principal) => principal.kind === 'key' && keyIds.includes(principal.keyId),
+            'key rotated',
+          ),
       })
     } catch (error) {
       // The repositories' messages never contain the secret, a key or a hash.

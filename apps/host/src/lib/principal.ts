@@ -1,8 +1,8 @@
-/** Who a tunneled request or channel was authorized as: the access key it presented. */
-export interface Principal {
-  keyId: string
-  name: string
-}
+/**
+ * Who a tunneled request or channel was authorized as: the access key it
+ * presented, or the account this machine is linked to, as the server said.
+ */
+export type Principal = { kind: 'key'; keyId: string; name: string } | { kind: 'account'; accountId: string }
 
 // A symbol, so no header or env a caller controls can claim to be tunneled.
 // Local requests get Bun's server as their env, which never has it.

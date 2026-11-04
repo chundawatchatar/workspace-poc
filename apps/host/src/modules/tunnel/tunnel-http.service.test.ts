@@ -10,9 +10,15 @@ import {
 import type { SessionManager } from '@orch/terminal'
 import { type AppDeps, createApp } from '../../app'
 import { type Principal, tunnelEnv } from '../../lib/principal'
-import { type Authorize, MAX_BODY_CHUNK_BYTES, type TunnelHandler, TunnelHttp } from './tunnel-http.service'
+import {
+  type Authorize,
+  type Credentials,
+  MAX_BODY_CHUNK_BYTES,
+  type TunnelHandler,
+  TunnelHttp,
+} from './tunnel-http.service'
 
-const principal: Principal = { keyId: 'k1', name: 'default' }
+const principal: Principal = { kind: 'key', keyId: 'k1', name: 'default' }
 const allowAll: Authorize = () => principal
 
 function setup(handle: TunnelHandler, authorize = allowAll) {
@@ -76,18 +82,20 @@ describe('TunnelHttp', () => {
   })
 
   test('refuses a missing, wrong, repeated or query-string key with auth.failed, 401 and end, never calling handle', async () => {
-    const seenKeys: (string | null)[] = []
-    const authorize: Authorize = (key) => {
-      seenKeys.push(key)
-      return key === 'good' ? principal : null
+    const seen: Credentials[] = []
+    // Accepts the key `good` and the account `u1`.
+    const authorize: Authorize = (credentials) => {
+      seen.push(credentials)
+      const { key, accountId } = credentials
+      return key === 'good' ? principal : key === null && accountId === 'u1' ? { kind: 'account', accountId } : null
     }
-    let calls = 0
-    const { http, frames } = setup(async () => {
-      calls++
+    const handled: Principal[] = []
+    const { http, frames } = setup(async (_request, p) => {
+      handled.push(p)
       return new Response('ok')
     }, authorize)
-    const send = (id: number, headers: [string, string][], path = '/api/health') =>
-      http.request({ type: 'http.request', id, method: 'GET', path, headers })
+    const send = (id: number, headers: [string, string][], path = '/api/health', accountId?: string) =>
+      http.request({ type: 'http.request', id, method: 'GET', path, headers, ...(accountId ? { accountId } : {}) })
     send(1, [])
     send(2, [[ACCESS_KEY_HEADER, 'bad']])
     send(3, [
@@ -95,11 +103,23 @@ describe('TunnelHttp', () => {
       [ACCESS_KEY_HEADER, 'good'],
     ])
     send(4, [], `/api/health?${ACCESS_KEY_HEADER}=good&key=good`)
-    await until(() => [1, 2, 3, 4].every((id) => ended(frames, id)))
+    // With a key header the key alone decides, even when the account would pass.
+    send(5, [[ACCESS_KEY_HEADER, 'bad']], '/api/health', 'u1')
+    send(6, [], '/api/health', 'u2')
+    send(7, [], '/api/health', 'u1')
+    await until(() => [1, 2, 3, 4, 5, 6, 7].every((id) => ended(frames, id)))
 
-    expect(calls).toBe(0)
-    expect(seenKeys).toEqual([null, 'bad', null, null])
-    for (const id of [1, 2, 3, 4]) {
+    expect(handled).toEqual([{ kind: 'account', accountId: 'u1' }])
+    expect(seen).toEqual([
+      { key: null, accountId: null },
+      { key: 'bad', accountId: null },
+      { key: null, accountId: null },
+      { key: null, accountId: null },
+      { key: 'bad', accountId: null },
+      { key: null, accountId: 'u2' },
+      { key: null, accountId: 'u1' },
+    ])
+    for (const id of [1, 2, 3, 4, 5, 6]) {
       expect(frames.filter((f) => 'id' in f && f.id === id)).toEqual([
         { type: 'auth.failed', id },
         { type: 'http.response', id, status: 401, headers: [] },

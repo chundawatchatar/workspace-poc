@@ -53,7 +53,8 @@ describe('AccessKeys', () => {
     const created = ['one', 'two', 'three'].map((name) => ({ name, key: keys.create(name) }))
     const ids = stored().keys.map((entry) => entry.id)
 
-    for (const [i, { name, key }] of created.entries()) expect(keys.authorize(key)).toEqual({ keyId: ids[i], name })
+    for (const [i, { name, key }] of created.entries())
+      expect(keys.authorize(key)).toEqual({ kind: 'key', keyId: ids[i], name })
     const wrong = `${created[1]?.key.slice(0, -1)}${created[1]?.key.endsWith('A') ? 'B' : 'A'}`
     for (const bad of [null, '', wrong, 'short', `${created[0]?.key}x`]) expect(keys.authorize(bad)).toBeNull()
   })

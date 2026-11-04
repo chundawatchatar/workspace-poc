@@ -15,6 +15,7 @@ import {
   type TunnelState,
 } from '@orch/shared'
 import type { z } from 'zod'
+import type { Principal } from '../../lib/principal'
 import { AUTH_TIMEOUT_MS, type OpenSocket, TunnelChannels } from './tunnel-channels.service'
 import { type Authorize, type TunnelHandler, TunnelHttp } from './tunnel-http.service'
 import { TunnelOutbox } from './tunnel-outbox.service'
@@ -105,7 +106,7 @@ export interface TunnelClientOptions {
   url: string
   /** The machine secret, sent as the `hello` proof. */
   secret: string
-  /** Decides every tunneled request's and socket's access key. Nothing reaches `handle` or `openSocket` without it. */
+  /** Decides every tunneled request and socket, by key or account. Nothing reaches `handle` or `openSocket` without it. */
   authorize: Authorize
   /** Answers each tunneled request. */
   handle: TunnelHandler
@@ -138,7 +139,7 @@ interface Connection {
  * Keeps one outbound tunnel to the server open. It says `hello`, waits for
  * `welcome`, keeps both heartbeats, answers tunneled HTTP requests through
  * `handle`, serves tunneled WebSockets through `openSocket` (both only once
- * `authorize` has accepted their access key), and reconnects
+ * `authorize` has accepted their access key or account), and reconnects
  * with backoff until `stop()`, a protocol version the server refuses, or
  * another host taking over this machine's tunnel. Every frame goes through
  * the connection's `TunnelOutbox`, so `ws.*` frames overtake response bodies.
@@ -179,9 +180,9 @@ export class TunnelClient {
     this.setState('off')
   }
 
-  /** Closes the open tunneled sockets authorized by any of `keyIds`, for a key that was rotated away. */
-  closeChannels(keyIds: string[]) {
-    this.conn?.channels.closeChannels(keyIds)
+  /** Closes the open tunneled sockets whose principal `revoked` matches, for a rotated key or an unlinked account. */
+  closeChannels(revoked: (principal: Principal) => boolean, reason: string) {
+    this.conn?.channels.closeChannels(revoked, reason)
   }
 
   /**

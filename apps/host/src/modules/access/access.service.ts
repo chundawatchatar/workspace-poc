@@ -103,7 +103,7 @@ export class AccessKeys {
    * time, even after a match. A match records `lastUsedAt`, written to disk at
    * most once per `persistEveryMs` and on `flush()`.
    */
-  authorize(key: string | null): Principal | null {
+  authorize(key: string | null): Extract<Principal, { kind: 'key' }> | null {
     if (!key || key.length !== KEY_LENGTH) return null
     const digest = sha256(key)
     let match: AccessKey | null = null
@@ -115,7 +115,7 @@ export class AccessKeys {
     if (!match) return null
     match.lastUsedAt = this.now().toISOString()
     this.markDirty()
-    return { keyId: match.id, name: match.name }
+    return { kind: 'key', keyId: match.id, name: match.name }
   }
 
   /** Adds a key named `name`, saves it and returns the raw key. It cannot be read back later. */

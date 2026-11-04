@@ -15,8 +15,8 @@ import type { SocketRefusal } from '../../lib/socketRouter'
 import type { Authorize } from './tunnel-http.service'
 
 /**
- * Opens the socket a `ws.open` asks for, as the key that authorized it, or
- * says why not. In the host this is the app's `SocketRouter`.
+ * Opens the socket a `ws.open` asks for, as the principal that authorized it,
+ * or says why not. In the host this is the app's `SocketRouter`.
  */
 export type OpenSocket = (
   path: string,
@@ -53,6 +53,8 @@ interface Channel {
   id: number
   path: string
   headers: [string, string][]
+  /** The account the server attached to the `ws.open`. Null means none. */
+  accountId: string | null
   /** Null until the channel's auth message has been accepted. */
   principal: Principal | null
   /** Runs out when no auth message arrives in time. Cleared once one does. */
@@ -77,8 +79,10 @@ interface Channel {
  * writes nothing more.
  *
  * No handler runs before the channel's first message, which must be a
- * `socketAuthMessage` whose key `authorize` accepts. Anything else, or nothing
- * within the auth timeout, gets `auth.failed` and a `CLOSE_ACCESS_DENIED` close.
+ * `socketAuthMessage` that `authorize` accepts: its key, or with
+ * `account: true` the account of the channel's `ws.open`. Anything else, or
+ * nothing within the auth timeout, gets `auth.failed` and a
+ * `CLOSE_ACCESS_DENIED` close.
  */
 export class TunnelChannels {
   private readonly channels = new Map<number, Channel>()
@@ -103,7 +107,7 @@ export class TunnelChannels {
   receive(frame: ChannelFrame): void {
     if (this.closed) return
     if (frame.type === 'ws.open') {
-      this.open(frame.channel, frame.path, frame.headers)
+      this.open(frame.channel, frame.path, frame.headers, frame.accountId ?? null)
       return
     }
     const channel = this.channels.get(frame.channel)
@@ -122,13 +126,13 @@ export class TunnelChannels {
     for (const channel of channels) this.end(channel)
   }
 
-  /** Closes every channel authorized by one of `keyIds` with `CLOSE_ACCESS_DENIED`, for a rotated key. */
-  closeChannels(keyIds: Iterable<string>): void {
-    const revoked = new Set(keyIds)
+  /**
+   * Closes every channel whose principal `revoked` matches with
+   * `CLOSE_ACCESS_DENIED` and `reason`, for a rotated key or an unlinked account.
+   */
+  closeChannels(revoked: (principal: Principal) => boolean, reason: string): void {
     for (const channel of [...this.channels.values()]) {
-      if (channel.principal && revoked.has(channel.principal.keyId)) {
-        this.fail(channel, CLOSE_ACCESS_DENIED, 'key rotated')
-      }
+      if (channel.principal && revoked(channel.principal)) this.fail(channel, CLOSE_ACCESS_DENIED, reason)
     }
   }
 
@@ -137,12 +141,13 @@ export class TunnelChannels {
     return this.channels.size
   }
 
-  private open(id: number, path: string, headers: [string, string][]) {
+  private open(id: number, path: string, headers: [string, string][], accountId: string | null) {
     if (this.channels.has(id)) return
     const channel: Channel = {
       id,
       path,
       headers,
+      accountId,
       principal: null,
       authTimer: undefined,
       session: null,
@@ -161,7 +166,11 @@ export class TunnelChannels {
     clearTimeout(channel.authTimer)
     channel.authTimer = undefined
     const message = parseMessage(socketAuthMessage, data)
-    const principal = message ? this.authorize(message.key) : null
+    const principal = !message
+      ? null
+      : 'key' in message
+        ? this.authorize({ key: message.key, accountId: null })
+        : this.authorize({ key: null, accountId: channel.accountId })
     if (!principal) {
       this.deny(channel, 'access denied')
       return
@@ -170,7 +179,7 @@ export class TunnelChannels {
     this.start(channel, principal)
   }
 
-  /** Refuses a channel's key: `auth.failed` first, while the server still knows its browser, then the close. */
+  /** Refuses a channel: `auth.failed` first, while the server still knows its browser, then the close. */
   private deny(channel: Channel, reason: string) {
     if (!channel.open || this.closed) return
     this.send({ type: 'auth.failed', channel: channel.id })
