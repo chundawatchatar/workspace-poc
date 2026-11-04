@@ -97,10 +97,10 @@ The Pull requests and Issues tabs in the prototype show sample data only.
 
 | ID | Requirement | Status |
 | --- | --- | --- |
-| REM-1 | Users link their instances to an account and open any workspace, including its terminals, from any browser. Development setup only, nothing deployed yet: a machine opens from any browser signed in to the account it linked with an enrollment key, through relay tickets the server signs and the machine verifies (or with its key from a connect link). The server is trusted to issue tickets, and traffic is not yet encrypted end to end (REM-2). See `accounts.md`. | Partly |
+| REM-1 | Users link their instances to an account and open any workspace, including its terminals, from any browser. Development setup only, nothing deployed yet: a machine links to an account only by redeeming an enrollment key, and then opens from any browser signed in to that account, through relay tickets the server signs and the machine verifies (or, in the browser holding it, with its key from a connect link, which adds nothing to the account). The server is trusted for access until device approval: it says who is signed in and so who gets tickets, and traffic is not yet encrypted end to end (REM-2). See `accounts.md`. | Partly |
 | REM-2 | Traffic is encrypted end to end; the service relays it but cannot read it, and stores no workspace content. The first version relays plain frames over TLS, built so encryption can be added without changing how the server routes it (see `architecture.md`). | Later |
 | REM-3 | Instances connect outwards, so no ports need opening on the user's network. | Later |
-| REM-4 | A dashboard shows every linked instance and whether it is online. The client's home page lists every linked machine as Online or Offline, refreshed every 10 seconds; development setup only, and Offline can also mean remote access is off. | Partly |
+| REM-4 | A dashboard shows every linked instance and whether it is online. The client's home page lists every machine linked with an enrollment key as Online or Offline, refreshed every 10 seconds; development setup only, and Offline can also mean remote access is off. | Partly |
 | REM-5 | Devices must be approved, and access can be revoked at any time. | Later |
 | REM-6 | Cancelling the subscription removes remote access only; local work is never affected. | Later |
 
