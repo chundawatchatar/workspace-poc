@@ -22,8 +22,9 @@ export interface AuthDeps {
 /**
  * Builds the Better Auth instance behind `/api/auth/*`: email and password
  * with required verification, sessions in the database and never cached in a
- * cookie, and a session cookie on `Path=/api`, so browsers never send it to
- * the relayed machines under `/m/*`.
+ * cookie, and a session cookie on `Path=/`. Browsers send it to the relayed
+ * machines under `/m/*` too, so the relay can say which account opened a
+ * machine; the relay drops it before anything reaches the machine.
  */
 export function createAuth({ domain, mailer, secret, baseUrl, trustedOrigins }: AuthDeps) {
   return betterAuth({
@@ -55,7 +56,7 @@ export function createAuth({ domain, mailer, secret, baseUrl, trustedOrigins }: 
     rateLimit: { enabled: true, storage: 'memory' },
     advanced: {
       disableOriginCheck: false,
-      defaultCookieAttributes: { path: '/api', secure: true, httpOnly: true, sameSite: 'lax' },
+      defaultCookieAttributes: { path: '/', secure: true, httpOnly: true, sameSite: 'lax' },
       ipAddress: { ipAddressHeaders: [CLIENT_IP_HEADER] },
     },
     telemetry: { enabled: false },

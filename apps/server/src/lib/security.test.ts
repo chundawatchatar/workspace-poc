@@ -58,7 +58,8 @@ describe('security', () => {
     expect(cross.status).toBe(502)
     expect(cross.headers.get('access-control-allow-origin')).toBe(allowed)
     expect(cross.headers.get('vary')).toBe('Origin')
-    expect(cross.headers.has('access-control-allow-credentials')).toBe(false)
+    // Credentials, so a listed origin can open a machine with its account's session cookie.
+    expect(cross.headers.get('access-control-allow-credentials')).toBe('true')
   })
 
   test('the server answers preflights itself: 204 for an allowed origin, 403 for any other', async () => {
@@ -79,6 +80,7 @@ describe('security', () => {
     expect(ok.headers.get('access-control-allow-methods')).toContain('POST')
     expect(ok.headers.get('access-control-allow-headers')).toBe(`${ACCESS_KEY_HEADER}, content-type`)
     expect(ok.headers.get('access-control-max-age')).toBe('600')
+    expect(ok.headers.get('access-control-allow-credentials')).toBe('true')
 
     const denied = await preflight('https://evil.example')
     expect(denied.status).toBe(403)

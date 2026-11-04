@@ -106,6 +106,8 @@ describe('forward routes', () => {
       expect(request?.headers.some(([name]) => name === 'connection' || name === 'host')).toBe(false)
       // The account session cookie lives on the server's origin, so a machine never sees it.
       expect(request?.headers.some(([name]) => name.toLowerCase() === 'cookie')).toBe(false)
+      // Accounts are off here, so no account is attached whatever the cookie says.
+      expect(request?.accountId).toBeUndefined()
       expect([...(request?.body ?? [])]).toEqual([...body])
 
       m.send({

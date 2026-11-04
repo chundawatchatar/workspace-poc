@@ -60,9 +60,10 @@ export interface EnrollmentPreview {
   expiresAt: string
 }
 
-/** What redeeming a key did: `machineId` is now linked to `account`. */
+/** What redeeming a key did: `machineId` is now linked to `account`, whose user id is `accountId`. */
 export interface EnrollmentRedeemed {
   machineId: string
+  accountId: string
   account: EnrollmentAccount
 }
 
@@ -135,7 +136,7 @@ export class EnrollmentService {
       .where(eq(schema.user.id, userId))
       .limit(1)
     if (!owner) throw new Error('The enrollment key owner is gone.')
-    return { machineId, account: { name: owner.name, maskedEmail: maskEmail(owner.email) } }
+    return { machineId, accountId: userId, account: { name: owner.name, maskedEmail: maskEmail(owner.email) } }
   }
 
   /** The rows `key` matches while it is unused and unexpired at `now`. */

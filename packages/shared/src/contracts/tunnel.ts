@@ -45,7 +45,17 @@ export const helloFrame = z.object({
 /** The server's answer to `hello`, telling the machine its id. */
 export const welcomeFrame = z.object({ type: z.literal('welcome'), machineId: z.string().min(1) })
 
-/** A browser HTTP request. `path` starts with `/api/` and may carry a query string. */
+/**
+ * The user id of the signed-in account that sent a relayed request or socket,
+ * set only when that account lists the machine. The machine decides whether it
+ * grants anything.
+ */
+const accountId = z.string().min(1)
+
+/**
+ * A browser HTTP request. `path` starts with `/api/` and may carry a query
+ * string. `accountId` is set when the browser's account lists the machine.
+ */
 export const httpRequestFrame = z.object({
   type: z.literal('http.request'),
   id,
@@ -53,6 +63,7 @@ export const httpRequestFrame = z.object({
   path: z.string().startsWith(`${API_PREFIX}/`),
   headers,
   body: bytes.optional(),
+  accountId: accountId.optional(),
 })
 
 /** The head of the response to the request with the same `id`. */
@@ -69,12 +80,16 @@ export const httpBodyFrame = z.object({ type: z.literal('http.body'), id, data: 
 /** Ends a response. `error` is set when it failed mid-stream. */
 export const httpEndFrame = z.object({ type: z.literal('http.end'), id, error: z.string().optional() })
 
-/** A browser WebSocket opening on `channel`. `path` starts with `/ws/` and may carry a query string. */
+/**
+ * A browser WebSocket opening on `channel`. `path` starts with `/ws/` and may
+ * carry a query string. `accountId` is set as on `http.request`.
+ */
 export const wsOpenFrame = z.object({
   type: z.literal('ws.open'),
   channel: id,
   path: z.string().startsWith(`${WS_PREFIX}/`),
   headers,
+  accountId: accountId.optional(),
 })
 
 /** One WebSocket message: a string is a text message and a `Uint8Array` a binary one. */
@@ -137,11 +152,15 @@ export const enrollPreviewedFrame = z.strictObject({
   expiresAt: z.iso.datetime(),
 })
 
-/** Answers `enroll.redeem` with the same `id`: the machine is now linked to `account`. */
+/**
+ * Answers `enroll.redeem` with the same `id`: the machine is now linked to
+ * `account`, whose user id is `accountId`.
+ */
 export const enrollRedeemedFrame = z.strictObject({
   type: z.literal('enroll.redeemed'),
   id,
   machineId: z.string().min(1),
+  accountId,
   account: enrollAccount,
 })
 

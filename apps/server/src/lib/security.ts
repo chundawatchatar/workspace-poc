@@ -73,8 +73,9 @@ export class OriginPolicy {
  * The CORS handling for `/m/*`. A request from an origin outside the policy
  * gets 403 and goes no further. A preflight is answered here and never reaches
  * a machine. Other responses get `Access-Control-Allow-Origin` for an allowed
- * cross origin; the machine's own `Access-Control-*` headers are dropped by
- * the forwarder.
+ * cross origin, with `Access-Control-Allow-Credentials`, so such a page can
+ * open a machine with its account's session; the machine's own
+ * `Access-Control-*` headers are dropped by the forwarder.
  */
 export function machineCors(policy: OriginPolicy): MiddlewareHandler {
   return async (c, next) => {
@@ -87,6 +88,7 @@ export function machineCors(policy: OriginPolicy): MiddlewareHandler {
         status: 204,
         headers: {
           'Access-Control-Allow-Origin': origin ?? '',
+          'Access-Control-Allow-Credentials': 'true',
           Vary: 'Origin',
           'Access-Control-Allow-Methods': ALLOWED_METHODS,
           'Access-Control-Allow-Headers': ALLOWED_HEADERS,
@@ -96,7 +98,10 @@ export function machineCors(policy: OriginPolicy): MiddlewareHandler {
     }
     await next()
     if (verdict === 'cross' && origin) {
-      setHeaders(c, [['Access-Control-Allow-Origin', origin]])
+      setHeaders(c, [
+        ['Access-Control-Allow-Origin', origin],
+        ['Access-Control-Allow-Credentials', 'true'],
+      ])
       c.res.headers.append('Vary', 'Origin')
     }
   }

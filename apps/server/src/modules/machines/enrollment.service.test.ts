@@ -159,6 +159,7 @@ describe('enrollment over the tunnel', () => {
       type: 'enroll.redeemed',
       id: 3,
       machineId: box.machineId,
+      accountId: ada.userId,
       account,
     })
     expect((await enrollmentRow(created.key))?.usedAt).toBeInstanceOf(Date)

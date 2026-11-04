@@ -46,8 +46,16 @@ describe('tunnel frames', () => {
     const server: TunnelFrame[] = [
       { type: 'welcome', machineId: 'm-1' },
       { type: 'http.request', id: 3, method: 'GET', path: '/api/git/status?cwd=%2Ftmp', headers: [] },
-      { type: 'http.request', id: 4, method: 'POST', path: '/api/fs/dirs', headers: [['x', 'y']], body: allBytes },
-      { type: 'ws.open', channel: 1, path: '/ws/term/abc?cols=80', headers: [] },
+      {
+        type: 'http.request',
+        id: 4,
+        method: 'POST',
+        path: '/api/fs/dirs',
+        headers: [['x', 'y']],
+        body: allBytes,
+        accountId: 'u1',
+      },
+      { type: 'ws.open', channel: 1, path: '/ws/term/abc?cols=80', headers: [], accountId: 'u1' },
       {
         type: 'enroll.previewed',
         id: 5,
@@ -55,7 +63,13 @@ describe('tunnel frames', () => {
         fingerprint: 'AbCd',
         expiresAt: '2026-01-01T00:15:00.000Z',
       },
-      { type: 'enroll.redeemed', id: 6, machineId: 'm-1', account: { name: 'Alice', maskedEmail: 'a***@example.com' } },
+      {
+        type: 'enroll.redeemed',
+        id: 6,
+        machineId: 'm-1',
+        accountId: 'u1',
+        account: { name: 'Alice', maskedEmail: 'a***@example.com' },
+      },
       { type: 'enroll.failed', id: 7, code: 'invalid_key' },
     ]
     const both: TunnelFrame[] = [
