@@ -215,7 +215,8 @@ It sends one `verifyEmail` with a dummy link through `SMTP_URL` from `.env`.
 ## 7. Accounts and machine access keys
 
 A machine opens either with its access key from a connect link, or as the account it linked with an enrollment key,
-through a relay ticket. The host decides both on every request and socket; the server only signs tickets.
+through a relay ticket plus a proof from a browser approved on the machine. The host decides both on every request
+and socket; the server only signs tickets.
 
 - The accounts API (`serverRoutes.machines`, `apps/server/src/modules/machines/`) stores and returns only machine
   ids and names. It never receives or stores an access key: every input is strict, so a body carrying a `key` field
@@ -239,14 +240,23 @@ through a relay ticket. The host decides both on every request and socket; the s
   machine id, `sub` is the linked account, `exp` is in the future (30 seconds of skew), and the account was linked
   through the server address in use. A socket spends its ticket's `jti`, so a replay opens nothing; HTTP requests may
   reuse one. A request with an access key is judged by the key alone.
+- Device approval: a ticket is accepted only with a fresh device proof from a browser the machine approved. The
+  client keeps one non-exportable ECDSA P-256 key pair per browser profile (`src/lib/deviceKey.ts`, IndexedDB
+  `orch-device`) and passes it to `createRemoteTransport` as `device`, which signs a proof for every request
+  (`x-orch-device-proof`) and socket (`{ type: 'auth', account: true, device }`). An unknown device gets a 403
+  `device_not_approved` or a 4403 close and waits on the machine; the page shows the `unapprovedHint` with the
+  browser's fingerprint and keeps retrying, so it opens once the owner approves that fingerprint in the machine's
+  Remote access setting. See `docs/architecture.md` ("Device approval") for the format and the risks that remain.
 - Key rotation: put the next key's public half in `RELAY_EXTRA_PUBLIC_KEYS`, so machines that link from then on trust
   both; switch `RELAY_SIGNING_KEY` once they have. A machine linked before the next key was announced must link
   again.
-- Accepted risk, server trust: the server is trusted for access until device approval. It says who is signed in, so
-  it decides who owns an enrollment key and who gets relay tickets, and a leaked `RELAY_SIGNING_KEY` or a compromised
-  server could open every linked machine of every account. Device approval and end-to-end encryption remove this. A revoked session or a machine unlinked on the server gets no new ticket, but an issued one works for up
+- Accepted risks: the server still says who is signed in, so it decides who owns an enrollment key and who gets
+  relay tickets, but a leaked `RELAY_SIGNING_KEY` or a compromised server can't open a machine without a browser
+  approved on it. It could push its own key into a machine's pending list and hope the owner approves it, and until
+  end-to-end encryption (REM-2) it can read and inject into a session an approved browser opens. A revoked session or a machine unlinked on the server gets no new ticket, but an issued one works for up
   to a minute and an open socket stays until it closes (unlinking on the host closes them). A refused ticket sends
-  `auth.failed` and counts against the browser's bad-key limit. Each socket costs one ticket request.
+  `auth.failed` and counts against the browser's bad-key limit; a device waiting for approval sends none. Each
+  socket costs one ticket request.
 - The home page's Connect a machine button (`apps/client/src/components/machines/ConnectMachineDialog.tsx`) creates
   an enrollment key with `serverRoutes.machines.createEnrollment` and shows it once: the key and the
   `bun run host:remote link <key>` command, each with a Copy button, its fingerprint and a countdown to its expiry.
