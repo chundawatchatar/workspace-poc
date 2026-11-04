@@ -27,6 +27,8 @@ every email in a web inbox instead of delivering it. The addresses and ports are
 | `BETTER_AUTH_URL` | The app's URL, `http://127.0.0.1:3220` with `bun run dev:client`. Email links point to it. |
 | `SMTP_URL` | An `smtp://` or `smtps://` URL, Mailpit's `smtp://127.0.0.1:1025` in development. |
 | `MAIL_FROM` | The sender of every email. |
+| `RELAY_SIGNING_KEY` | The Ed25519 key relay tickets are signed with, as `<kid>:<32-byte seed in base64url>`. Generate one with `bun apps/server/scripts/relay-key.ts`. Never log it. |
+| `RELAY_EXTRA_PUBLIC_KEYS` | Optional. Comma-separated `<kid>:<public key>` entries that machines also trust when they link, ahead of a key rotation. |
 
 The server reads them with `loadServerConfig` (`apps/server/src/lib/config.ts`) and exits at start-up with a message
 naming the problem when one is missing or invalid, when the database is unreachable, or when a migration is pending.
@@ -212,15 +214,37 @@ It sends one `verifyEmail` with a dummy link through `SMTP_URL` from `.env`.
 
 ## 7. Accounts and machine access keys
 
-Signing in never grants access to a machine. The host checks the machine's access key on every request and socket,
-and accounts don't replace that check.
+A machine opens either with its access key from a connect link, or as the account it linked with an enrollment key,
+through a relay ticket. The host decides both on every request and socket; the server only signs tickets.
 
 - The accounts API (`serverRoutes.machines`, `apps/server/src/modules/machines/`) stores and returns only machine
   ids and names. It never receives or stores an access key: every input is strict, so a body carrying a `key` field
   gets 400, and the module never reads request headers.
 - Keys stay in the browser's `localStorage` (`orch-machines`), saved when a connect link is opened. The home page
-  lists the account's machines, but a machine opens only in a browser that holds its key; elsewhere it says to open
-  the connect link on that device.
+  lists the account's machines, each with an Open link. A machine page uses a saved key when this browser holds one;
+  otherwise it opens a machine the account lists with relay tickets (`createRemoteTransport` with `relayTicket`).
+- Relay tickets: `serverRoutes.machines.relayTicket` (`POST /api/machines/:machineId/relay-ticket`, `auth: 'user'`)
+  signs one only when the machine is in the caller's scoped list, and answers `not_found` otherwise. A ticket is a
+  compact JWS (`alg: EdDSA`, `typ: orch-relay`, `kid`) over `{ sub: userId, aud: machineId, exp: now + 60 s, jti }`,
+  signed with `RELAY_SIGNING_KEY` (`modules/machines/relay-ticket.service.ts`, `node:crypto`, no new dependency). The
+  browser sends it in `x-orch-relay-ticket` on requests (one ticket reused until 15 seconds before it expires) and, for
+  each socket, a fresh one as the second subprotocol (`orch.relay`, `orch.ticket.<ticket>`; the server's socket
+  upgrade echoes `orch.relay`, the first one offered). It is never in a URL, a cookie, the query cache or a log. The
+  session cookie stays on `Path=/api`, the relay never reads a session, and `/m/*` sends no
+  `Access-Control-Allow-Credentials`, so a cross-site link to `/m/*` carries nothing that opens a machine.
+- The host learns the server's public keys from `enroll.redeemed` (with the owner's `accountId`) and keeps them in
+  `linked-account.json`. It accepts a ticket only when it verifies under a saved key for its `kid`, `aud` is its own
+  machine id, `sub` is the linked account, `exp` is in the future (30 seconds of skew), and the account was linked
+  through the server address in use. A socket spends its ticket's `jti`, so a replay opens nothing; HTTP requests may
+  reuse one. A request with an access key is judged by the key alone.
+- Key rotation: put the next key's public half in `RELAY_EXTRA_PUBLIC_KEYS`, so machines that link from then on trust
+  both; switch `RELAY_SIGNING_KEY` once they have. A machine linked before the next key was announced must link
+  again.
+- Accepted risk, server trust: the server is trusted to issue tickets only to a machine's owner, so a leaked signing
+  key or a compromised server could open every linked machine of every account, until device approval and end-to-end
+  encryption. A revoked session or a machine unlinked on the server gets no new ticket, but an issued one works for up
+  to a minute and an open socket stays until it closes (unlinking on the host closes them). A refused ticket sends
+  `auth.failed` and counts against the browser's bad-key limit. Each socket costs one ticket request.
 - Opening a connect link also records a pending link (`apps/client/src/lib/pendingLink.ts`) with the machine's id and
   name, never the key, which is sent to `serverRoutes.machines.link` once the user is signed in.
 - The home page's Connect a machine button (`apps/client/src/components/machines/ConnectMachineDialog.tsx`) creates
@@ -229,7 +253,7 @@ and accounts don't replace that check.
   The key lives only in the dialog's state, never in the query cache, storage, the URL or a log, so closing the dialog
   forgets it and opening it again creates a new one. While it is open the machines list is read every 2 seconds, and
   the first machine that wasn't listed when the key was created is taken to be the one that redeemed it. A machine
-  linked this way has no Open link until a browser holds its access key.
+  linked this way opens from any browser signed in to the account.
 - The relay still sees access keys in transit, in the header and first socket message it forwards, until end-to-end
   encryption (REM-2). It never checks or stores them.
 - A machine's online state comes from the server's in-memory `MachineRegistry`, the same one the relay uses. Offline
@@ -237,5 +261,5 @@ and accounts don't replace that check.
   [keeping the machine connected](architecture.md#keeping-the-machine-connected)).
 
 Accepted risk, linking: the server can't prove that a user holds a machine's key, so anyone who knows a machine id can
-link it to their account. That reveals only whether the machine is online; the host's key check still guards every
-request to it.
+link it to their account. That reveals only whether the machine is online, and the server will sign tickets for it;
+the host still refuses them, since it accepts only the account it linked with an enrollment key.

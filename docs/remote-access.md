@@ -136,13 +136,48 @@ Before anything is used, the dialog shows three values to check:
   created the key.
 
 "Link" redeems the key, so it can't be used again. The host then saves the
-account (name, masked email, server address and when it was linked, never the
-key) in `apps/host/.data/linked-account.json`, and the dialog shows it with an
-"Unlink" button. A linked machine must unlink before it links again.
+account (name, masked email, server address, when it was linked, the
+account's user id and the server's relay public keys, never the key) in
+`apps/host/.data/linked-account.json`, and the dialog shows it with an "Unlink"
+button. The user id and the public keys stay on the machine: the dialog and the
+status never show them. A linked machine must unlink before it links again.
 
-"Unlink" deletes that file, so this machine forgets the account. It is local
-only: the server still lists the machine until you unlink it from the client's
-home page. A linked account grants no access to the machine yet.
+Once linked, any browser signed in to that account opens the machine from the
+client's home page, with no connect link. The browser asks the server for a
+relay ticket: a short-lived Ed25519 signature saying "this account may open
+this machine for 60 seconds", issued only for a machine in the account's list.
+It sends the ticket in the `x-orch-relay-ticket` header on requests and as a
+WebSocket subprotocol on sockets, never in a URL or a cookie. The server relays
+it unchanged; the host checks it:
+
+- the signature verifies against one of the public keys it saved for the
+  ticket's key id;
+- it names this machine and the linked account, and hasn't expired (30 seconds
+  of clock skew are allowed);
+- the account was linked through the server address in use;
+- on a socket, the ticket hasn't opened another socket already.
+
+Anything else gets the same refusal as a wrong key. Access keys from connect
+links keep working, and a request that carries a key is judged by the key
+alone. A `linked-account.json` saved before this (with no user id or public
+keys) still loads and shows the account, but accepts no ticket: unlink and link
+again with a new enrollment key. The server and the host must be updated
+together for this, since `enroll.redeemed` now carries the account's id and the
+public keys.
+
+"Unlink" deletes that file, so this machine forgets the account, and closes the
+sockets the account has open. It is local only: the server still lists the
+machine until you unlink it from the client's home page, but the machine
+refuses that account's tickets from then on.
+
+Accepted risks, until device approval and end-to-end encryption: the server is
+trusted to issue tickets only to the signed-in owner, so a server whose signing
+key leaks, or which is compromised, could open every linked machine of every
+account. Revoking a session or unlinking on the server stops new tickets at
+once, but a ticket already issued works for up to a minute, and an open socket
+stays until it closes; unlinking on the host closes them. A refused ticket sends
+`auth.failed`, so it counts against the browser's bad-key limit like a wrong
+key.
 
 `bun run host:remote link <key>` does the same from a terminal (next part). It
 also needs the running host with the tunnel connected.
