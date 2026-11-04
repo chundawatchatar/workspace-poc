@@ -40,14 +40,19 @@ export class RemoteAccessRepository {
 
   /** Replaces the file in one step, so a crash never leaves half of it. */
   save(settings: RemoteAccessSettings) {
-    mkdirSync(dirname(this.file), { recursive: true })
-    const temp = `${this.file}.${process.pid}.${crypto.randomUUID()}.tmp`
-    try {
-      writeFileSync(temp, `${JSON.stringify(settings, null, 2)}\n`, { flag: 'wx' })
-      renameSync(temp, this.file)
-    } catch (error) {
-      rmSync(temp, { force: true })
-      throw error
-    }
+    writeJsonAtomic(this.file, settings)
+  }
+}
+
+/** Writes `value` as JSON to `file` through a temp file and a rename, so a crash never leaves half of it. */
+export function writeJsonAtomic(file: string, value: unknown) {
+  mkdirSync(dirname(file), { recursive: true })
+  const temp = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`
+  try {
+    writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`, { flag: 'wx' })
+    renameSync(temp, file)
+  } catch (error) {
+    rmSync(temp, { force: true })
+    throw error
   }
 }

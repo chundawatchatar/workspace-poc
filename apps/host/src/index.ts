@@ -10,6 +10,7 @@ import { AgentTrackingRepository, agentTrackingPath } from './modules/agent-trac
 import { AgentTrackingService } from './modules/agent-tracking/agent-tracking.service'
 import { EventHub } from './modules/events/events.service'
 import { dataFile, LayoutRepository } from './modules/layout/layout.repository'
+import { LinkedAccountRepository, linkedAccountPath } from './modules/remote-access/linked-account.repository'
 import { RemoteAccessRepository, remoteAccessPath } from './modules/remote-access/remote-access.repository'
 import { RemoteAccessService } from './modules/remote-access/remote-access.service'
 import { daemonFactory, resendTracking, restoreTerminals } from './modules/terminals/daemon.service'
@@ -56,6 +57,7 @@ const inspector = setInterval(() => {
 // The service reads `app` and `sockets` only once a tunnel carries traffic, after `createApp` has returned.
 const remoteAccess = new RemoteAccessService({
   repository: new RemoteAccessRepository(remoteAccessPath(hostRoot)),
+  linkedAccounts: new LinkedAccountRepository(linkedAccountPath(hostRoot)),
   secretFile: machineSecretFile(hostRoot),
   keysFile: accessKeysPath(hostRoot),
   env: { SERVER_URL: process.env.SERVER_URL, CLIENT_URL: process.env.CLIENT_URL },

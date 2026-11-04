@@ -2,6 +2,11 @@ import {
   CLOSE_REPLACED,
   CLOSE_UNSUPPORTED_VERSION,
   decodeFrame,
+  type enrollFailedFrame,
+  type enrollPreviewedFrame,
+  type enrollPreviewFrame,
+  type enrollRedeemedFrame,
+  type enrollRedeemFrame,
   type MachineFrame,
   type ServerFrame,
   serverFrame,
@@ -9,6 +14,7 @@ import {
   TUNNEL_PROTOCOL_VERSION,
   type TunnelState,
 } from '@orch/shared'
+import type { z } from 'zod'
 import { AUTH_TIMEOUT_MS, type OpenSocket, TunnelChannels } from './tunnel-channels.service'
 import { type Authorize, type TunnelHandler, TunnelHttp } from './tunnel-http.service'
 import { TunnelOutbox } from './tunnel-outbox.service'
@@ -31,6 +37,28 @@ export function parseServerUrl(value: string): string | null {
   if (!url.hostname || url.username || url.password || url.search || url.hash) return null
   url.pathname = url.pathname.replace(/\/+$/, '') + TUNNEL_PATH
   return url.href
+}
+
+/** An enrollment frame to send, without its `id`, which `enroll` picks. */
+export type EnrollRequest =
+  | Omit<z.infer<typeof enrollPreviewFrame>, 'id'>
+  | Omit<z.infer<typeof enrollRedeemFrame>, 'id'>
+
+/** The server's answer to an `EnrollRequest`: `enroll.previewed` or `enroll.redeemed` to match it, or `enroll.failed`. */
+export type EnrollAnswer =
+  | z.infer<typeof enrollPreviewedFrame>
+  | z.infer<typeof enrollRedeemedFrame>
+  | z.infer<typeof enrollFailedFrame>
+
+/** The answer each enrollment request waits for, besides `enroll.failed`. */
+const ENROLL_ANSWER = { 'enroll.preview': 'enroll.previewed', 'enroll.redeem': 'enroll.redeemed' } as const
+
+/** An enrollment request waiting for its answer. */
+interface PendingEnroll {
+  answer: EnrollAnswer['type']
+  resolve: (frame: EnrollAnswer) => void
+  reject: (error: Error) => void
+  timer: Timer
 }
 
 /** The exponential backoff curve, in milliseconds. */
@@ -58,6 +86,8 @@ export interface TunnelTimings extends Backoff {
   stableAfterMs: number
   /** How long a tunneled socket has to send its auth message. */
   authTimeoutMs: number
+  /** How long the server has to answer an enrollment frame. */
+  enrollTimeoutMs: number
 }
 
 const defaultTimings: TunnelTimings = {
@@ -67,6 +97,7 @@ const defaultTimings: TunnelTimings = {
   silenceTimeoutMs: 45_000,
   stableAfterMs: 60_000,
   authTimeoutMs: AUTH_TIMEOUT_MS,
+  enrollTimeoutMs: 10_000,
 }
 
 export interface TunnelClientOptions {
@@ -97,6 +128,8 @@ interface Connection {
   channels: TunnelChannels
   welcomed: boolean
   nonce: number
+  /** Enrollment requests by id, until they are answered, time out or the connection ends. */
+  enrolls: Map<number, PendingEnroll>
   timers: Timer[]
   silence?: Timer
 }
@@ -115,6 +148,7 @@ export class TunnelClient {
   private readonly random: () => number
   private conn: Connection | null = null
   private attempt = 0
+  private enrollId = 0
   private reconnectTimer: Timer | undefined
   private stopped = false
   private state: TunnelState = 'off'
@@ -150,6 +184,25 @@ export class TunnelClient {
     this.conn?.channels.closeChannels(keyIds)
   }
 
+  /**
+   * Sends an enrollment frame with a fresh id and resolves with the server's
+   * answer to it. Rejects when the tunnel is not welcomed, when the connection
+   * ends first, or after `enrollTimeoutMs`. The key is never logged.
+   */
+  enroll(request: EnrollRequest): Promise<EnrollAnswer> {
+    const conn = this.conn
+    if (!conn?.welcomed) return Promise.reject(new Error('the tunnel is not connected'))
+    const id = ++this.enrollId
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        conn.enrolls.delete(id)
+        reject(new Error('the server did not answer'))
+      }, this.timings.enrollTimeoutMs)
+      conn.enrolls.set(id, { answer: ENROLL_ANSWER[request.type], resolve, reject, timer })
+      this.send(conn, { ...request, id })
+    })
+  }
+
   private connect() {
     this.reconnectTimer = undefined
     this.setState('connecting')
@@ -176,6 +229,7 @@ export class TunnelClient {
       }),
       welcomed: false,
       nonce: 0,
+      enrolls: new Map(),
       timers: [],
     }
     this.conn = conn
@@ -212,6 +266,16 @@ export class TunnelClient {
       case 'ws.ack':
         if (conn.welcomed) conn.channels.receive(frame)
         return
+      case 'enroll.previewed':
+      case 'enroll.redeemed':
+      case 'enroll.failed': {
+        const pending = conn.enrolls.get(frame.id)
+        if (!pending || (frame.type !== 'enroll.failed' && frame.type !== pending.answer)) return
+        conn.enrolls.delete(frame.id)
+        clearTimeout(pending.timer)
+        pending.resolve(frame)
+        return
+      }
     }
   }
 
@@ -254,6 +318,11 @@ export class TunnelClient {
     conn.http.close()
     conn.channels.close()
     conn.outbox.close()
+    for (const pending of conn.enrolls.values()) {
+      clearTimeout(pending.timer)
+      pending.reject(new Error('the tunnel closed'))
+    }
+    conn.enrolls.clear()
   }
 
   private drop(conn: Connection, reason: string) {
