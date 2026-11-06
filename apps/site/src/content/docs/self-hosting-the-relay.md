@@ -16,15 +16,19 @@ bun run --filter @orch/client build
 bun run --filter @orch/server start
 ```
 
-The server listens on `127.0.0.1:4600` and serves the built client from `apps/client/dist` (or `SERVER_STATIC_DIR`). Without a build it only relays. Put it behind your usual TLS proxy and point machines at `wss://<your-domain>`.
+The server listens on `SERVER_HOST`:`SERVER_PORT` (`127.0.0.1:4600` in `.env.example`) and serves the built client from `SERVER_STATIC_DIR`. Without a build it only relays. Put it behind your usual TLS proxy and point machines at `wss://<your-domain>`.
 
 ## Configuration
 
+Every setting lives in the root `.env`; copy `.env.example` to start. Nothing has a default in code, so the server stops at start-up and names any required variable that is missing.
+
 | Variable | Purpose |
 | --- | --- |
-| `SERVER_STATIC_DIR` | Where to serve the global app from, instead of `apps/client/dist` |
-| `SERVER_ALLOWED_ORIGINS` | Comma-separated origins allowed to make cross-origin calls |
-| `SERVER_TRUST_PROXY=1` | Behind a proxy that sets `X-Forwarded-For`, so rate limits see the client's IP |
+| `SERVER_STATIC_DIR` | Required. Where to serve the global app from (`apps/client/dist` in `.env.example`). A relative path resolves from the repo root, whatever the working directory |
+| `SERVER_MAX_CHANNELS` | Required. Most open channels (terminal sockets) per machine (`128` in `.env.example`) |
+| `SERVER_REQUEST_TIMEOUT_MS` | Required. How long a relayed HTTP request waits for its machine, in milliseconds (`30000` in `.env.example`) |
+| `SERVER_ALLOWED_ORIGINS` | Optional. Comma-separated origins allowed to make cross-origin calls |
+| `SERVER_TRUST_PROXY=1` | Optional. Behind a proxy that sets `X-Forwarded-For`, so rate limits see the client's IP |
 
 ## Built-in protection
 
