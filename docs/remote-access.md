@@ -178,7 +178,9 @@ A valid ticket and proof from a device that isn't approved yet get a 403
 waits in the Remote access setting's Devices list (at most 5, for 15 minutes
 each), by the fingerprint its browser shows, such as `ABCD-EFGH-JKMN-PQRS`. The
 browser's page says which fingerprint to approve, and opens by itself once it
-is. Approve only a fingerprint shown in your own browser. Approved devices are
+is. Approve it in the setting, or from a terminal on the machine with
+`bun run host:remote devices approve <fingerprint>` (see "From the terminal"
+below). Approve only a fingerprint shown in your own browser. Approved devices are
 kept in `apps/host/.data/devices.json` (public keys only; delete it to approve
 again); Revoke takes one away and closes what it has open. Every browser must
 be approved once, and an older page, which sends no proof, is refused.
@@ -224,6 +226,9 @@ bun run host:remote server wss://host  # set the server address
 bun run host:remote on                 # or off
 bun run host:remote link <key>         # add --yes to skip the question
 bun run host:remote unlink
+bun run host:remote devices                         # waiting and approved devices, newest first
+bun run host:remote devices approve <fingerprint>   # add --yes to skip the question
+bun run host:remote devices remove <fingerprint>    # dismiss a waiting device, or revoke an approved one
 ```
 
 With the host running, every command goes through its local-only Remote access
@@ -234,12 +239,27 @@ prints them. `on` makes the host print a new connect link in its own log, as
 the switch does. A host started with `SERVER_URL` refuses `server`: change the
 variable instead.
 
+`devices` lists each device by its fingerprint, such as `ABCD-EFGH-JKMN-PQRS`,
+with `waiting, seen 3 min ago` or `approved 2 days ago`, and `status` adds a
+`Devices:` line with both counts. `devices approve <fingerprint>` asks
+`Approve <fingerprint>? It will be able to open this machine through the linked
+account. [y/N]`; `--yes` skips the question. The fingerprint may be typed in any
+case, with or without the dashes. Approve only a fingerprint shown in your own
+browser: a compromised server can put its own device in the list. `devices
+remove` asks nothing; for an approved device it also closes the sockets it has
+open. The commands print fingerprints only, never a device's id or public key.
+
 With the host stopped, the command reads and writes `apps/host/.data/` itself,
 and the host picks the change up at its next start. `status` shows the tunnel as
 "host not running", and `SERVER_URL` in the command's own environment only
-changes what `status` shows. `link` needs the running host. The command never
-rewrites a `remote-access.json` that isn't valid, and `status` never creates the
-machine secret or the access keys.
+changes what `status` shows. `link` needs the running host, and so does
+`devices approve`, since waiting devices live only in the running host's memory.
+`devices` then lists the approved devices from `devices.json`, and `status`
+shows the waiting count as unknown. `devices remove` rewrites `devices.json`
+without that device, and the host loads it at its next start. The command never
+rewrites a `remote-access.json` or `devices.json` that isn't valid, never creates
+a missing `devices.json`, and `status` never creates the machine secret or the
+access keys.
 
 The key is passed on the command line, so it can end up in your shell history
 and in `ps`. It is single-use and expires after 15 minutes, which makes that an
