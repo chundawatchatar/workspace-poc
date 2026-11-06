@@ -11,10 +11,18 @@ import type {
 } from '@orch/shared'
 import { accessKeysPath } from './modules/access/access.repository'
 import { machineIdFromSecret } from './modules/access/access.service'
+import { fingerprintOf } from './modules/remote-access/device-proof.service'
+import { DevicesRepository, devicesPath } from './modules/remote-access/devices.repository'
+import { DevicesService } from './modules/remote-access/devices.service'
 import { linkedAccountPath } from './modules/remote-access/linked-account.repository'
 import { remoteAccessPath } from './modules/remote-access/remote-access.repository'
 import { createRemoteAccessRoutes } from './modules/remote-access/remote-access.routes'
-import { DEFAULT_SERVER_URL, LinkError, type RemoteAccessEnv } from './modules/remote-access/remote-access.service'
+import {
+  DEFAULT_SERVER_URL,
+  LinkError,
+  type RemoteAccessEnv,
+  UnknownDevice,
+} from './modules/remote-access/remote-access.service'
 import { machineSecretFile } from './modules/tunnel/tunnel.repository'
 import { createHostCaller, runRemote } from './remote-cli'
 
@@ -22,6 +30,18 @@ const key = `oek_${'k'.repeat(43)}`
 const secret = 's'.repeat(43)
 const account = { name: 'Ada', maskedEmail: 'a***@example.com' }
 const linked = { ...account, serverUrl: DEFAULT_SERVER_URL, linkedAt: '2026-11-04T12:00:00.000Z' }
+
+/** A browser device: an id, the fingerprint its page shows and its public key, which no output may hold. */
+function device(seed: number) {
+  const id = Buffer.from(new Uint8Array(32).fill(seed)).toString('base64url')
+  const coordinate = (salt: number) => Buffer.from(new Uint8Array(32).fill(seed + salt)).toString('base64url')
+  const publicKey = { kty: 'EC', crv: 'P-256', x: coordinate(100), y: coordinate(150) } as const
+  return { id, fingerprint: fingerprintOf(id), publicKey }
+}
+const alice = device(1)
+const bob = device(2)
+const carol = device(3)
+const MINUTE = 60_000
 
 /** Stands in for `RemoteAccessService` behind the real routes, recording each call it gets. */
 class FakeRemoteAccess {
@@ -41,6 +61,10 @@ class FakeRemoteAccess {
   account = account
   /** What `previewLink` and `link` throw, standing for a host refusal. */
   linkError: LinkError | null = null
+  /** The host's clock, in milliseconds, which the CLI's `now` reads too. */
+  clock = Date.UTC(2026, 10, 6, 12)
+  /** The real device lists, saved apart from the CLI's `.data/`, which a running host's commands never read. */
+  devices = new DevicesService(new DevicesRepository(join(dir, 'host-devices.json')), () => this.clock)
 
   status() {
     return this.current
@@ -72,13 +96,17 @@ class FakeRemoteAccess {
     return this.current
   }
   listDevices() {
-    return { pending: [], approved: [] }
+    return this.devices.list()
   }
-  approveDevice() {
-    return this.listDevices()
+  approveDevice(id: string) {
+    this.calls.push(['approveDevice', id])
+    if (!this.devices.approve(id)) throw new UnknownDevice('No browser with this id is waiting')
+    return this.devices.list()
   }
-  removeDevice() {
-    return this.listDevices()
+  removeDevice(id: string) {
+    this.calls.push(['removeDevice', id])
+    this.devices.remove(id)
+    return this.devices.list()
   }
 }
 
@@ -119,7 +147,7 @@ function stoppedHost(): string {
 async function run(
   baseUrl: string,
   args: string[],
-  options: { env?: RemoteAccessEnv; answers?: (string | null)[] } = {},
+  options: { env?: RemoteAccessEnv; answers?: (string | null)[]; onPrompt?: () => void } = {},
 ) {
   const answers = [...(options.answers ?? [])]
   const lines: string[] = []
@@ -129,14 +157,19 @@ async function run(
     env: options.env ?? {},
     prompt: async (question) => {
       lines.push(question)
+      options.onPrompt?.()
       return answers.shift() ?? null
     },
     out: (line) => lines.push(line),
     err: (line) => lines.push(line),
+    now: () => host.clock,
   })
   const text = lines.join('\n')
   expect(text).not.toContain(key)
   expect(text).not.toContain(secret)
+  for (const { id, publicKey } of [alice, bob, carol]) {
+    for (const value of [id, publicKey.x, publicKey.y]) expect(text).not.toContain(value)
+  }
   return { code, text }
 }
 
@@ -229,6 +262,105 @@ describe('host:remote with the host running', () => {
     expect(unlink.text).toContain('forgotten on this machine only')
     expect(host.calls).toEqual([['unlink', {}]])
   })
+
+  test('devices lists waiting then approved devices with their ages, and status counts them', async () => {
+    const url = runningHost()
+    expect((await run(url, ['devices'])).text).toContain('No devices are approved or waiting')
+    expect((await run(url, ['status'])).text).toContain('Devices:        0 approved, 0 waiting')
+
+    host.devices.recordPending(alice.id, alice.publicKey)
+    host.devices.approve(alice.id)
+    host.clock += 2 * 24 * 60 * MINUTE
+    host.devices.recordPending(bob.id, bob.publicKey)
+    host.clock += MINUTE
+    host.devices.recordPending(carol.id, carol.publicKey)
+    host.clock += 3 * MINUTE
+
+    const list = await run(url, ['devices'])
+    expect(list.code).toBe(0)
+    expect(list.text.split('\n')).toEqual([
+      `${carol.fingerprint}  waiting, seen 3 min ago`,
+      `${bob.fingerprint}  waiting, seen 4 min ago`,
+      `${alice.fingerprint}  approved 2 days ago`,
+    ])
+    const status = await run(url, ['status'])
+    expect(status.code).toBe(0)
+    expect(status.text).toContain('Devices:        1 approved, 2 waiting')
+  })
+
+  test('devices approve asks, and approves the matching device only on yes', async () => {
+    const url = runningHost()
+    host.devices.recordPending(alice.id, alice.publicKey)
+    const typed = alice.fingerprint.replaceAll('-', '').toLowerCase()
+
+    for (const answer of ['', 'n', null]) {
+      const no = await run(url, ['devices', 'approve', typed], { answers: [answer] })
+      expect(no.code).toBe(1)
+      expect(no.text).toContain('Approve only a fingerprint shown in your own browser.')
+      expect(no.text).toContain(
+        `Approve ${alice.fingerprint}? It will be able to open this machine through the linked account. [y/N]`,
+      )
+      expect(no.text).toContain('Not approved')
+    }
+    expect(host.calls).toEqual([])
+
+    const yes = await run(url, ['devices', 'approve', typed], { answers: ['Yes'] })
+    expect(yes.code).toBe(0)
+    expect(yes.text).toContain(`Approved ${alice.fingerprint}`)
+    expect(host.calls).toEqual([['approveDevice', alice.id]])
+
+    const again = await run(url, ['devices', 'approve', alice.fingerprint])
+    expect(again.code).toBe(0)
+    expect(again.text).toContain(`${alice.fingerprint} is already approved`)
+    expect(again.text).not.toContain('[y/N]')
+    expect(host.calls).toHaveLength(1)
+  })
+
+  test('devices approve --yes skips the question, and an unknown or expired device exits 1', async () => {
+    const url = runningHost()
+    host.devices.recordPending(alice.id, alice.publicKey)
+    host.devices.recordPending(bob.id, bob.publicKey)
+    const yes = await run(url, ['devices', 'approve', '--yes', alice.fingerprint])
+    expect(yes.code).toBe(0)
+    expect(yes.text).not.toContain('[y/N]')
+    expect((await run(url, ['devices', 'approve', bob.fingerprint, '--yes'])).code).toBe(0)
+    expect(host.calls).toEqual([
+      ['approveDevice', alice.id],
+      ['approveDevice', bob.id],
+    ])
+
+    const unknown = await run(url, ['devices', 'approve', carol.fingerprint, '--yes'])
+    expect(unknown.code).toBe(1)
+    expect(unknown.text).toContain(`No device with the fingerprint ${carol.fingerprint} is waiting or approved`)
+
+    // The device stops waiting while the question is open, so the host answers 404.
+    host.devices.recordPending(carol.id, carol.publicKey)
+    const expired = await run(url, ['devices', 'approve', carol.fingerprint], {
+      answers: ['y'],
+      onPrompt: () => host.devices.remove(carol.id),
+    })
+    expect(expired.code).toBe(1)
+    expect(expired.text).toContain(`${carol.fingerprint} is no longer waiting`)
+  })
+
+  test('devices remove dismisses a waiting device or revokes an approved one', async () => {
+    const url = runningHost()
+    host.devices.recordPending(alice.id, alice.publicKey)
+    host.devices.approve(alice.id)
+    host.devices.recordPending(bob.id, bob.publicKey)
+
+    expect((await run(url, ['devices', 'remove', bob.fingerprint])).text).toContain(`Dismissed ${bob.fingerprint}`)
+    const revoked = await run(url, ['devices', 'remove', alice.fingerprint])
+    expect(revoked.code).toBe(0)
+    expect(revoked.text).toContain(`Revoked ${alice.fingerprint}. The sockets it had open are closed.`)
+    expect(host.calls).toEqual([
+      ['removeDevice', bob.id],
+      ['removeDevice', alice.id],
+    ])
+
+    expect((await run(url, ['devices', 'remove', alice.fingerprint])).code).toBe(1)
+    expect(host.calls).toHaveLength(2)
+  })
 })
 
 describe('host:remote with the host stopped', () => {
@@ -294,12 +426,65 @@ describe('host:remote with the host stopped', () => {
     expect(again.text).toContain('No account is linked')
   })
 
-  test('a missing or unknown command prints the usage', async () => {
+  test('devices lists and removes the approved devices in the file, and approve needs the host', async () => {
     const url = stoppedHost()
-    for (const args of [[], ['nope'], ['server'], ['link']]) {
+    const file = devicesPath(dir)
+    const missing = await run(url, ['devices'])
+    expect(missing.code).toBe(0)
+    expect(missing.text).toContain('No devices are approved')
+    expect((await run(url, ['devices', 'remove', alice.fingerprint])).code).toBe(1)
+    expect(existsSync(file)).toBe(false)
+
+    const approvedAt = (ms: number) => new Date(host.clock - ms).toISOString()
+    new DevicesRepository(file).save([
+      { id: alice.id, publicKey: alice.publicKey, approvedAt: approvedAt(3 * 24 * 60 * MINUTE) },
+      { id: bob.id, publicKey: bob.publicKey, approvedAt: approvedAt(2 * 60 * MINUTE) },
+    ])
+    const list = await run(url, ['devices'])
+    expect(list.text).toContain(`${bob.fingerprint}  approved 2 hours ago\n${alice.fingerprint}  approved 3 days ago`)
+    expect(list.text).toContain('known only to the running host')
+    expect((await run(url, ['status'])).text).toContain(
+      'Devices:        2 approved, waiting unknown (host not running)',
+    )
+
+    const approve = await run(url, ['devices', 'approve', carol.fingerprint, '--yes'])
+    expect(approve.code).toBe(1)
+    expect(approve.text).toContain('Start the host, then run this again')
+
+    const remove = await run(url, ['devices', 'remove', alice.fingerprint.toLowerCase()])
+    expect(remove.code).toBe(0)
+    expect(remove.text).toContain(`Revoked ${alice.fingerprint}`)
+    expect(new DevicesRepository(file).load().map((saved) => saved.id)).toEqual([bob.id])
+    expect((await run(url, ['devices', 'remove', carol.fingerprint])).code).toBe(1)
+  })
+
+  test('a devices file that is not valid is reported and never rewritten', async () => {
+    const url = stoppedHost()
+    writeFileSync(devicesPath(dir), '{ broken')
+    for (const args of [['devices'], ['devices', 'remove', alice.fingerprint], ['status']]) {
       const { code, text } = await run(url, args)
       expect(code).toBe(1)
-      for (const command of ['status', 'server <url>', 'on', 'off', 'link <key> [--yes]', 'unlink'])
+      expect(text).toContain('are not valid')
+    }
+    expect(readFileSync(devicesPath(dir), 'utf8')).toBe('{ broken')
+  })
+
+  test('a missing or unknown command prints the usage', async () => {
+    const url = stoppedHost()
+    const wrong = [[], ['nope'], ['server'], ['link'], ['devices', 'approve'], ['devices', 'remove', 'A', '--yes']]
+    for (const args of wrong) {
+      const { code, text } = await run(url, args)
+      expect(code).toBe(1)
+      for (const command of [
+        'status',
+        'server <url>',
+        'on',
+        'off',
+        'link <key> [--yes]',
+        'unlink',
+        'devices approve <fingerprint> [--yes]',
+        'devices remove <fingerprint>',
+      ])
         expect(text).toContain(command)
     }
   })
