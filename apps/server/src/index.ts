@@ -1,5 +1,4 @@
 import './env'
-import { join } from 'node:path'
 import { createDomain, type Domain, type Principal } from '@orch/domain'
 import { requiredEnv } from '@orch/shared/env'
 import { type ApiModule, createApp } from './app'
@@ -7,7 +6,7 @@ import { type ClientIpOf, clientIpReader } from './lib/clientIp'
 import { type AccountsConfig, loadServerConfig, ServerConfigError } from './lib/config'
 import type { ServerRouterOptions } from './lib/createServerRouter'
 import { checkDatabase, databaseLocation } from './lib/database'
-import { parseAllowedOrigins } from './lib/security'
+import { loadRelaySettings } from './lib/relaySettings'
 import { serverWebSocket } from './lib/websocket'
 import { createAccountModule } from './modules/account/account.routes'
 import { createAuthenticate } from './modules/auth/auth.middleware'
@@ -103,7 +102,9 @@ function createAccountsModules({
   }
 }
 
-const trustProxy = process.env.SERVER_TRUST_PROXY === '1'
+const { maxChannelsPerMachine, requestTimeoutMs, staticDir, allowedOrigins, trustProxy } = loadRelaySettings(
+  process.env,
+)
 // Built before the accounts modules, since the machines module reads online state from this same registry.
 const registry = new MachineRegistry()
 
@@ -138,11 +139,6 @@ if (config.accounts) {
 
 const hostname = requiredEnv('SERVER_HOST')
 const port = Number(requiredEnv('SERVER_PORT'))
-const requestTimeoutMs = Number(process.env.SERVER_REQUEST_TIMEOUT_MS || 30_000)
-const maxChannelsPerMachine = Number(process.env.SERVER_MAX_CHANNELS || 128)
-// Resolved from this file, so the server finds the client however it is started.
-const staticDir = process.env.SERVER_STATIC_DIR || join(import.meta.dir, '../../client/dist')
-const allowedOrigins = parseAllowedOrigins(process.env.SERVER_ALLOWED_ORIGINS)
 
 const site = await loadStaticSite(staticDir)
 if (!site) console.log(`no client build in ${staticDir}, so only the relay is served`)
