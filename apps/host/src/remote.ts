@@ -33,6 +33,7 @@ try {
     prompt,
     out: (line) => console.log(line),
     err: (line) => console.error(line),
+    now: Date.now,
   })
 } catch (error) {
   console.error(`host:remote failed: ${error instanceof Error ? error.message : error}`)

@@ -25,6 +25,15 @@ import {
 } from './modules/remote-access/remote-access.service'
 import { loadOrCreateMachineSecret, machineSecretFile } from './modules/tunnel/tunnel.repository'
 import { parseServerUrl } from './modules/tunnel/tunnel.service'
+import {
+  type DevicesCommand,
+  devicesFromFile,
+  devicesThroughHost,
+  fileDevicesLine,
+  hostDevicesLine,
+  parseDevicesArgs,
+} from './remote-cli-devices'
+import { messageOf, printable, refused } from './remote-cli-output'
 
 // `bun run host:remote <command>`: the Remote access dialog for a terminal. A
 // running host is the one owner of the setting, so every command goes through
@@ -49,6 +58,8 @@ export interface RemoteCliDeps {
   prompt: (question: string) => Promise<string | null>
   out: (line: string) => void
   err: (line: string) => void
+  /** The current time in milliseconds, for the ages `devices` prints. */
+  now: () => number
 }
 
 /** A caller for the host at `baseUrl`, such as `http://127.0.0.1:4599`. Answers are parsed with the output schemas. */
@@ -87,12 +98,19 @@ async function refusal(response: Response): Promise<string> {
 
 const USAGE = `Usage: bun run host:remote <command>
 
-  status              Show the server address, remote access, the machine id and the linked account
-  server <url>        Set the server address: wss://<host>, or ws:// on 127.0.0.1, [::1] or localhost
-  on                  Turn remote access on
-  off                 Turn remote access off
-  link <key> [--yes]  Link this machine to an account with an enrollment key (needs the running host)
-  unlink              Forget the linked account on this machine`
+  status                                Show the server address, remote access, the machine id, the linked
+                                        account and the devices
+  server <url>                          Set the server address: wss://<host>, or ws:// on 127.0.0.1, [::1]
+                                        or localhost
+  on                                    Turn remote access on
+  off                                   Turn remote access off
+  link <key> [--yes]                    Link this machine to an account with an enrollment key (needs the
+                                        running host)
+  unlink                                Forget the linked account on this machine
+  devices                               List the devices waiting for approval and the approved ones
+  devices approve <fingerprint> [--yes] Approve a waiting device by the fingerprint its browser shows (needs
+                                        the running host)
+  devices remove <fingerprint>          Dismiss a waiting device, or revoke an approved one`
 
 const FORGOTTEN =
   'The account is forgotten on this machine only. The server still lists the machine until you unlink it in the client.'
@@ -102,6 +120,7 @@ type Command =
   | { name: 'on' | 'off' }
   | { name: 'server'; url: string }
   | { name: 'link'; key: string; yes: boolean }
+  | DevicesCommand
 
 /** A command that changes the saved setting. */
 type SettingCommand = Extract<Command, { name: 'server' | 'on' | 'off' }>
@@ -117,6 +136,7 @@ function parseArgs(args: string[]): Command | null {
     const keys = rest.filter((arg) => arg !== '--yes')
     return keys.length === 1 && keys[0] ? { name, key: keys[0], yes } : null
   }
+  if (name === 'devices') return parseDevicesArgs(rest)
   return null
 }
 
@@ -142,20 +162,25 @@ export async function runRemote(args: string[], deps: RemoteCliDeps): Promise<nu
   }
   const status = await deps.callHost(routes.remoteAccess.status, {})
   if (status === null) return stopped(command, deps)
-  if (!status.ok) return refused(status, deps)
+  if (!status.ok) return refused(status, deps.err)
   return running(command, status.data, deps)
 }
 
 /** The commands against a running host, whose `status` is `current`. */
 async function running(command: Command, current: RemoteAccessStatus, deps: RemoteCliDeps): Promise<number> {
   switch (command.name) {
-    case 'status':
+    case 'status': {
       printStatus(current, deps.out)
-      return 0
+      return (await hostDevicesLine(deps)) ? 0 : 1
+    }
     case 'server':
     case 'on':
     case 'off':
       return updateThroughHost(command, current, deps)
+    case 'devices':
+    case 'approve':
+    case 'remove':
+      return devicesThroughHost(command, deps)
     case 'link':
       return linkThroughHost(command, deps)
     case 'unlink': {
@@ -164,7 +189,7 @@ async function running(command: Command, current: RemoteAccessStatus, deps: Remo
         return 0
       }
       const answer = await deps.callHost(routes.remoteAccess.unlink, {})
-      if (!answer?.ok) return refused(answer, deps)
+      if (!answer?.ok) return refused(answer, deps.err)
       deps.out(FORGOTTEN)
       return 0
     }
@@ -185,7 +210,7 @@ async function updateThroughHost(command: SettingCommand, current: RemoteAccessS
     serverUrl: command.name === 'server' ? command.url : keptServer,
     clientUrl: current.clientUrl,
   })
-  if (!answer?.ok) return refused(answer, deps)
+  if (!answer?.ok) return refused(answer, deps.err)
   if (command.name === 'server') deps.out(`Server address set to ${printable(answer.data.serverUrl)}.`)
   deps.out(remoteAccessLine(answer.data.enabled, answer.data.tunnel))
   if (command.name === 'on') deps.out('A newly created connect link is printed in the host log, not here.')
@@ -195,7 +220,7 @@ async function updateThroughHost(command: SettingCommand, current: RemoteAccessS
 /** Previews the key, asks unless `--yes` was given, then links with the previewed server address. */
 async function linkThroughHost(command: Extract<Command, { name: 'link' }>, deps: RemoteCliDeps) {
   const preview = await deps.callHost(routes.remoteAccess.previewLink, { key: command.key })
-  if (!preview?.ok) return refused(preview, deps)
+  if (!preview?.ok) return refused(preview, deps.err)
   printPreview(preview.data, deps.out)
   if (!command.yes) {
     const answer = await deps.prompt(`Link this machine to ${printable(preview.data.account.name)}? [y/N] `)
@@ -206,7 +231,7 @@ async function linkThroughHost(command: Extract<Command, { name: 'link' }>, deps
   }
   deps.out('Linking...')
   const linked = await deps.callHost(routes.remoteAccess.link, { key: command.key, serverUrl: preview.data.serverUrl })
-  if (!linked?.ok) return refused(linked, deps)
+  if (!linked?.ok) return refused(linked, deps.err)
   deps.out(`Linked: ${accountLine(linked.data.linkedAccount)}`)
   return 0
 }
@@ -216,6 +241,10 @@ function stopped(command: Command, deps: RemoteCliDeps): number {
   switch (command.name) {
     case 'status':
       return statusFromFiles(deps)
+    case 'devices':
+    case 'approve':
+    case 'remove':
+      return devicesFromFile(command, deps)
     case 'server':
     case 'on':
     case 'off':
@@ -261,7 +290,8 @@ function statusFromFiles(deps: RemoteCliDeps): number {
     },
     deps.out,
   )
-  return settings === false || account === undefined ? 1 : 0
+  const devicesRead = fileDevicesLine(deps)
+  return settings === false || account === undefined || !devicesRead ? 1 : 0
 }
 
 /** Rewrites only the field `command` names in `remote-access.json`. A missing file counts as off with no addresses. */
@@ -326,12 +356,6 @@ function printPreview(preview: PreviewLinkResponse, out: (line: string) => void)
   out(`Fingerprint: ${printable(preview.fingerprint)} (the same 4 characters must show in the client)`)
 }
 
-/** Prints a host's refusal and answers the exit code. Null stands for a host that went away mid-command. */
-function refused(answer: { status: number; message: string } | null, deps: RemoteCliDeps): number {
-  deps.err(answer ? printable(answer.message) : 'The host stopped. Run the command again')
-  return 1
-}
-
 /** The saved setting, null when none is saved, or false after printing why the file is not valid. */
 function readSettings(deps: RemoteCliDeps): RemoteAccessSettings | null | false {
   try {
@@ -358,18 +382,4 @@ function readMachineId(deps: RemoteCliDeps): string | null {
 function isDefaultServer(serverUrl: string): boolean {
   const inUse = parseServerUrl(serverUrl)
   return inUse !== null && inUse === parseServerUrl(DEFAULT_SERVER_URL)
-}
-
-function messageOf(error: unknown): string {
-  return printable(error instanceof Error ? error.message : String(error))
-}
-
-/**
- * `value` with every control character (C0, DEL and C1) replaced by `?`. Names
- * and messages come from the server or a file, and a terminal would run escape
- * sequences in them, which could rewrite the lines the user checks before linking.
- */
-function printable(value: string): string {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point.
-  return value.replace(/[\u0000-\u001f\u007f-\u009f]/g, '?')
 }
