@@ -52,12 +52,15 @@ session that used the old key.
 The server serves the global app itself, so the connect link opens on the
 server's own origin and needs no CORS. Build the client with
 `bun run --filter @orch/client build`, then start the server with
-`bun run --filter @orch/server start` (127.0.0.1:4600). It serves
-`apps/client/dist`, or `SERVER_STATIC_DIR`; without a build it only relays. It
-answers cross-origin calls only from the exact origins in
-`SERVER_ALLOWED_ORIGINS` (comma-separated); `bun run dev:client` sets it for the
-dev client. It rate-limits connections per IP and per machine, and blocks an
-IP for a while after too many rejected keys. Behind a proxy that sets
+`bun run --filter @orch/server start` (127.0.0.1:4600). It serves the folder
+in `SERVER_STATIC_DIR` (required, `apps/client/dist` in `.env.example`; a
+relative path resolves from the repo root, whatever the working directory);
+without a build it only relays. `SERVER_MAX_CHANNELS` (required) caps the open
+channels per machine, and `SERVER_REQUEST_TIMEOUT_MS` (required) is how long a
+relayed HTTP request waits for its machine. It answers cross-origin calls only
+from the exact origins in the optional `SERVER_ALLOWED_ORIGINS`
+(comma-separated). It rate-limits connections per IP and per machine, and
+blocks an IP for a while after too many rejected keys. Behind a proxy that sets
 `X-Forwarded-For`, set `SERVER_TRUST_PROXY=1` so the limits see the client's IP,
 not the proxy's.
 
