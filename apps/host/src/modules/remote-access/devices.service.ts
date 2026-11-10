@@ -1,4 +1,4 @@
-import type { DeviceJwk, DevicesResponse } from '@orch/shared'
+import { type DeviceJwk, type DevicesResponse, fingerprintKey } from '@orch/shared'
 import { fingerprintOf } from './device-proof.service'
 import type { DevicesRepository, SavedDevice } from './devices.repository'
 
@@ -14,6 +14,13 @@ interface PendingEntry {
   /** Milliseconds. */
   firstSeenAt: number
 }
+
+/**
+ * What approving a typed fingerprint did: `approved` the one waiting device it
+ * names, found it `already` approved, or changed nothing because it named
+ * `none` or `several` devices.
+ */
+export type ApproveResult = 'approved' | 'already' | 'none' | 'several'
 
 /**
  * The browsers that may open this machine through the linked account. Approved
@@ -68,21 +75,28 @@ export class DevicesService {
   }
 
   /**
-   * Approves a waiting device and saves it. An approved one stays as it is.
-   * False means the id is neither. Throws, approving nothing, when it can't be saved.
+   * Approves the waiting device whose fingerprint is `typed`, compared by
+   * `fingerprintKey`, and saves it. Nothing changes when the fingerprint names
+   * an approved device, no device, or more than one. Throws, approving
+   * nothing, when it can't be saved.
    */
-  approve(id: string): boolean {
-    if (this.isApproved(id)) return true
-    const entry = this.fresh().find((candidate) => candidate.id === id)
-    if (!entry) return false
+  approve(typed: string): ApproveResult {
+    const wanted = fingerprintKey(typed)
+    const matches = (id: string) => wanted !== '' && fingerprintKey(fingerprintOf(id)) === wanted
+    const approvedMatches = this.approved.filter((device) => matches(device.id))
+    const pendingMatches = this.fresh().filter((entry) => matches(entry.id))
+    const [entry] = pendingMatches
+    if (approvedMatches.length + pendingMatches.length > 1) return 'several'
+    if (approvedMatches.length === 1) return 'already'
+    if (!entry) return 'none'
     const approved = [
       ...this.approved,
-      { id, publicKey: entry.publicKey, approvedAt: new Date(this.now()).toISOString() },
+      { id: entry.id, publicKey: entry.publicKey, approvedAt: new Date(this.now()).toISOString() },
     ]
     this.repository.save(approved)
     this.approved = approved
-    this.pending = this.pending.filter((candidate) => candidate.id !== id)
-    return true
+    this.pending = this.pending.filter((candidate) => candidate.id !== entry.id)
+    return 'approved'
   }
 
   /**

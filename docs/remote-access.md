@@ -178,9 +178,16 @@ A valid ticket and proof from a device that isn't approved yet get a 403
 waits in the Remote access setting's Devices list (at most 5, for 15 minutes
 each), by the fingerprint its browser shows, such as `ABCD-EFGH-JKMN-PQRS`. The
 browser's page says which fingerprint to approve, and opens by itself once it
-is. Approve it in the setting, or from a terminal on the machine with
-`bun run host:remote devices approve <fingerprint>` (see "From the terminal"
-below). Approve only a fingerprint shown in your own browser. Approved devices are
+is. A waiting row has only Dismiss: to approve, type the fingerprint your
+browser shows into "Fingerprint shown in your browser" under the list and press
+Approve or Enter, or run `bun run host:remote devices approve <fingerprint>`
+from a terminal on the machine (see "From the terminal" below). Case, dashes
+and spaces don't matter. The host checks the typed fingerprint against the
+waiting list itself: one that matches no waiting browser (unknown, expired or
+mistyped) approves nothing and gets `No browser with the fingerprint <typed> is
+waiting. Open this machine in your own browser and type the fingerprint it
+shows.`, and one that more than one waiting browser shares approves none of
+them. Type it from your own browser, never from the list. Approved devices are
 kept in `apps/host/.data/devices.json` (public keys only; delete it to approve
 again); Revoke takes one away and closes what it has open. Every browser must
 be approved once, and an older page, which sends no proof, is refused.
@@ -202,7 +209,9 @@ Accepted risks: the server still says who is signed in, so it decides who owns
 an enrollment key and who gets relay tickets, but a leaked `RELAY_SIGNING_KEY`
 or a compromised server can't open a machine without an approved browser. It
 can mint tickets to put its own key in the Devices list, hoping you approve it,
-which is why the fingerprint must be one your own browser shows. Until
+which is why approval takes a fingerprint typed from your own browser and
+checked by the host, so a click on the list can't approve it. Copying a
+fingerprint you don't recognise from the list and typing it in still would. Until
 end-to-end encryption, a compromised server can read and inject into a session
 an approved browser opens, and capture an access key from a connect link,
 which device approval doesn't cover. A browser whose clock is more than 5
@@ -243,9 +252,12 @@ variable instead.
 with `waiting, seen 3 min ago` or `approved 2 days ago`, and `status` adds a
 `Devices:` line with both counts. `devices approve <fingerprint>` asks
 `Approve <fingerprint>? It will be able to open this machine through the linked
-account. [y/N]`; `--yes` skips the question. The fingerprint may be typed in any
-case, with or without the dashes. Approve only a fingerprint shown in your own
-browser: a compromised server can put its own device in the list. `devices
+account. [y/N]`; `--yes` skips the question. It sends the typed fingerprint to
+the host, which approves the one waiting device it matches, in any case, with or
+without the dashes; a fingerprint the host matches to no waiting device, or to
+more than one, prints the host's message and exits 1, and one already approved
+prints `<fingerprint> is already approved`. Type only a fingerprint shown in
+your own browser: a compromised server can put its own device in the list. `devices
 remove` asks nothing; for an approved device it also closes the sockets it has
 open. The commands print fingerprints only, never a device's id or public key.
 

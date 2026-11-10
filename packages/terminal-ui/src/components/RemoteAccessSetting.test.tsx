@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { type DevicesResponse, type LinkedAccount, type RemoteAccessStatus, routes } from '@orch/shared'
+import { type DevicesResponse, fingerprintKey, type LinkedAccount, type RemoteAccessStatus, routes } from '@orch/shared'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -21,6 +21,9 @@ const linkedAccount: LinkedAccount = {
 const deviceA = { id: 'a'.repeat(43), fingerprint: 'AAAA-AAAA-AAAA-AAAA' }
 const deviceB = { id: 'b'.repeat(43), fingerprint: 'BBBB-BBBB-BBBB-BBBB' }
 const deviceC = { id: 'c'.repeat(43), fingerprint: 'CCCC-CCCC-CCCC-CCCC' }
+
+const notWaiting = (typed: string) =>
+  `No browser with the fingerprint ${typed} is waiting. Open this machine in your own browser and type the fingerprint it shows.`
 
 /**
  * Renders the dialog against a fake host that answers the link and device endpoints and records what it was sent.
@@ -69,12 +72,12 @@ function setup({ linked = false } = {}) {
         return Response.json(status)
       }
       if (path === routes.remoteAccess.approveDevice.path) {
-        const { id } = body as { id: string }
-        const device = devices.pending.find((d) => d.id === id)
-        if (!device) return new Response('No browser with this id is waiting', { status: 404 })
+        const { fingerprint } = body as { fingerprint: string }
+        const device = devices.pending.find((d) => fingerprintKey(d.fingerprint) === fingerprintKey(fingerprint))
+        if (!device) return new Response(notWaiting(fingerprint), { status: 404 })
         devices = {
-          pending: devices.pending.filter((d) => d.id !== id),
-          approved: [{ id, fingerprint: device.fingerprint, approvedAt: seenAt }, ...devices.approved],
+          pending: devices.pending.filter((d) => d.id !== device.id),
+          approved: [{ id: device.id, fingerprint: device.fingerprint, approvedAt: seenAt }, ...devices.approved],
         }
         return Response.json(devices)
       }
@@ -139,7 +142,7 @@ describe('RemoteAccessSetting', () => {
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'Link key' })).toHaveValue(''))
     expect(sent.at(-1)).toEqual([routes.remoteAccess.unlink.path, {}])
   })
-  test('lists waiting and approved browsers by fingerprint, and Approve, Dismiss and Revoke update the list', async () => {
+  test('lists waiting and approved browsers by fingerprint, approves only a typed one, and Dismiss and Revoke update the list', async () => {
     const user = userEvent.setup()
     const { sent } = setup({ linked: true })
     const waiting = await screen.findByRole('list', { name: 'Waiting for approval' })
@@ -149,9 +152,12 @@ describe('RemoteAccessSetting', () => {
       'Approve only a fingerprint shown in your own browser',
     )
     expect(screen.getByRole('list', { name: 'Approved' })).toHaveTextContent(deviceC.fingerprint)
+    expect(screen.queryByRole('button', { name: `Approve ${deviceA.fingerprint}` })).not.toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: `Approve ${deviceA.fingerprint}` }))
+    const field = screen.getByRole('textbox', { name: 'Fingerprint shown in your browser' })
+    await user.type(field, ' aaaaaaaa-aaaaaaaa {Enter}')
     expect(await screen.findByRole('button', { name: `Revoke ${deviceA.fingerprint}` })).toBeInTheDocument()
+    await waitFor(() => expect(field).toHaveValue(''))
     await user.click(screen.getByRole('button', { name: `Dismiss ${deviceB.fingerprint}` }))
     await waitFor(() => expect(screen.queryByRole('list', { name: 'Waiting for approval' })).not.toBeInTheDocument())
     await user.click(screen.getByRole('button', { name: `Revoke ${deviceC.fingerprint}` }))
@@ -160,9 +166,23 @@ describe('RemoteAccessSetting', () => {
     )
 
     expect(sent).toEqual([
-      [routes.remoteAccess.approveDevice.path, { id: deviceA.id }],
+      [routes.remoteAccess.approveDevice.path, { fingerprint: 'aaaaaaaa-aaaaaaaa' }],
       [routes.remoteAccess.removeDevice.path, { id: deviceB.id }],
       [routes.remoteAccess.removeDevice.path, { id: deviceC.id }],
     ])
+  })
+
+  test('a fingerprint no browser is waiting with shows the host message once and keeps the typed text', async () => {
+    const user = userEvent.setup()
+    const { sent } = setup({ linked: true })
+    const field = await screen.findByRole('textbox', { name: 'Fingerprint shown in your browser' })
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled()
+
+    await user.type(field, 'ZZZZ-ZZZZ')
+    await user.click(screen.getByRole('button', { name: 'Approve' }))
+    expect(await screen.findAllByText(notWaiting('ZZZZ-ZZZZ'))).toHaveLength(1)
+    expect(field).toHaveValue('ZZZZ-ZZZZ')
+    expect(sent).toEqual([[routes.remoteAccess.approveDevice.path, { fingerprint: 'ZZZZ-ZZZZ' }]])
+    expect(screen.getByRole('list', { name: 'Approved' })).not.toHaveTextContent(deviceA.fingerprint)
   })
 })

@@ -1,12 +1,13 @@
-import { type ApprovedDevice, type DevicesResponse, type PendingDevice, routes } from '@orch/shared'
+import { type ApprovedDevice, type DevicesResponse, fingerprintKey, type PendingDevice, routes } from '@orch/shared'
 import { fingerprintOf } from './modules/remote-access/device-proof.service'
 import { DevicesRepository, devicesPath, type SavedDevice } from './modules/remote-access/devices.repository'
 import type { RemoteCliDeps } from './remote-cli'
 import { messageOf, printable, refused } from './remote-cli-output'
 
 // `bun run host:remote devices ...`: the Devices list of the Remote access
-// setting. The host's endpoints take a device id, so every command resolves the
-// fingerprint the user typed from a fresh list. Nothing here prints an id or a key.
+// setting. `approve` sends the typed fingerprint, and the host matches it
+// against its waiting devices. `remove` takes a device id, so it resolves the
+// typed fingerprint from a fresh list. Nothing here prints an id or a key.
 
 export type DevicesCommand =
   | { name: 'devices' }
@@ -36,16 +37,23 @@ export async function devicesThroughHost(command: DevicesCommand, deps: RemoteCl
     printDevices(devices.data, deps)
     return 0
   }
+  if (command.name === 'approve') return approve(devices.data, command.fingerprint, command.yes, deps)
   const found = findDevice(devices.data, command.fingerprint, deps)
   if (!found) return 1
-  return command.name === 'approve' ? approve(found, command.yes, deps) : remove(found, deps)
+  return remove(found, deps)
 }
 
-/** Asks unless `--yes` was given, then approves the waiting device. */
-async function approve(found: FoundDevice, yes: boolean, deps: RemoteCliDeps): Promise<number> {
-  const fingerprint = printable(found.device.fingerprint)
-  if (found.approved) {
-    deps.out(`${fingerprint} is already approved`)
+/**
+ * Asks unless `--yes` was given, then sends the typed fingerprint for the host
+ * to approve the one waiting device it matches. A device the list already shows
+ * approved is reported as such without asking.
+ */
+async function approve(devices: DevicesResponse, typed: string, yes: boolean, deps: RemoteCliDeps): Promise<number> {
+  const wanted = fingerprintKey(typed)
+  const fingerprint = printable(typed.trim())
+  const known = devices.approved.find((device) => fingerprintKey(device.fingerprint) === wanted)
+  if (known) {
+    deps.out(`${printable(known.fingerprint)} is already approved`)
     return 0
   }
   if (!yes) {
@@ -58,13 +66,12 @@ async function approve(found: FoundDevice, yes: boolean, deps: RemoteCliDeps): P
       return 1
     }
   }
-  const approved = await deps.callHost(routes.remoteAccess.approveDevice, { id: found.device.id })
-  if (approved?.ok === false && approved.status === 404) {
-    deps.err(`${fingerprint} is no longer waiting. Open the machine again in that browser, then run this again`)
-    return 1
-  }
+  const approved = await deps.callHost(routes.remoteAccess.approveDevice, { fingerprint: typed.trim() })
   if (!approved?.ok) return refused(approved, deps.err)
-  deps.out(`Approved ${fingerprint}. It can open this machine through the linked account now.`)
+  const shown = approved.data.approved.find((device) => fingerprintKey(device.fingerprint) === wanted)?.fingerprint
+  deps.out(
+    `Approved ${shown ? printable(shown) : fingerprint}. It can open this machine through the linked account now.`,
+  )
   return 0
 }
 
@@ -180,10 +187,6 @@ function findDevice(devices: DevicesResponse, typed: string, deps: RemoteCliDeps
     return null
   }
   return match
-}
-
-function fingerprintKey(fingerprint: string): string {
-  return fingerprint.replaceAll('-', '').toUpperCase()
 }
 
 /** How long ago `iso` was, such as `3 min ago` or `2 days ago`. A time in the future counts as now. */

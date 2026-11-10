@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'bun:test'
-import type { PreviewLinkResponse, RemoteAccessStatus } from '@orch/shared'
-import { render, screen } from '@testing-library/react'
+import type { DevicesResponse, PreviewLinkResponse, RemoteAccessStatus } from '@orch/shared'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { type ComponentProps, useState } from 'react'
 import { RemoteAccessForm } from './RemoteAccessForm'
@@ -55,7 +55,14 @@ function setup(overrides: Partial<Props> = {}) {
     onNewLink: mock(),
     link: null,
     accountLink: accountLinkProps(),
-    devices: { devices: undefined, onApprove: mock(), onDismiss: mock(), onRevoke: mock() },
+    devices: {
+      devices: undefined,
+      fingerprint: '',
+      onFingerprintChange: mock(),
+      onApprove: mock(),
+      onDismiss: mock(),
+      onRevoke: mock(),
+    },
     error: null,
     busy: false,
     onClose: mock(),
@@ -65,6 +72,7 @@ function setup(overrides: Partial<Props> = {}) {
   function Page() {
     const [serverUrl, setServerUrl] = useState(props.serverUrl)
     const [linkKey, setLinkKey] = useState(props.accountLink.linkKey)
+    const [fingerprint, setFingerprint] = useState(props.devices.fingerprint)
     return (
       <RemoteAccessForm
         {...props}
@@ -79,6 +87,14 @@ function setup(overrides: Partial<Props> = {}) {
           onLinkKeyChange: (value) => {
             setLinkKey(value)
             props.accountLink.onLinkKeyChange(value)
+          },
+        }}
+        devices={{
+          ...props.devices,
+          fingerprint,
+          onFingerprintChange: (value) => {
+            setFingerprint(value)
+            props.devices.onFingerprintChange(value)
           },
         }}
       />
@@ -175,5 +191,46 @@ describe('RemoteAccessForm', () => {
     expect(screen.queryByRole('textbox', { name: 'Link key' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Unlink' }))
     expect(props.accountLink.onUnlink).toHaveBeenCalledTimes(1)
+  })
+
+  test('a waiting browser can only be dismissed, and is approved only by typing its fingerprint', async () => {
+    const user = userEvent.setup()
+    const linkedAccount = {
+      name: 'Ada Lovelace',
+      maskedEmail: 'a***@example.com',
+      serverUrl: 'wss://relay.example.com',
+      linkedAt: '2026-11-04T12:00:00.000Z',
+    }
+    const devices: DevicesResponse = {
+      pending: [{ id: 'd'.repeat(43), fingerprint: 'ABCD-EFGH-JKMN-PQRS', firstSeenAt: '2026-11-04T12:00:00.000Z' }],
+      approved: [],
+    }
+    const onDevices = { onFingerprintChange: mock(), onApprove: mock(), onDismiss: mock(), onRevoke: mock() }
+    const { props } = setup({
+      status: { ...status, linkedAccount },
+      devices: { devices, fingerprint: '', ...onDevices },
+    })
+
+    const waiting = screen.getByRole('list', { name: 'Waiting for approval' })
+    expect(
+      within(waiting)
+        .getAllByRole('button')
+        .map((button) => button.textContent),
+    ).toEqual(['Dismiss'])
+    await user.click(within(waiting).getByRole('button', { name: 'Dismiss ABCD-EFGH-JKMN-PQRS' }))
+    expect(onDevices.onDismiss).toHaveBeenCalledWith('d'.repeat(43))
+
+    const approve = within(screen.getByRole('group', { name: 'Approve a browser' }))
+    expect(approve.getByRole('button', { name: 'Approve' })).toBeDisabled()
+    const field = approve.getByRole('textbox', { name: 'Fingerprint shown in your browser' })
+    await user.type(field, '   {Enter}')
+    expect(onDevices.onApprove).not.toHaveBeenCalled()
+
+    await user.clear(field)
+    await user.type(field, 'abcd-efgh-jkmn-pqrs{Enter}')
+    expect(onDevices.onApprove).toHaveBeenCalledWith('abcd-efgh-jkmn-pqrs')
+    expect(props.onSave).not.toHaveBeenCalled()
+    await user.click(approve.getByRole('button', { name: 'Approve' }))
+    expect(onDevices.onApprove).toHaveBeenCalledTimes(2)
   })
 })

@@ -87,6 +87,10 @@ export type DevicesResponse = z.infer<typeof devicesResponse>
 export const deviceBody = z.strictObject({ id: deviceId })
 export type DeviceBody = z.infer<typeof deviceBody>
 
+/** The fingerprint the owner typed from their own browser, in any case, with or without dashes. */
+export const approveDeviceBody = z.strictObject({ fingerprint: z.string().min(1).max(64) })
+export type ApproveDeviceBody = z.infer<typeof approveDeviceBody>
+
 export const remoteAccessContract = defineContract({
   status: {
     method: 'GET',
@@ -137,8 +141,9 @@ export const remoteAccessContract = defineContract({
   approveDevice: {
     method: 'POST',
     path: '/api/remote-access/devices/approve',
-    description: 'Approves a waiting browser. An id that is not waiting or approved gets a 404. Local callers only.',
-    input: deviceBody,
+    description:
+      'Approves the waiting browser with the typed fingerprint, compared without case, dashes or whitespace. One already approved answers the list unchanged. A fingerprint that matches no waiting browser gets a 404, and one that matches more than one gets a 409. Local callers only.',
+    input: approveDeviceBody,
     output: devicesResponse,
   },
   removeDevice: {
