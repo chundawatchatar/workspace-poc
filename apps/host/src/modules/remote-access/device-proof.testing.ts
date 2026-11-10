@@ -6,12 +6,13 @@ import { deviceIdOf } from './device-proof.service'
 // Test-only helpers that sign device proofs as a browser would, with the
 // browser's own proof builder and a WebCrypto key. Never imported by production code.
 
-/** A fresh browser device key: its id, and builders for its proofs. */
+/** A fresh browser device key: its id and public key, and builders for its proofs. */
 export async function testDevice() {
   const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify'])
   const signer = await deviceSigner(pair)
   const { kty, crv, x, y } = signer.publicJwk
-  const id = deviceIdOf(deviceJwk.parse({ kty, crv, x, y }))
+  const publicKey = deviceJwk.parse({ kty, crv, x, y })
+  const id = deviceIdOf(publicKey)
   /** A proof for `target`, signed at `now` (milliseconds). */
   const proof = (target: ProofTarget, now?: number) => createDeviceProof(signer, target, now)
   /** A proof for `target` as `Credentials.device`, as the tunnel hands it over. */
@@ -23,5 +24,5 @@ export async function testDevice() {
   })
   /** A socket's proof for `path`. */
   const socket = (machineId: string, path: string) => proof({ machineId, method: DEVICE_PROOF_SOCKET_METHOD, path })
-  return { id, signer, proof, presented, socket }
+  return { id, publicKey, signer, proof, presented, socket }
 }

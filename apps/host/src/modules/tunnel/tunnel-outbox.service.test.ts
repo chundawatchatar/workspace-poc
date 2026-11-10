@@ -19,7 +19,7 @@ function setup() {
     outbox.send(frame)
     mostQueued = Math.max(mostQueued, outbox.bulkBytes)
   }
-  const authorize = () => ({ kind: 'key' as const, keyId: 'k1', name: 'default' })
+  const authorize = () => ({ kind: 'key' as const, keyId: 'k1', name: 'default', deviceId: 'd1' })
   const http = new TunnelHttp(
     async () => new Response(new Uint8Array(4 * 1024 * 1024).fill(1)),
     authorize,
@@ -52,7 +52,7 @@ describe('TunnelOutbox', () => {
     await until(() => outbox.bulkBytes >= BULK_CAP_BYTES)
     await Bun.sleep(30)
     channels.receive({ type: 'ws.open', channel: 1, path: '/ws/term/t', headers: [] })
-    channels.receive({ type: 'ws.data', channel: 1, data: JSON.stringify({ type: 'auth', key: 'k' }) })
+    channels.receive({ type: 'ws.data', channel: 1, data: JSON.stringify({ type: 'auth', key: 'k', device: 'p' }) })
     await Bun.sleep(1)
     expect(socket.written).toEqual([])
     expect(outbox.bulkBytes).toBeLessThan(BULK_CAP_BYTES + 2 * MAX_BODY_CHUNK_BYTES)

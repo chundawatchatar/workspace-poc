@@ -193,15 +193,17 @@ again); Revoke takes one away and closes what it has open. Every browser must
 be approved once, and an older page, which sends no proof, is refused.
 
 Anything else gets the same refusal as a wrong key. Access keys from connect
-links keep working, and a request that carries a key is judged by the key
-alone. A `linked-account.json` saved before this (with no user id or public
+links need the same approval: through the tunnel a request that carries a key
+is judged by the key (a ticket never rescues a wrong one), then by a fresh
+proof from an approved browser. A connect link opened in a browser that was
+never approved stops at the same fingerprint hint until you approve it here. A `linked-account.json` saved before this (with no user id or public
 keys) still loads and shows the account, but accepts no ticket: unlink and link
 again with a new enrollment key. The server and the host must be updated
 together for this, since `enroll.redeemed` now carries the account's id and the
 public keys.
 
 "Unlink" deletes that file and the approved devices, so this machine forgets
-the account and its browsers, and closes the sockets the account has open. It is local only: the server still lists the
+the account and its browsers (connect links opened in them must be approved again), and closes the sockets the account has open. It is local only: the server still lists the
 machine until you unlink it from the client's home page, but the machine
 refuses that account's tickets from then on.
 

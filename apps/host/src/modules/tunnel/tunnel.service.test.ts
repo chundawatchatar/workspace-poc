@@ -109,7 +109,7 @@ function start(options: Partial<TunnelClientOptions> = {}) {
   const client = new TunnelClient({
     url,
     secret,
-    authorize: () => ({ kind: 'key', keyId: 'k1', name: 'default' }),
+    authorize: () => ({ kind: 'key', keyId: 'k1', name: 'default', deviceId: 'd1' }),
     handle: async () => new Response('ok'),
     openSocket: () => ({ code: 1008, reason: 'no sockets here' }),
     timings,
@@ -327,7 +327,7 @@ describe('TunnelClient', () => {
     first.ws.send('not a frame')
     send(first, { type: 'ws.data', channel: 1, data: 'x' })
     send(first, { type: 'ws.open', channel: 3, path: '/ws/events', headers: [] })
-    send(first, { type: 'ws.data', channel: 3, data: JSON.stringify({ type: 'auth', key: 'k' }) })
+    send(first, { type: 'ws.data', channel: 3, data: JSON.stringify({ type: 'auth', key: 'k', device: 'p' }) })
     send(first, { type: 'http.request', id: 1, method: 'GET', path: '/api/slow', headers: [] })
     await until(() => first.frames.some((f) => f.type === 'http.body'))
     first.ws.close(1000)

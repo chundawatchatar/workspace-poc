@@ -4,7 +4,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { websocket } from '@hono/bun'
 import {
+  ACCESS_KEY_HEADER,
   type AppState,
+  DEVICE_PROOF_HEADER,
   decodeFrame,
   encodeFrame,
   type HostInfo,
@@ -22,6 +24,7 @@ import { AccessKeyRepository } from './modules/access/access.repository'
 import { AccessKeys, machineIdFromSecret } from './modules/access/access.service'
 import { EventHub } from './modules/events/events.service'
 import type { LayoutRepository } from './modules/layout/layout.repository'
+import { testDevice } from './modules/remote-access/device-proof.testing'
 import { DevicesRepository } from './modules/remote-access/devices.repository'
 import { LinkedAccountRepository } from './modules/remote-access/linked-account.repository'
 import { testRelayKey } from './modules/remote-access/relay-ticket.testing'
@@ -89,6 +92,8 @@ export let keys: AccessKeys
 export let key: string
 export let remoteAccess: RemoteAccessService
 export let settingsFile: string
+/** A browser approved on the machine before it starts, which signs the proofs that go with `key`. */
+export let device: Awaited<ReturnType<typeof testDevice>>
 
 /** Starts the fake server, the host's app and its remote access before each test, and stops them after. */
 export function useTunnelHarness() {
@@ -96,7 +101,8 @@ export function useTunnelHarness() {
   afterEach(tearDown)
 }
 
-function setUp() {
+async function setUp() {
+  device = await testDevice()
   conns = []
   clients = []
   dir = mkdtempSync(join(tmpdir(), 'orch-access-'))
@@ -146,6 +152,8 @@ function setUp() {
   const keysFile = join(dir, 'access-keys.json')
   settingsFile = join(dir, 'remote-access.json')
   writeFileSync(secretFile, secret)
+  const approved = [{ id: device.id, publicKey: device.publicKey, approvedAt: new Date().toISOString() }]
+  new DevicesRepository(join(dir, 'devices.json')).save(approved)
   key = new AccessKeys(new AccessKeyRepository(keysFile)).create('default')
   writeFileSync(
     settingsFile,
@@ -216,8 +224,23 @@ export async function welcomed(): Promise<Conn> {
 export const dataOn = (conn: Conn, channel: number) =>
   conn.frames.flatMap((f) => (f.type === 'ws.data' && f.channel === channel ? [f.data] : []))
 
-/** The auth message for `presented`. */
-export const auth = (presented: string) => JSON.stringify({ type: 'auth', key: presented })
+/** The auth message for key `presented` on a socket at `path`, with a fresh proof from the approved `device`. */
+export const auth = async (presented: string, path: string) =>
+  JSON.stringify({ type: 'auth', key: presented, device: await device.socket(machineIdFromSecret(secret), path) })
+
+/** The headers of a tunneled request with key `presented`, and a fresh proof from the approved `device`. */
+export async function keyHeaders(
+  presented: string,
+  method: string,
+  path: string,
+  body = '',
+): Promise<[string, string][]> {
+  const proof = await device.proof({ machineId: machineIdFromSecret(secret), method, path, body })
+  return [
+    [ACCESS_KEY_HEADER, presented],
+    [DEVICE_PROOF_HEADER, proof],
+  ]
+}
 
 /** Opens a local socket and collects its text messages. */
 export async function openLocal(path: string) {

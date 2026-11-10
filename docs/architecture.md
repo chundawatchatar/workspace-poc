@@ -60,10 +60,11 @@ interface TerminalUIProps {
 ```
 
 The remote transport sends requests to `/m/<machineId>/api/*` and sockets to `/m/<machineId>/ws/*` on the server.
-The machine's access key goes in the `x-orch-access-key` header, or in an `{ type: 'auth', key }` first message on a
-socket, never in a URL. Without a key, a signed-in account sends a relay ticket in the `x-orch-relay-ticket` header,
-or as a socket subprotocol, together with a fresh device proof from this browser's key: in the
-`x-orch-device-proof` header, or in the first message, `{ type: 'auth', account: true, device }`. These pieces live
+The machine's access key goes in the `x-orch-access-key` header, or in an `{ type: 'auth', key, device }` first
+message on a socket, never in a URL. Without a key, a signed-in account sends a relay ticket in the
+`x-orch-relay-ticket` header, or as a socket subprotocol, with the first message `{ type: 'auth', account: true,
+device }`. Either way every request and socket carries a fresh device proof from this browser's key: in the
+`x-orch-device-proof` header, or as `device` in the first message. These pieces live
 in `packages/shared/src/contracts/remote.ts`, `relayTicket.ts` and `deviceProof.ts`.
 
 `apps/web` becomes a thin shell that renders `terminal-ui` with the local transport. `apps/client` renders it with
@@ -246,10 +247,10 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   (`packages/terminal-ui/src/lib/deviceProof.ts`): a compact JWS (`ES256`, `typ: orch-device`) whose header holds
   the public JWK and whose payload names the machine (`aud`), `iat`, a random 16-byte `nonce`, the method (`WS` for
   a socket), the host path with its query string and the body's SHA-256. The host
-  (`modules/remote-access/device-proof.service.ts`) accepts an account request only with a valid ticket, then a
-  valid proof whose `iat` is within 5 minutes of its clock and whose nonce it hasn't seen (kept 10 minutes), from a
+  (`modules/remote-access/tunnel-access.service.ts`, with `device-proof.service.ts`) accepts an account request
+  only with a valid ticket, and a connect link's request only with a valid access key, then a valid proof whose `iat` is within 5 minutes of its clock and whose nonce it hasn't seen (kept 10 minutes), from a
   device it approved. The device id is the SHA-256 of the canonical JWK, and its fingerprint (`ABCD-EFGH-JKMN-PQRS`,
-  `deviceFingerprint` in `packages/shared`) is shown by the browser and by the machine. A valid ticket and proof
+  `deviceFingerprint` in `packages/shared`) is shown by the browser and by the machine. A valid ticket or key and proof
   from any other device get a 403 `device_not_approved` or a 4403 close, with no `auth.failed`, and put the device
   in a pending list in memory (at most 5, newest kept, 15 minutes each). The owner approves it in the machine's
   local Remote access setting, which the tunnel can't reach (`routes.remoteAccess.devices`, `approveDevice`,
@@ -258,7 +259,11 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   `fingerprintKey` (no case, dashes or whitespace) against the pending list, approves the one match, answers 404 when
   none is waiting and 409 when more than one matches; `host:remote devices approve` sends the typed text the same
   way. Approved devices are saved in `apps/host/.data/devices.json` as
-  `{ id, publicKey, approvedAt }`. Revoking one closes its sockets, and unlinking the account forgets every device.
+  `{ id, publicKey, approvedAt }`. Revoking one closes its sockets, those opened with a key and through the account, and unlinking the account
+  forgets every device. The key is checked first and alone decides which credential is used, so a wrong key is
+  refused (with `auth.failed`, which counts against the server's bad-key limit) without its proof being read: a
+  guessed key never fills the pending list or spends a nonce, and a ticket never rescues a bad key. A key socket
+  spends no ticket, so it isn't single-use; its proof's spent nonce bounds replay, as for HTTP.
   A fresh proof per request, rather than one bound to the ticket, is deliberate: HTTP tickets are reused for up to a
   minute and the server mints them, so it could reuse a `jti`; the browser's `iat` plus the host's spent nonces
   bound replay without trusting the server's clock or ids. Knowing a machine's id puts nothing on an account: a
@@ -272,8 +277,10 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
     tell browsers apart and dismiss strangers.
   - Without end-to-end encryption (REM-2), a compromised server can read, and inject into, a session an approved
     browser opens. It just can't open one by itself.
-  - Access keys from connect links still pass through the server in a header, so a compromised server could capture
-    and reuse one. Device approval doesn't cover key access.
+  - Access keys from connect links still pass through the server, in a header or the first socket message, so a
+    compromised server can capture one. A captured key alone no longer opens the machine through the tunnel, since
+    it needs a fresh proof from an approved device, but with a key the server can still push its own device into
+    the pending list, as with tickets. Local access (`apps/web`) checks no key and is unchanged.
   - A non-exportable key stops a script from copying the key out of the browser. It doesn't stop script on the
     client origin from asking the browser to sign while the page is open.
   - A browser whose clock is more than 5 minutes off is refused, and its page can't tell that apart from a bad
@@ -406,8 +413,8 @@ That only stays easy if every remote access job keeps these rules:
   header names, like the hop-by-hop list. So is dropping `Cookie` from every relayed request and socket upgrade, and
   `Set-Cookie` from every machine response: machines share the server's origin, where the account session cookie
   lives, so they never see or set account cookies. Cookie values are never read.
-- **Only the host checks access.** The access key travels in a header and the first socket message, and the server
-  never checks it.
+- **Only the host checks access.** The access key and the device proof travel in headers and the first socket
+  message, and the server never checks them.
 - **The host reports problems the server must react to as control frames.** Rate-limiting bad access keys must not
   work by the server reading a 401. The host sends a control frame such as `auth.failed` for the request, which keeps
   working once the request itself is encrypted.

@@ -29,20 +29,20 @@ export interface PresentedProof {
 }
 
 /**
- * What a request or channel presents: its access key, or a relay ticket the
- * server signed for an account plus a device proof. A caller sets a key or a
- * ticket, and a key always wins. `once` spends the ticket, so it can't open
- * another socket.
+ * What a request or channel presents: its access key or a relay ticket the
+ * server signed for an account, plus a device proof. A caller sets a key or a
+ * ticket, and a key always decides which is used. `once` spends the ticket, so
+ * it can't open another socket.
  */
 export interface Credentials {
   key: string | null
   ticket: string | null
-  /** Null means no proof came with the ticket. */
+  /** Null means no proof came with the key or ticket. */
   device?: PresentedProof | null
   once?: boolean
 }
 
-/** What `Authorize` answers for a valid ticket and proof from a device the machine hasn't approved. */
+/** What `Authorize` answers for a valid key or ticket and proof from a device the machine hasn't approved. */
 export const DEVICE_NOT_APPROVED = 'device_not_approved'
 
 /** Who a request or channel is, `DEVICE_NOT_APPROVED`, or null for refused. */
@@ -50,9 +50,9 @@ export type Authorization = Principal | typeof DEVICE_NOT_APPROVED | null
 
 /**
  * Decides whether a request or channel may in. In the host this is
- * `RemoteAccessService`'s, which checks a key with `AccessKeys.authorize`, and
- * a ticket against the linked account and the server's public keys together
- * with a proof from an approved device.
+ * `RemoteAccessService`'s, which checks a key with `AccessKeys.authorize`, or
+ * a ticket against the linked account and the server's public keys, either
+ * one together with a proof from an approved device.
  */
 export type Authorize = (credentials: Credentials) => Authorization
 
@@ -68,20 +68,17 @@ function singleHeader(headers: [string, string][], name: string): string | null 
 }
 
 /**
- * What an `http.request` presents. With any `ACCESS_KEY_HEADER` the key alone
- * decides, so a missing or wrong key is never rescued by a ticket; without
- * one, its one `RELAY_TICKET_HEADER` does, with its one `DEVICE_PROOF_HEADER`
- * for the frame's method, path and body.
+ * What an `http.request` presents, with its one `DEVICE_PROOF_HEADER` for the
+ * frame's method, path and body. With any `ACCESS_KEY_HEADER` the key is the
+ * credential, so a missing or wrong key is never rescued by a ticket; without
+ * one, its one `RELAY_TICKET_HEADER` is.
  */
 export function requestCredentials({ headers, method, path, body }: HttpRequestFrame): Credentials {
-  const hasKey = headers.some(([name]) => name.toLowerCase() === ACCESS_KEY_HEADER)
-  if (hasKey) return { key: accessKeyOf(headers), ticket: null }
   const proof = singleHeader(headers, DEVICE_PROOF_HEADER)
-  return {
-    key: null,
-    ticket: singleHeader(headers, RELAY_TICKET_HEADER),
-    device: proof ? { proof, method, path, bodySha256: bodySha256(body) } : null,
-  }
+  const device = proof ? { proof, method, path, bodySha256: bodySha256(body) } : null
+  const hasKey = headers.some(([name]) => name.toLowerCase() === ACCESS_KEY_HEADER)
+  if (hasKey) return { key: accessKeyOf(headers), ticket: null, device }
+  return { key: null, ticket: singleHeader(headers, RELAY_TICKET_HEADER), device }
 }
 
 /**
