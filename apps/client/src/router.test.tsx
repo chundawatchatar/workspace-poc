@@ -8,7 +8,7 @@ import { HttpResponse, http, ws } from 'msw'
 import type { ReactNode } from 'react'
 import { CheckInbox } from './components/auth/CheckInbox'
 import { signInWithEmail, signOut } from './lib/auth'
-import { deviceKeyStores, indexedDbKeyStore } from './lib/deviceKey'
+import { deviceKeyStores, indexedDbKeyStore, loadDeviceKey } from './lib/deviceKey'
 import { acceptEmailLinkToken, type EmailLinkPage, takeEmailLinkToken } from './lib/emailLink'
 import { saveMachine } from './lib/machines'
 import { authSession, authUser } from './test/betterAuth'
@@ -31,6 +31,7 @@ afterEach(() => {
 
 beforeEach(() => {
   signedIn = true
+  deviceKeyStores.default = memoryKeyStore().store
   saveMachine({ id: 'saved-machine', name: 'Laptop', key: 'k1' })
   server.use(
     http.get('*/api/auth/get-session', () =>
@@ -66,9 +67,14 @@ function appRouter(path: string) {
   return router
 }
 
-/** Accepts the machine page's event socket and never answers, so the page stays connecting. */
-function quietMachine() {
-  server.use(ws.link(`*/m/:machineId${routes.sockets.events.path}`).addEventListener('connection', () => {}))
+/**
+ * Accepts the machine page's event socket and never answers, so the page stays connecting. Resolves once the socket
+ * connects, which waits for the device key and proof, so a test can end without leaving one to open after it.
+ */
+function quietMachine(): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<void>()
+  server.use(ws.link(`*/m/:machineId${routes.sockets.events.path}`).addEventListener('connection', () => resolve()))
+  return promise
 }
 
 /** Loads `path` in the app's router, renders it, and returns the router. */
@@ -87,10 +93,11 @@ async function land(path: string) {
 
 describe('client routes', () => {
   test('unknown paths show not found, under a machine inside its page', async () => {
-    quietMachine()
+    const connected = quietMachine()
     await show('/m/saved-machine/w/ws1/unknown')
     expect(await screen.findByText('Page not found.')).toBeInTheDocument()
     expect(screen.getByText('Laptop')).toBeInTheDocument()
+    await connected
   })
 
   test('an unknown path outside a machine shows not found', async () => {
@@ -104,10 +111,32 @@ describe('client routes', () => {
     expect(screen.queryByText('Page not found.')).not.toBeInTheDocument()
     cleanup()
 
-    quietMachine()
+    const connected = quietMachine()
     await show('/m/saved-machine/w/ws1')
     expect((await screen.findAllByText('Connecting to the host…')).length).toBeGreaterThan(0)
     expect(screen.queryByText('Page not found.')).not.toBeInTheDocument()
+    await connected
+  })
+
+  test('a machine saved from a connect link sends its key with a device proof, and an unapproved browser sees its fingerprint', async () => {
+    const firstMessages: string[] = []
+    server.use(
+      ws.link(`*/m/saved-machine${routes.sockets.events.path}`).addEventListener('connection', ({ client }) =>
+        client.addEventListener(
+          'message',
+          (event) => {
+            firstMessages.push(String(event.data))
+            client.close(4403, 'device not approved')
+          },
+          { once: true },
+        ),
+      ),
+    )
+    const { fingerprint } = await loadDeviceKey(deviceKeyStores.default)
+    await show('/m/saved-machine')
+    await waitFor(() => expect(firstMessages.length).toBeGreaterThan(0))
+    expect(JSON.parse(firstMessages[0] ?? '')).toEqual({ type: 'auth', key: 'k1', device: expect.any(String) })
+    expect((await screen.findAllByText(fingerprint)).length).toBeGreaterThan(0)
   })
 
   test('a machine with no key here opens through the account when listed, and is not linked otherwise', async () => {
@@ -128,7 +157,6 @@ describe('client routes', () => {
           client.addEventListener('message', (event) => firstMessages.push(String(event.data)), { once: true }),
         ),
     )
-    deviceKeyStores.default = memoryKeyStore().store
     await show('/m/account-machine')
     expect((await screen.findAllByText('Desktop')).length).toBeGreaterThan(0)
     await waitFor(() => expect(firstMessages).toHaveLength(1))
@@ -187,12 +215,13 @@ describe('session guard', () => {
     signedIn = false
     const router = await show('/auth/sign-in?redirect=%2Fm%2Fsaved-machine')
     expect(router.state.location.pathname).toBe('/auth/sign-in')
-    quietMachine()
+    const connected = quietMachine()
     await act(async () => {
       expect(await signInWithEmail(router.options.context.queryClient, user.email, 'pw-old')).toBeNull()
     })
     // The sign-in hands the cache to the new user, which reruns the guards.
     await waitFor(() => expect(router.state.location.pathname).toBe('/m/saved-machine'))
+    await connected
 
     for (const unsafe of ['https://evil.example', '//evil.example', '/\\evil.example', '/auth/sign-up']) {
       expect((await land(`/auth/sign-in?redirect=${encodeURIComponent(unsafe)}`)).href).toBe('/')

@@ -35,8 +35,8 @@ beforeEach(() => {
 
 afterEach(() => warn.mockRestore())
 
-/** The auth message for `key`. */
-const auth = (key: string) => JSON.stringify({ type: 'auth', key })
+/** The auth message for `key`, with the device proof `device`. */
+const auth = (key: string, device = 'p-good') => JSON.stringify({ type: 'auth', key, device })
 
 /** The auth message that asks to be judged by the ticket the channel opened with, and the device proof `device`. */
 const accountAuth = (device = 'p-good') => JSON.stringify({ type: 'auth', account: true, device })
@@ -52,17 +52,19 @@ let asked: Credentials[] = []
 
 /**
  * Accepts the keys `good` (key id `k1`) and `other` (key id `k2`), and the
- * ticket `t-good` with the proof `p-good` as the account `u1`. The proof
- * `p-new` stands for a device the machine hasn't approved.
+ * ticket `t-good` as the account `u1`, each with the proof `p-good` of device
+ * `d1`. The proof `p-new` stands for a device the machine hasn't approved.
  */
 const authorize: Authorize = (credentials) => {
   asked.push(credentials)
   const { key, ticket, device } = credentials
-  if (key === 'good') return { kind: 'key', keyId: 'k1', name: 'default' }
-  if (key === 'other') return { kind: 'key', keyId: 'k2', name: 'second' }
-  if (key !== null || ticket !== 't-good') return null
+  const known = key === 'good' || key === 'other' || (key === null && ticket === 't-good')
+  if (!known) return null
   if (device?.proof === 'p-new') return DEVICE_NOT_APPROVED
-  return device?.proof === 'p-good' ? { kind: 'account', accountId: 'u1', deviceId: 'd1' } : null
+  if (device?.proof !== 'p-good') return null
+  if (key === 'good') return { kind: 'key', keyId: 'k1', name: 'default', deviceId: 'd1' }
+  if (key === 'other') return { kind: 'key', keyId: 'k2', name: 'second', deviceId: 'd1' }
+  return { kind: 'account', accountId: 'u1', deviceId: 'd1' }
 }
 
 /**
@@ -129,7 +131,7 @@ describe('TunnelChannels', () => {
   test('opens with the principal of a valid key, and a bad path after it gets 1008 without auth.failed', () => {
     const { channels, openChannel, of } = setup()
     const run = openChannel(1, 'other')
-    expect(run.principal).toEqual({ kind: 'key', keyId: 'k2', name: 'second' })
+    expect(run.principal).toEqual({ kind: 'key', keyId: 'k2', name: 'second', deviceId: 'd1' })
     expect(run.messages).toEqual([])
 
     channels.receive({ type: 'ws.open', channel: 2, path: '/ws/nope', headers: [] })
@@ -159,11 +161,11 @@ describe('TunnelChannels', () => {
     ])
     expect(of('ws.close').map((f) => f.code)).toEqual([CLOSE_ACCESS_DENIED, CLOSE_ACCESS_DENIED])
 
-    // A key auth message on a socket that offered a good ticket is judged by the key.
+    // A key auth message on a socket that offered a good ticket is judged by the key, with its proof and no `once`.
     channels.receive({ type: 'ws.open', channel: 4, path: '/ws/events', headers: withTicket('t-good') })
     channels.receive({ type: 'ws.data', channel: 4, data: auth('wrong') })
     expect(opened).toHaveLength(1)
-    expect(asked.at(-1)).toEqual({ key: 'wrong', ticket: null })
+    expect(asked.at(-1)).toEqual({ key: 'wrong', ticket: null, device })
     expect(of('auth.failed').at(-1)).toEqual({ type: 'auth.failed', channel: 4 })
 
     // A device waiting for approval gets its own close and no `auth.failed`; an account message without a proof,
@@ -177,6 +179,17 @@ describe('TunnelChannels', () => {
       { type: 'ws.close', channel: 5, code: CLOSE_DEVICE_NOT_APPROVED, reason: 'device not approved' },
     ])
     expect(of('auth.failed').at(-1)).toEqual({ type: 'auth.failed', channel: 6 })
+
+    // The same for a key: a waiting device gets its own close, and a key message without a proof is refused.
+    channels.receive({ type: 'ws.open', channel: 7, path: '/ws/events', headers: [] })
+    channels.receive({ type: 'ws.data', channel: 7, data: auth('good', 'p-new') })
+    channels.receive({ type: 'ws.open', channel: 8, path: '/ws/events', headers: [] })
+    channels.receive({ type: 'ws.data', channel: 8, data: JSON.stringify({ type: 'auth', key: 'good' }) })
+    expect(opened).toHaveLength(1)
+    expect(frames.filter((f) => 'channel' in f && f.channel === 7)).toEqual([
+      { type: 'ws.close', channel: 7, code: CLOSE_DEVICE_NOT_APPROVED, reason: 'device not approved' },
+    ])
+    expect(of('auth.failed').at(-1)).toEqual({ type: 'auth.failed', channel: 8 })
     channels.close()
   })
 

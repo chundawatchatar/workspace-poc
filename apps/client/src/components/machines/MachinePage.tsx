@@ -7,7 +7,7 @@ import { type ReactNode, useCallback, useMemo } from 'react'
 import { machinesQuery, relayTicketFor } from '../../lib/accountMachines'
 import { sessionQuery } from '../../lib/auth'
 import { loadDeviceKey } from '../../lib/deviceKey'
-import { machinePath, useMachines } from '../../lib/machines'
+import { machinePath, type SavedMachine, useMachines } from '../../lib/machines'
 import { AccountMenu } from '../account/AccountMenu'
 import { Centered, linkClass } from '../Centered'
 
@@ -16,15 +16,21 @@ function serverUrl(): string {
   return import.meta.env.VITE_SERVER_URL || location.origin
 }
 
+/** This browser's device key, and the fingerprint the user approves on a machine. */
+interface DeviceKey {
+  signer: DeviceSigner
+  fingerprint: string
+}
+
 /**
- * The machine a page opens: with `key` through its access key, without it through the signed-in account's tickets
- * and this browser's `device` key, whose `fingerprint` the user approves on the machine.
+ * The machine a page opens: with `key` through its access key, without it through the signed-in account's tickets,
+ * either way with this browser's `device` key, whose `fingerprint` the user approves on the machine.
  */
 interface OpenedMachine {
   id: string
   name: string
   key?: string
-  device?: { signer: DeviceSigner; fingerprint: string }
+  device: DeviceKey
 }
 
 /**
@@ -40,13 +46,13 @@ const deviceKeyQuery = {
 } as const
 
 /**
- * A machine's page, or a note that it isn't linked here. A key saved in this browser wins, so a connect link opens
- * its machine as it always did; otherwise the account opens a machine it lists.
+ * A machine's page, or a note that it isn't linked here. A key saved in this browser from a connect link wins;
+ * otherwise the account opens a machine it lists. Both wait for this browser's device key.
  */
 export function MachinePage({ machineId }: { machineId: string }) {
   const saved = useMachines().find((m) => m.id === machineId)
   const session = useQuery(sessionQuery)
-  if (saved) return <MachineTerminalUI machine={saved} />
+  if (saved) return <SavedMachinePage machine={saved} />
   if (session.isPending) return <Loading />
   const userId = session.data?.id
   if (!userId) return <NotLinked />
@@ -61,20 +67,31 @@ function Loading() {
   )
 }
 
+/** Says this browser could not keep its device key, with a Retry. */
+function DeviceKeyFailed({ retry, pending }: { retry: () => void; pending: boolean }) {
+  return (
+    <Centered>
+      <p role="alert">This browser could not keep a device key, which opening a machine needs.</p>
+      <Button variant="secondary" pending={pending} onClick={retry}>
+        Retry
+      </Button>
+    </Centered>
+  )
+}
+
+/** A machine saved from a connect link, opened with its key once this browser's device key is loaded. */
+function SavedMachinePage({ machine }: { machine: SavedMachine }) {
+  const device = useQuery(deviceKeyQuery)
+  if (device.data) return <MachineTerminalUI machine={{ ...machine, device: device.data }} />
+  if (device.isError) return <DeviceKeyFailed pending={device.isFetching} retry={() => void device.refetch()} />
+  return <Loading />
+}
+
 /** A machine opened through the account, named from the account's list, once this browser's device key is loaded. */
 function AccountMachinePage({ machineId, userId }: { machineId: string; userId: string }) {
   const list = useQuery(machinesQuery(userId))
   const device = useQuery(deviceKeyQuery)
-  if (device.isError) {
-    return (
-      <Centered>
-        <p role="alert">This browser could not keep a device key, which opening a machine through the account needs.</p>
-        <Button variant="secondary" pending={device.isFetching} onClick={() => void device.refetch()}>
-          Retry
-        </Button>
-      </Centered>
-    )
-  }
+  if (device.isError) return <DeviceKeyFailed pending={device.isFetching} retry={() => void device.refetch()} />
   // Once listed, a failed refetch keeps the page open rather than tearing down its terminals.
   if (list.data && device.data) {
     const listed = list.data.machines.find((m) => m.machineId === machineId)
@@ -140,24 +157,24 @@ function unapprovedHint(fingerprint: string): ReactNode {
 
 function MachineTerminalUI({ machine }: { machine: OpenedMachine }) {
   const { id, name, key, device } = machine
-  const signer = device?.signer
-  const fingerprint = device?.fingerprint
+  const { signer, fingerprint } = device
   const { workspaceId } = useParams({ strict: false })
   const routerNavigate = useNavigate()
 
   // One transport per machine and key, so moving between workspaces keeps the connection. Without a key, the
-  // account opens the machine with relay tickets and this browser's device key.
+  // account opens the machine with relay tickets; either way every request carries this browser's device proof.
   const transport = useMemo(
     () =>
       createRemoteTransport({
         serverUrl: serverUrl(),
         machineId: id,
-        ...(key ? { accessKey: key } : { relayTicket: () => relayTicketFor(id), device: signer }),
+        device: signer,
+        ...(key ? { accessKey: key } : { relayTicket: () => relayTicketFor(id) }),
       }),
     [id, key, signer],
   )
   const deniedHint: ReactNode = key ? keyDeniedHint : accountDeniedHint
-  const unapproved = useMemo(() => (fingerprint ? unapprovedHint(fingerprint) : undefined), [fingerprint])
+  const unapproved = useMemo(() => unapprovedHint(fingerprint), [fingerprint])
   const info = useMemo(() => ({ id, name }), [id, name])
   const navigate = useCallback<TerminalUIProps['navigate']>(
     ({ workspaceId }, options) =>

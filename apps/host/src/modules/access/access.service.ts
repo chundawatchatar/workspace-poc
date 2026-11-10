@@ -103,7 +103,7 @@ export class AccessKeys {
    * time, even after a match. A match records `lastUsedAt`, written to disk at
    * most once per `persistEveryMs` and on `flush()`.
    */
-  authorize(key: string | null): Extract<Principal, { kind: 'key' }> | null {
+  authorize(key: string | null): Omit<Extract<Principal, { kind: 'key' }>, 'deviceId'> | null {
     if (!key || key.length !== KEY_LENGTH) return null
     const digest = sha256(key)
     let match: AccessKey | null = null

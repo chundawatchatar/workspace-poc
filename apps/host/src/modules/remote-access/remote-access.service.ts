@@ -27,18 +27,12 @@ import {
   type TunnelClientOptions,
 } from '../tunnel/tunnel.service'
 import type { OpenSocket } from '../tunnel/tunnel-channels.service'
-import {
-  type Authorization,
-  type Credentials,
-  DEVICE_NOT_APPROVED,
-  type TunnelHandler,
-} from '../tunnel/tunnel-http.service'
-import { SpentNonces, verifyDeviceProof } from './device-proof.service'
+import type { Authorization, Credentials, TunnelHandler } from '../tunnel/tunnel-http.service'
 import type { DevicesRepository } from './devices.repository'
 import { DevicesService } from './devices.service'
 import type { LinkedAccountRepository, SavedLinkedAccount } from './linked-account.repository'
-import { SpentTickets, verifyRelayTicket } from './relay-ticket.service'
 import type { RemoteAccessRepository, RemoteAccessSettings } from './remote-access.repository'
+import { TunnelAccess } from './tunnel-access.service'
 
 /**
  * The server address used when neither `SERVER_URL` nor a saved one is set.
@@ -172,17 +166,21 @@ export class RemoteAccessService {
   private tunnel: Tunnel | null = null
   /** The tunnel URL `tunnel` dials, so an update to the same address keeps it. */
   private tunnelUrl: string | null = null
-  /** The relay tickets sockets have opened with, so each opens one socket. */
-  private readonly spentTickets = new SpentTickets()
-  /** The device proof nonces already used, so each proof admits one request or socket. */
-  private readonly spentNonces = new SpentNonces()
-  /** The browsers approved for the linked account, and those waiting. */
+  /** The browsers approved on this machine, and those waiting. */
   private readonly devices: DevicesService
+  private readonly access: TunnelAccess
 
   constructor(private readonly options: RemoteAccessServiceOptions) {
     this.env = { SERVER_URL: options.env?.SERVER_URL || undefined, CLIENT_URL: options.env?.CLIENT_URL || undefined }
     this.defaultServerUrl = options.defaultServerUrl ?? DEFAULT_SERVER_URL
     this.devices = new DevicesService(options.devices)
+    this.access = new TunnelAccess({
+      devices: this.devices,
+      keys: () => this.keys,
+      linked: () => this.linked,
+      machineId: () => this.machineId(),
+      serverUrl: () => this.serverUrl(),
+    })
   }
 
   /**
@@ -348,48 +346,18 @@ export class RemoteAccessService {
 
   /**
    * Dismisses a waiting browser, or revokes an approved one and closes the
-   * sockets it opened. An unknown id changes nothing.
+   * sockets it opened, with a key or through the account. An unknown id changes nothing.
    */
   removeDevice(id: string): DevicesResponse {
     if (this.devices.remove(id) === 'approved') {
-      this.tunnel?.closeChannels(
-        (principal) => principal.kind === 'account' && principal.deviceId === id,
-        'device revoked',
-      )
+      this.tunnel?.closeChannels((principal) => principal.deviceId === id, 'device revoked')
     }
     return this.devices.list()
   }
 
-  /**
-   * Decides a tunneled request or socket. A key is judged by the access keys
-   * alone. A relay ticket opens the machine as the linked account only when
-   * it is signed with one of the server's saved public keys, names this
-   * machine and the linked account, hasn't expired, and comes through the
-   * server address the account was linked through, and only with a device
-   * proof for this request whose nonce is unspent, from a device approved on
-   * this machine. A valid ticket and proof from any other device records it
-   * as waiting and answers `DEVICE_NOT_APPROVED`. With `once`, as for a
-   * socket, a ticket that already opened one is refused. A linked file
-   * without `accountId` or `relayKeys` accepts no ticket.
-   */
-  authorize({ key, ticket, device = null, once = false }: Credentials): Authorization {
-    if (key !== null) return this.keys?.authorize(key) ?? null
-    const linked = this.linked
-    const machineId = this.machineId()
-    if (!ticket || !device || !linked?.accountId || !linked.relayKeys || !machineId) return null
-    if (linked.serverUrl !== this.serverUrl()) return null
-    const now = Date.now()
-    const payload = verifyRelayTicket(ticket, { keys: linked.relayKeys, machineId, accountId: linked.accountId, now })
-    if (!payload) return null
-    const { proof, ...request } = device
-    const verified = verifyDeviceProof(proof, { machineId, ...request, now })
-    if (!verified || !this.spentNonces.spend(verified.nonce, now)) return null
-    if (once && !this.spentTickets.spend(payload, now)) return null
-    if (!this.devices.isApproved(verified.deviceId)) {
-      this.devices.recordPending(verified.deviceId, verified.publicKey)
-      return DEVICE_NOT_APPROVED
-    }
-    return { kind: 'account', accountId: payload.sub, deviceId: verified.deviceId }
+  /** Decides a tunneled request or socket; see `TunnelAccess.authorize`. */
+  authorize(credentials: Credentials): Authorization {
+    return this.access.authorize(credentials)
   }
 
   /**

@@ -1,10 +1,10 @@
 /**
  * Who a tunneled request or channel was authorized as: the access key it
  * presented, or the account this machine is linked to, as the server said,
- * through `deviceId`, a browser approved on this machine.
+ * either one through `deviceId`, a browser approved on this machine.
  */
 export type Principal =
-  | { kind: 'key'; keyId: string; name: string }
+  | { kind: 'key'; keyId: string; name: string; deviceId: string }
   | { kind: 'account'; accountId: string; deviceId: string }
 
 // A symbol, so no header or env a caller controls can claim to be tunneled.

@@ -87,8 +87,8 @@ interface Channel {
  * No handler runs before the channel's first message, which must be a
  * `socketAuthMessage` that `authorize` accepts: its key, or with
  * `account: true` the relay ticket the socket offered as a subprotocol, which
- * it spends, with the message's `device` proof for `'WS'` and the channel's
- * path. A device that isn't approved gets a `CLOSE_DEVICE_NOT_APPROVED` close
+ * it spends, either one with the message's `device` proof for `'WS'` and the
+ * channel's path. A device that isn't approved gets a `CLOSE_DEVICE_NOT_APPROVED` close
  * and no `auth.failed`. Anything else, or nothing within the auth timeout,
  * gets `auth.failed` and a `CLOSE_ACCESS_DENIED` close.
  */
@@ -176,21 +176,18 @@ export class TunnelChannels {
     clearTimeout(channel.authTimer)
     channel.authTimer = undefined
     const message = parseMessage(socketAuthMessage, data)
+    const device = message && {
+      proof: message.device,
+      method: DEVICE_PROOF_SOCKET_METHOD,
+      path: channel.path,
+      bodySha256: EMPTY_SHA256,
+    }
+    // A key socket spends no ticket, so it isn't `once`; its proof's nonce bounds a replay.
     const principal = !message
       ? null
       : 'key' in message
-        ? this.authorize({ key: message.key, ticket: null })
-        : this.authorize({
-            key: null,
-            ticket: channel.ticket,
-            device: {
-              proof: message.device,
-              method: DEVICE_PROOF_SOCKET_METHOD,
-              path: channel.path,
-              bodySha256: EMPTY_SHA256,
-            },
-            once: true,
-          })
+        ? this.authorize({ key: message.key, ticket: null, device })
+        : this.authorize({ key: null, ticket: channel.ticket, device, once: true })
     if (!principal) {
       this.deny(channel, 'access denied')
       return

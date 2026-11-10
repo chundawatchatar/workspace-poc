@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  ACCESS_KEY_HEADER,
   type AppState,
   buildSocketUrl,
   CLOSE_ACCESS_DENIED,
@@ -23,10 +22,12 @@ import {
   dir,
   hub,
   key,
+  keyHeaders,
   keys,
   local,
   OUTPUT,
   openLocal,
+  remoteAccess,
   secret,
   send,
   server,
@@ -50,7 +51,7 @@ describe('tunneled sockets', () => {
     const path = buildSocketUrl(routes.sockets.events, {})
     for (const channel of [1, 2]) {
       send(conn, { type: 'ws.open', channel, path, headers: [['origin', 'https://orch.example']] })
-      send(conn, { type: 'ws.data', channel, data: auth(key) })
+      send(conn, { type: 'ws.data', channel, data: await auth(key, path) })
     }
     const near = await openLocal(path)
     await until(() => dataOn(conn, 1).length > 0 && near.messages.length > 0)
@@ -59,7 +60,7 @@ describe('tunneled sockets', () => {
     expect(withoutId(dataOn(conn, 1)[0])).toEqual(withoutId(near.messages[0]))
 
     const state: AppState = { rev: 2, workspaces: [] }
-    const sent = [auth(key), JSON.stringify({ type: 'state', state })]
+    const sent = [await auth(key, path), JSON.stringify({ type: 'state', state })]
     send(conn, { type: 'ws.data', channel: 1, data: sent[1] ?? '' })
     await until(() => dataOn(conn, 2).length > 1 && near.messages.length > 1)
     expect(JSON.parse(String(dataOn(conn, 2)[1]))).toEqual({ type: 'state', state })
@@ -74,7 +75,7 @@ describe('tunneled sockets', () => {
     const conn = await welcomed()
     const path = buildSocketUrl(routes.sockets.terminal, { id: 't1', cwd: '/tmp/a b', cols: 100, rows: 30 })
     send(conn, { type: 'ws.open', channel: 1, path, headers: [['origin', 'http://localhost:3210']] })
-    send(conn, { type: 'ws.data', channel: 1, data: auth(key) })
+    send(conn, { type: 'ws.data', channel: 1, data: await auth(key, path) })
     await until(() => dataOn(conn, 1).length >= 2)
     const near = await openLocal(path)
     const bad = await fetch(`http://127.0.0.1:${local.port}/ws/term/t1?cols=0`, { headers: { upgrade: 'websocket' } })
@@ -98,7 +99,7 @@ describe('tunneled sockets', () => {
   test('a channel past the rate limit gets one ws.close 1008 and its terminal client is detached', async () => {
     const conn = await welcomed()
     send(conn, { type: 'ws.open', channel: 1, path: '/ws/term/t1', headers: [] })
-    send(conn, { type: 'ws.data', channel: 1, data: auth(key) })
+    send(conn, { type: 'ws.data', channel: 1, data: await auth(key, '/ws/term/t1') })
     await until(() => stub.attached.size === 1)
     for (let i = 0; i < 1600; i++) send(conn, { type: 'ws.data', channel: 1, data: '{"type":"focus"}' })
     await until(() => conn.frames.some((f) => f.type === 'ws.close'))
@@ -113,7 +114,8 @@ describe('tunneled sockets', () => {
     const conn = await welcomed()
     send(conn, { type: 'ws.open', channel: 1, path: '/ws/term/t1', headers: [] })
     send(conn, { type: 'ws.open', channel: 2, path: routes.sockets.events.path, headers: [] })
-    for (const channel of [1, 2]) send(conn, { type: 'ws.data', channel, data: auth(key) })
+    send(conn, { type: 'ws.data', channel: 1, data: await auth(key, '/ws/term/t1') })
+    send(conn, { type: 'ws.data', channel: 2, data: await auth(key, routes.sockets.events.path) })
     await until(() => stub.attached.size === 1 && dataOn(conn, 2).length > 0)
 
     conn.ws.close(1000)
@@ -132,10 +134,11 @@ describe('tunneled sockets', () => {
     const conn = await welcomed()
     const path = '/ws/term/t1'
     for (const channel of [1, 2, 3]) send(conn, { type: 'ws.open', channel, path, headers: [] })
-    send(conn, { type: 'ws.data', channel: 1, data: auth('x'.repeat(43)) })
-    send(conn, { type: 'ws.data', channel: 2, data: new TextEncoder().encode(auth(key)) })
+    send(conn, { type: 'ws.data', channel: 1, data: await auth('x'.repeat(43), path) })
+    send(conn, { type: 'ws.data', channel: 2, data: new TextEncoder().encode(await auth(key, path)) })
+    const late = await auth(key, path)
     await Bun.sleep(150)
-    send(conn, { type: 'ws.data', channel: 3, data: auth(key) })
+    send(conn, { type: 'ws.data', channel: 3, data: late })
     await until(() => conn.frames.filter((f) => f.type === 'ws.close').length === 3)
     await Bun.sleep(20)
 
@@ -150,14 +153,14 @@ describe('tunneled sockets', () => {
   test('a local rotate closes the old key channels and refuses its requests, the new key works, and a tunneled rotate gets 403', async () => {
     const conn = await welcomed()
     send(conn, { type: 'ws.open', channel: 1, path: '/ws/term/t1', headers: [] })
-    send(conn, { type: 'ws.data', channel: 1, data: auth(key) })
+    send(conn, { type: 'ws.data', channel: 1, data: await auth(key, '/ws/term/t1') })
     await until(() => stub.attached.size === 1)
 
     const rotatePath = routes.access.rotate.path
-    const tunneled = (id: number, presented: string, path: string, method = 'GET') =>
-      send(conn, { type: 'http.request', id, method, path, headers: [[ACCESS_KEY_HEADER, presented]] })
+    const tunneled = async (id: number, presented: string, path: string, method = 'GET') =>
+      send(conn, { type: 'http.request', id, method, path, headers: await keyHeaders(presented, method, path) })
     const status = (id: number) => conn.frames.find((f) => f.type === 'http.response' && f.id === id)
-    tunneled(1, key, rotatePath, 'POST')
+    await tunneled(1, key, rotatePath, 'POST')
     await until(() => status(1) !== undefined)
     expect(status(1)).toMatchObject({ status: 403 })
     expect(keys.authorize(key)).not.toBeNull()
@@ -173,10 +176,10 @@ describe('tunneled sockets', () => {
     ])
     expect(stub.attached.size).toBe(0)
 
-    tunneled(2, key, routes.system.health.path)
-    tunneled(3, rotated.key, routes.system.health.path)
+    await tunneled(2, key, routes.system.health.path)
+    await tunneled(3, rotated.key, routes.system.health.path)
     send(conn, { type: 'ws.open', channel: 2, path: '/ws/term/t1', headers: [] })
-    send(conn, { type: 'ws.data', channel: 2, data: auth(key) })
+    send(conn, { type: 'ws.data', channel: 2, data: await auth(key, '/ws/term/t1') })
     await until(() => status(2) !== undefined && status(3) !== undefined)
     await until(() => conn.frames.some((f) => f.type === 'auth.failed' && f.channel === 2))
     expect(status(2)).toMatchObject({ status: 401 })
@@ -186,33 +189,32 @@ describe('tunneled sockets', () => {
 
   test('the agent reporting channel is out of reach: tunneled and local requests touch no session', async () => {
     const conn = await welcomed()
-    const headers: [string, string][] = [
-      [ACCESS_KEY_HEADER, key],
-      ['authorization', `Bearer ${'a'.repeat(64)}`],
-      ['content-type', 'application/json'],
-    ]
     const event = JSON.stringify({ agent: 'claude', state: 'working', reason: 'tool' })
     const body = new TextEncoder().encode(event)
-    const request = (id: number, path: string) =>
-      ({ type: 'http.request', id, method: 'POST', path, headers, body }) as const
+    const request = async (id: number, path: string) => {
+      const headers: [string, string][] = [
+        ...(await keyHeaders(key, 'POST', path, event)),
+        ['authorization', `Bearer ${'a'.repeat(64)}`],
+        ['content-type', 'application/json'],
+      ]
+      return { type: 'http.request', id, method: 'POST', path, headers, body } as const
+    }
 
     // A path outside `/api/` fails the tunnel's frame schema, so it never leaves the socket. Past that, the
     // request builder refuses it too, which is what a frame that got through would meet.
-    expect(decodeFrame(serverFrame, encodeFrame(request(1, '/v1/state')))).toBeNull()
+    expect(decodeFrame(serverFrame, encodeFrame(await request(1, '/v1/state')))).toBeNull()
     const direct: MachineFrame[] = []
     const http = new TunnelHttp(
       async (incoming, principal) => tunnelApp.fetch(incoming, tunnelEnv(principal)),
-      ({ key: presented }) => keys.authorize(presented),
+      (credentials) => remoteAccess.authorize(credentials),
       (frame) => direct.push(frame),
     )
-    http.request(request(1, '/v1/state'))
+    http.request(await request(1, '/v1/state'))
     await until(() => direct.some((f) => f.type === 'http.end'))
     expect(direct[0]).toMatchObject({ type: 'http.response', status: 400 })
 
     const relayed = ['/api/v1/state', '/api/agent/state']
-    relayed.forEach((path, index) => {
-      send(conn, request(index + 2, path))
-    })
+    for (const [index, path] of relayed.entries()) send(conn, await request(index + 2, path))
     const response = (id: number) => conn.frames.find((f) => f.type === 'http.response' && f.id === id)
     await until(() => response(2) !== undefined && response(3) !== undefined)
     expect(response(2)).toMatchObject({ status: 404 })
@@ -245,7 +247,7 @@ describe('tunneled sockets', () => {
         id: index + 1,
         method: endpoint.method,
         path: endpoint.path,
-        headers: [[ACCESS_KEY_HEADER, key]],
+        headers: await keyHeaders(key, endpoint.method, endpoint.path),
       })
     }
     const response = (id: number) => conn.frames.find((f) => f.type === 'http.response' && f.id === id)

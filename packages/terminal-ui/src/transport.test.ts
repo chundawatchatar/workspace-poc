@@ -128,25 +128,41 @@ describe('the page transport', () => {
     socket.close()
   })
 
-  test('the remote transport goes through the machine prefix and carries the key in a header or the first message', async () => {
+  test('with a key, every request and socket carries the key and a fresh device proof, and no device key throws', async () => {
     const machineId = 'mac/1 a'
     const accessKey = 'secret-key'
     const { base, seen, messages, received: twoMessages } = recordingServer(2)
     const port = new URL(base).port
-    const transport = createRemoteTransport({ serverUrl: `${base}/`, machineId, accessKey })
+    const device = await testSigner()
+    const transport = createRemoteTransport({ serverUrl: `${base}/`, machineId, accessKey, device })
 
     await transport.request('/api/git/status?cwd=%2Ftmp', { headers: { 'content-type': 'application/json' } })
+    await transport.request('/api/system/health', { method: 'post', body: '{"a":1}' })
     expect(seen[0].url).toBe(`${base}/m/mac%2F1%20a/api/git/status?cwd=%2Ftmp`)
     expect(seen[0].headers['content-type']).toBe('application/json')
-    expect(seen[0].headers[ACCESS_KEY_HEADER]).toBe(accessKey)
+    expect(seen.map((s) => s.headers[ACCESS_KEY_HEADER])).toEqual([accessKey, accessKey])
+    const proofs = seen.map((s) => s.headers[DEVICE_PROOF_HEADER] ?? '')
+    expect(await Promise.all(proofs.map((proof) => signedBy(proof, device)))).toEqual([true, true])
+    const [get, post] = proofs.map(payloadOf)
+    expect(get).toMatchObject({ aud: machineId, method: 'GET', path: '/api/git/status?cwd=%2Ftmp' })
+    expect(post).toMatchObject({ aud: machineId, method: 'POST', path: '/api/system/health' })
+    expect(get.nonce).not.toBe(post.nonce)
+    expect(get.bodySha256).not.toBe(post.bodySha256)
+    await expect(transport.request('/api/x', { method: 'POST', body: new Uint8Array([1]) })).rejects.toThrow()
 
     const socket = transport.openSocket('/ws/events')
     expect(socket.url).toBe(`ws://localhost:${port}/m/mac%2F1%20a/ws/events`)
     socket.onopen = () => socket.send('from the page')
     await twoMessages
     socket.close()
-    expect(messages).toEqual([JSON.stringify({ type: 'auth', key: accessKey }), 'from the page'])
+    const [auth, fromPage] = messages
+    const { device: proof, ...rest } = JSON.parse(auth ?? '')
+    expect(rest).toEqual({ type: 'auth', key: accessKey })
+    expect(await signedBy(proof, device)).toBe(true)
+    expect(payloadOf(proof)).toMatchObject({ aud: machineId, method: 'WS', path: '/ws/events' })
+    expect(fromPage).toBe('from the page')
     expect(seen.every((s) => !s.url.includes(accessKey))).toBe(true)
+    expect(() => createRemoteTransport({ serverUrl: base, machineId, accessKey })).toThrow()
   })
 
   test('without a key, requests share a relay ticket, each request and socket carries a fresh device proof', async () => {
@@ -207,21 +223,22 @@ describe('the page transport', () => {
     expect(() => createRemoteTransport({ serverUrl: base, machineId: 'm1', relayTicket })).toThrow()
   })
 
-  test('the remote transport uses wss:// for an https server and rejects other schemes', () => {
-    const opened: string[] = []
+  test('the remote transport uses wss:// for an https server and rejects other schemes', async () => {
+    const device = await testSigner()
+    const { promise: opened, resolve } = Promise.withResolvers<string>()
     // Records the URL without reaching a TLS server. `afterEach` puts the real WebSocket back.
     globalThis.WebSocket = class {
       constructor(url: string) {
-        opened.push(url)
+        resolve(url)
       }
       addEventListener() {}
     } as unknown as typeof WebSocket
-    createRemoteTransport({ serverUrl: 'https://example.com', machineId: 'm1', accessKey: 'k' }).openSocket(
+    createRemoteTransport({ serverUrl: 'https://example.com', machineId: 'm1', accessKey: 'k', device }).openSocket(
       '/ws/events',
     )
-    expect(opened).toEqual(['wss://example.com/m/m1/ws/events'])
+    expect(await opened).toBe('wss://example.com/m/m1/ws/events')
     for (const serverUrl of ['ws://example.com', 'file:///tmp', 'javascript:alert(1)']) {
-      expect(() => createRemoteTransport({ serverUrl, machineId: 'm1', accessKey: 'k' })).toThrow()
+      expect(() => createRemoteTransport({ serverUrl, machineId: 'm1', accessKey: 'k', device })).toThrow()
     }
   })
 })
