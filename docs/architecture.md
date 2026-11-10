@@ -253,7 +253,11 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   from any other device get a 403 `device_not_approved` or a 4403 close, with no `auth.failed`, and put the device
   in a pending list in memory (at most 5, newest kept, 15 minutes each). The owner approves it in the machine's
   local Remote access setting, which the tunnel can't reach (`routes.remoteAccess.devices`, `approveDevice`,
-  `removeDevice`, 403 through the tunnel); approved devices are saved in `apps/host/.data/devices.json` as
+  `removeDevice`, 403 through the tunnel), by typing the fingerprint their own browser shows: a pending row has
+  Dismiss but no Approve button, and `approveDevice` takes `{ fingerprint }`, never an id. The host compares it with
+  `fingerprintKey` (no case, dashes or whitespace) against the pending list, approves the one match, answers 404 when
+  none is waiting and 409 when more than one matches; `host:remote devices approve` sends the typed text the same
+  way. Approved devices are saved in `apps/host/.data/devices.json` as
   `{ id, publicKey, approvedAt }`. Revoking one closes its sockets, and unlinking the account forgets every device.
   A fresh proof per request, rather than one bound to the ticket, is deliberate: HTTP tickets are reused for up to a
   minute and the server mints them, so it could reuse a `jti`; the browser's `iat` plus the host's spent nonces
@@ -261,8 +265,11 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   machine links only by redeeming an enrollment key over its own tunnel.
 - Accepted risks that remain with device approval:
   - Phishing the approval: a compromised server can still mint tickets, so it can push its own key into the pending
-    list and hope the owner approves it. The browser shows its own fingerprint, the setting asks the owner to approve
-    only a fingerprint shown in their own browser, and the list is capped and expires.
+    list and hope the owner approves it. Approval needs the fingerprint typed from the owner's own browser and
+    checked by the host, so a pushed device can't be approved by a click, in the setting or in the CLI; the list is
+    capped and expires. What remains is an owner who copies a fingerprint they don't recognise from the pending list
+    and types it in: that still approves the server's device. Pending rows keep their fingerprints so the owner can
+    tell browsers apart and dismiss strangers.
   - Without end-to-end encryption (REM-2), a compromised server can read, and inject into, a session an approved
     browser opens. It just can't open one by itself.
   - Access keys from connect links still pass through the server in a header, so a compromised server could capture
