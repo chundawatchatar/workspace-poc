@@ -18,6 +18,7 @@ import { linkedAccountPath } from './modules/remote-access/linked-account.reposi
 import { remoteAccessPath } from './modules/remote-access/remote-access.repository'
 import { createRemoteAccessRoutes } from './modules/remote-access/remote-access.routes'
 import {
+  AmbiguousDevice,
   DEFAULT_SERVER_URL,
   LinkError,
   type RemoteAccessEnv,
@@ -98,9 +99,11 @@ class FakeRemoteAccess {
   listDevices() {
     return this.devices.list()
   }
-  approveDevice(id: string) {
-    this.calls.push(['approveDevice', id])
-    if (!this.devices.approve(id)) throw new UnknownDevice('No browser with this id is waiting')
+  approveDevice(fingerprint: string) {
+    this.calls.push(['approveDevice', fingerprint])
+    const result = this.devices.approve(fingerprint)
+    if (result === 'none') throw new UnknownDevice(fingerprint)
+    if (result === 'several') throw new AmbiguousDevice(fingerprint)
     return this.devices.list()
   }
   removeDevice(id: string) {
@@ -269,7 +272,7 @@ describe('host:remote with the host running', () => {
     expect((await run(url, ['status'])).text).toContain('Devices:        0 approved, 0 waiting')
 
     host.devices.recordPending(alice.id, alice.publicKey)
-    host.devices.approve(alice.id)
+    host.devices.approve(alice.fingerprint)
     host.clock += 2 * 24 * 60 * MINUTE
     host.devices.recordPending(bob.id, bob.publicKey)
     host.clock += MINUTE
@@ -298,7 +301,7 @@ describe('host:remote with the host running', () => {
       expect(no.code).toBe(1)
       expect(no.text).toContain('Approve only a fingerprint shown in your own browser.')
       expect(no.text).toContain(
-        `Approve ${alice.fingerprint}? It will be able to open this machine through the linked account. [y/N]`,
+        `Approve ${typed}? It will be able to open this machine through the linked account. [y/N]`,
       )
       expect(no.text).toContain('Not approved')
     }
@@ -307,7 +310,7 @@ describe('host:remote with the host running', () => {
     const yes = await run(url, ['devices', 'approve', typed], { answers: ['Yes'] })
     expect(yes.code).toBe(0)
     expect(yes.text).toContain(`Approved ${alice.fingerprint}`)
-    expect(host.calls).toEqual([['approveDevice', alice.id]])
+    expect(host.calls).toEqual([['approveDevice', typed]])
 
     const again = await run(url, ['devices', 'approve', alice.fingerprint])
     expect(again.code).toBe(0)
@@ -316,7 +319,7 @@ describe('host:remote with the host running', () => {
     expect(host.calls).toHaveLength(1)
   })
 
-  test('devices approve --yes skips the question, and an unknown or expired device exits 1', async () => {
+  test('devices approve --yes skips the question, and a fingerprint the host matches to no device or two exits 1', async () => {
     const url = runningHost()
     host.devices.recordPending(alice.id, alice.publicKey)
     host.devices.recordPending(bob.id, bob.publicKey)
@@ -325,28 +328,37 @@ describe('host:remote with the host running', () => {
     expect(yes.text).not.toContain('[y/N]')
     expect((await run(url, ['devices', 'approve', bob.fingerprint, '--yes'])).code).toBe(0)
     expect(host.calls).toEqual([
-      ['approveDevice', alice.id],
-      ['approveDevice', bob.id],
+      ['approveDevice', alice.fingerprint],
+      ['approveDevice', bob.fingerprint],
     ])
 
-    const unknown = await run(url, ['devices', 'approve', carol.fingerprint, '--yes'])
-    expect(unknown.code).toBe(1)
-    expect(unknown.text).toContain(`No device with the fingerprint ${carol.fingerprint} is waiting or approved`)
-
-    // The device stops waiting while the question is open, so the host answers 404.
+    const notWaiting = (typed: string) =>
+      `No browser with the fingerprint ${typed} is waiting. Open this machine in your own browser and type the fingerprint it shows.`
+    for (const typed of [carol.fingerprint, 'nope']) {
+      const unknown = await run(url, ['devices', 'approve', typed, '--yes'])
+      expect(unknown.code).toBe(1)
+      expect(unknown.text).toBe(notWaiting(typed))
+    }
     host.devices.recordPending(carol.id, carol.publicKey)
     const expired = await run(url, ['devices', 'approve', carol.fingerprint], {
       answers: ['y'],
       onPrompt: () => host.devices.remove(carol.id),
     })
     expect(expired.code).toBe(1)
-    expect(expired.text).toContain(`${carol.fingerprint} is no longer waiting`)
+    expect(expired.text).toContain(notWaiting(carol.fingerprint))
+
+    // Two waiting devices with one fingerprint (the id's last character is past it): the host approves neither.
+    for (const last of ['A', 'B']) host.devices.recordPending(`${carol.id.slice(0, -1)}${last}`, carol.publicKey)
+    const several = await run(url, ['devices', 'approve', carol.fingerprint, '--yes'])
+    expect(several.code).toBe(1)
+    expect(several.text).toContain('More than one browser has the fingerprint')
+    expect(host.devices.list().approved.map((d) => d.id)).toEqual([bob.id, alice.id])
   })
 
   test('devices remove dismisses a waiting device or revokes an approved one', async () => {
     const url = runningHost()
     host.devices.recordPending(alice.id, alice.publicKey)
-    host.devices.approve(alice.id)
+    host.devices.approve(alice.fingerprint)
     host.devices.recordPending(bob.id, bob.publicKey)
 
     expect((await run(url, ['devices', 'remove', bob.fingerprint])).text).toContain(`Dismissed ${bob.fingerprint}`)

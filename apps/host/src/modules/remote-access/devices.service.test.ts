@@ -2,11 +2,13 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fingerprintOf } from './device-proof.service'
 import { DevicesRepository } from './devices.repository'
 import { DevicesService, PENDING_DEVICE_TTL_MS } from './devices.service'
 
 const publicKey = { kty: 'EC', crv: 'P-256', x: 'x'.repeat(43), y: 'y'.repeat(43) } as const
-const id = (n: number) => `${'d'.repeat(42)}${n}`
+/** Device ids that differ in their first character, so each has its own fingerprint. */
+const id = (n: number) => `${n}${'d'.repeat(42)}`
 
 let dir: string
 let clock: number
@@ -32,7 +34,7 @@ describe('DevicesService', () => {
     expect(devices.list().pending.map((d) => d.id)).toEqual([7, 6, 5, 4, 3].map(id))
     clock += PENDING_DEVICE_TTL_MS - 4000
     expect(devices.list().pending.map((d) => d.id)).toEqual([7, 6].map(id))
-    expect(devices.approve(id(3))).toBe(false)
+    expect(devices.approve(fingerprintOf(id(3)))).toBe('none')
     clock += 2000
     expect(devices.list().pending).toEqual([])
   })
@@ -41,7 +43,7 @@ describe('DevicesService', () => {
     const devices = setup()
     devices.recordPending(id(1), publicKey)
     devices.recordPending(id(2), publicKey)
-    expect(devices.approve(id(1))).toBe(true)
+    expect(devices.approve(fingerprintOf(id(1)))).toBe('approved')
     expect(devices.list().pending.map((d) => d.id)).toEqual([id(2)])
 
     const restarted = setup()
@@ -52,5 +54,31 @@ describe('DevicesService', () => {
     })
     restarted.clear()
     expect(setup().list().approved).toEqual([])
+  })
+
+  test('approve takes the typed fingerprint in any case, with or without dashes, and approves only one match', () => {
+    const devices = setup()
+    devices.recordPending(id(1), publicKey)
+    devices.recordPending(id(2), publicKey)
+    const typed = `  ${fingerprintOf(id(1)).replaceAll('-', '').toLowerCase()} `
+    expect(devices.approve(typed)).toBe('approved')
+    expect(devices.list().approved.map((d) => d.id)).toEqual([id(1)])
+    expect(devices.approve(fingerprintOf(id(1)))).toBe('already')
+    expect(devices.list().approved).toHaveLength(1)
+
+    for (const typed of ['', ' - ', 'not-a-fingerprint', fingerprintOf(id(9))]) {
+      expect(devices.approve(typed)).toBe('none')
+    }
+    expect(devices.list().pending.map((d) => d.id)).toEqual([id(2)])
+  })
+
+  test('a fingerprint that more than one waiting device shares approves none of them', () => {
+    const devices = setup()
+    // Same first 10 bytes, so the same fingerprint.
+    const twins = [`${'d'.repeat(42)}A`, `${'d'.repeat(42)}B`]
+    for (const twin of twins) devices.recordPending(twin, publicKey)
+    expect(devices.approve(fingerprintOf(twins[0] ?? ''))).toBe('several')
+    expect(devices.list().approved).toEqual([])
+    expect(devices.list().pending).toHaveLength(2)
   })
 })

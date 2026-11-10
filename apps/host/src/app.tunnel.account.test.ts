@@ -20,6 +20,7 @@ import {
   welcomed,
 } from './app.tunnel.testing'
 import { machineIdFromSecret } from './modules/access/access.service'
+import { fingerprintOf } from './modules/remote-access/device-proof.service'
 import { testDevice } from './modules/remote-access/device-proof.testing'
 
 // Account access end to end, on the harness in `app.tunnel.testing.ts`: relay
@@ -63,13 +64,19 @@ describe('tunneled account access', () => {
     await until(() => response(2) !== undefined)
     expect(remoteAccess.listDevices().pending.map((d) => d.id)).toEqual([second.id, first.id])
 
-    remoteAccess.approveDevice(first.id)
-    remoteAccess.approveDevice(second.id)
+    remoteAccess.approveDevice(fingerprintOf(first.id))
+    remoteAccess.approveDevice(fingerprintOf(second.id))
     await request(first, 3, routes.system.health.path)
     await request(first, 4, routes.access.rotate.path, 'POST')
     await request(first, 5, routes.remoteAccess.devices.path)
-    await until(() => [3, 4, 5].every((id) => response(id) !== undefined))
-    expect([3, 4, 5].map(response)).toMatchObject([{ status: 200 }, { status: 403 }, { status: 403 }])
+    await request(first, 6, routes.remoteAccess.approveDevice.path, 'POST')
+    await until(() => [3, 4, 5, 6].every((id) => response(id) !== undefined))
+    expect([3, 4, 5, 6].map(response)).toMatchObject([
+      { status: 200 },
+      { status: 403 },
+      { status: 403 },
+      { status: 403 },
+    ])
 
     await socket(first, 2)
     await socket(second, 3)

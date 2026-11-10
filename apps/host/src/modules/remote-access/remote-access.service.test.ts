@@ -15,6 +15,7 @@ import type { Principal } from '../../lib/principal'
 import { AccessKeyRepository } from '../access/access.repository'
 import type { EnrollAnswer, EnrollRequest, TunnelClientOptions } from '../tunnel/tunnel.service'
 import { type Credentials, DEVICE_NOT_APPROVED } from '../tunnel/tunnel-http.service'
+import { fingerprintOf } from './device-proof.service'
 import { testDevice } from './device-proof.testing'
 import { DevicesRepository } from './devices.repository'
 import { LinkedAccountRepository } from './linked-account.repository'
@@ -401,7 +402,7 @@ describe('RemoteAccessService.authorize', () => {
     expect(authorize({ key: null, ticket: bad, device: await stranger.presented(health) })).toBeNull()
     expect(service.listDevices().pending.map((d) => d.id)).toEqual([device.id])
 
-    expect(service.approveDevice(device.id).approved).toEqual([
+    expect(service.approveDevice(fingerprint.toLowerCase()).approved).toEqual([
       { id: device.id, fingerprint, approvedAt: expect.any(String) },
     ])
     const asAccount: Principal = { kind: 'account', accountId, deviceId: device.id }
@@ -438,8 +439,8 @@ describe('RemoteAccessService.authorize', () => {
     for (const device of [kept, revoked, waiting]) {
       authorize({ key: null, ticket: ticketFor(), device: await device.presented(health) })
     }
-    service.approveDevice(kept.id)
-    service.approveDevice(revoked.id)
+    service.approveDevice(fingerprintOf(kept.id))
+    service.approveDevice(fingerprintOf(revoked.id))
 
     expect(service.removeDevice(revoked.id).approved.map((d) => d.id)).toEqual([kept.id])
     expect(tunnel.closed.map((c) => c.reason)).toEqual(['device revoked'])
@@ -451,12 +452,10 @@ describe('RemoteAccessService.authorize', () => {
     expect(next).toBe(DEVICE_NOT_APPROVED)
     expect(JSON.parse(readFileSync(devicesFile(), 'utf8')).map((d: { id: string }) => d.id)).toEqual([kept.id])
 
-    // Dismissing a waiting device closes nothing, and an unknown id can't be approved.
+    // Dismissing a waiting device closes nothing.
     service.removeDevice(waiting.id)
     expect(service.listDevices().pending.map((d) => d.id)).toEqual([revoked.id])
     expect(tunnel.closed).toHaveLength(1)
-    const app = createApp({ remoteAccess: service } as unknown as AppDeps).app
-    expect((await post(app, routes.remoteAccess.approveDevice, { id: waiting.id })).status).toBe(404)
 
     service.unlink()
     expect(service.listDevices()).toEqual({ pending: [], approved: [] })

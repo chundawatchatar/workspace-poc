@@ -36,6 +36,7 @@ export {
   deviceJwk,
   deviceProofHeader,
   deviceProofPayload,
+  fingerprintKey,
 } from './deviceProof'
 export {
   type DirListing,
@@ -80,7 +81,9 @@ export {
   socketAuthMessage,
 } from './remote'
 export {
+  type ApproveDeviceBody,
   type ApprovedDevice,
+  approveDeviceBody,
   approvedDevice,
   type DeviceBody,
   type DevicesResponse,

@@ -38,6 +38,8 @@ export function RemoteAccessSetting() {
   const [link, setLink] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [linkKey, setLinkKey] = useState('')
+  // The fingerprint typed into "Approve a browser", kept when the host refuses it.
+  const [fingerprint, setFingerprint] = useState('')
   const [preview, setPreview] = useState<PreviewLinkResponse | null>(null)
   // True while a preview or a link is on its way.
   const [linking, setLinking] = useState(false)
@@ -72,15 +74,22 @@ export function RemoteAccessSetting() {
     queryClient.setQueryData(apiKey(routes.remoteAccess.status, {}), next)
   }
 
-  /** Approves, dismisses or revokes a device, then shows the list the host answers. */
-  async function changeDevice(change: (input: { id: string }) => Promise<DevicesResponse>, id: string) {
+  /** Approves, dismisses or revokes a device, then shows the list the host answers. False when the host refused. */
+  async function changeDevice(change: () => Promise<DevicesResponse>): Promise<boolean> {
     setError(null)
     try {
-      queryClient.setQueryData(apiKey(routes.remoteAccess.devices, {}), await change({ id }))
+      queryClient.setQueryData(apiKey(routes.remoteAccess.devices, {}), await change())
+      return true
     } catch (failure) {
       setError(requestErrorMessage(failure))
       void devices.refetch()
+      return false
     }
+  }
+
+  /** Sends the typed fingerprint for the host to match, and clears the field once it approved. */
+  async function approveTyped(typed: string) {
+    if (await changeDevice(() => approveDevice.mutateAsync({ fingerprint: typed.trim() }))) setFingerprint('')
   }
 
   async function previewKey() {
@@ -153,9 +162,11 @@ export function RemoteAccessSetting() {
       }}
       devices={{
         devices: devices.data,
-        onApprove: (id) => changeDevice(approveDevice.mutateAsync, id),
-        onDismiss: (id) => changeDevice(removeDevice.mutateAsync, id),
-        onRevoke: (id) => changeDevice(removeDevice.mutateAsync, id),
+        fingerprint,
+        onFingerprintChange: setFingerprint,
+        onApprove: approveTyped,
+        onDismiss: (id) => changeDevice(() => removeDevice.mutateAsync({ id })),
+        onRevoke: (id) => changeDevice(() => removeDevice.mutateAsync({ id })),
       }}
       error={error}
       busy={

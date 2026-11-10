@@ -86,3 +86,14 @@ export function deviceFingerprint(digest: Uint8Array): string {
   }
   return out.match(/.{4}/g)?.join('-') ?? out
 }
+
+/**
+ * A fingerprint as it is compared: trimmed, without dashes or whitespace, and
+ * uppercased, so `abcd efgh-jkmn-pqrs` names the same device as `ABCD-EFGH-JKMN-PQRS`.
+ */
+export function fingerprintKey(typed: string): string {
+  return typed
+    .trim()
+    .replace(/[\s-]+/g, '')
+    .toUpperCase()
+}

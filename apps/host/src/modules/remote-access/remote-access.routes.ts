@@ -3,7 +3,13 @@ import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import { createRouter } from '../../lib/createRouter'
 import { tunnelPrincipal } from '../../lib/principal'
-import { InvalidRemoteAccessSetting, LinkError, type RemoteAccessService, UnknownDevice } from './remote-access.service'
+import {
+  AmbiguousDevice,
+  InvalidRemoteAccessSetting,
+  LinkError,
+  type RemoteAccessService,
+  UnknownDevice,
+} from './remote-access.service'
 
 /** What the remote access routes need from the host. */
 export interface RemoteAccessDeps {
@@ -43,11 +49,12 @@ export function createRemoteAccessRoutes({ remoteAccess }: RemoteAccessDeps) {
       link: (input) => linking(() => remoteAccess.link(input)),
       unlink: async () => remoteAccess.unlink(),
       devices: async () => remoteAccess.listDevices(),
-      approveDevice: async ({ id }) => {
+      approveDevice: async ({ fingerprint }) => {
         try {
-          return remoteAccess.approveDevice(id)
+          return remoteAccess.approveDevice(fingerprint)
         } catch (error) {
           if (error instanceof UnknownDevice) throw new HTTPException(404, { message: error.message })
+          if (error instanceof AmbiguousDevice) throw new HTTPException(409, { message: error.message })
           throw error
         }
       },

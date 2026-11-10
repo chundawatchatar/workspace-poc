@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { canonicalDeviceJwk, deviceFingerprint } from './deviceProof'
+import { canonicalDeviceJwk, deviceFingerprint, fingerprintKey } from './deviceProof'
 
 describe('device identity', () => {
   test('the fingerprint is the first 10 bytes in Crockford base32, in four groups', () => {
@@ -8,6 +8,18 @@ describe('device identity', () => {
     digest.fill(0xff, 10)
     expect(deviceFingerprint(digest)).toBe('0410-6105-0R3G-G28A')
     expect(deviceFingerprint(new Uint8Array(32).fill(0xff))).toBe('ZZZZ-ZZZZ-ZZZZ-ZZZZ')
+  })
+
+  test('a typed fingerprint compares without case, dashes or whitespace', () => {
+    for (const typed of [
+      'ABCD-EFGH-JKMN-PQRS',
+      '  abcd-efgh-jkmn-pqrs\n',
+      'abcdefghjkmnpqrs',
+      'ABCD EFGH\tJKMN--PQRS',
+    ]) {
+      expect(fingerprintKey(typed)).toBe('ABCDEFGHJKMNPQRS')
+    }
+    expect(fingerprintKey(' - ')).toBe('')
   })
 
   test('the canonical key has crv, kty, x and y in that order, whatever order it came in', () => {
