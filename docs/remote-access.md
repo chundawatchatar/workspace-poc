@@ -72,8 +72,10 @@ The host keeps its remote access files in `apps/host/.data/` (gitignored):
 
 - `remote-access.json`: the saved setting, so every later start reconnects on
   its own.
-- `machine-secret`: the machine's random secret. Keep it: the machine id comes
-  from it. Deleting it gives the machine a new id, and old connect links stop
+- `machine-key`: the machine's Ed25519 private key (PKCS#8 PEM, readable only
+  by you). It never leaves the machine: the host signs the server's challenge
+  with it, and the machine id is the hash of its public key. Keep it: deleting
+  it gives the machine a new id, and old connect links and account links stop
   working.
 - `access-keys.json`: the access keys, as hashes only.
 - `linked-account.json`: the account this machine is linked to, if any
@@ -296,12 +298,28 @@ changes what `status` shows. `link` needs the running host, and so does
 shows the waiting count as unknown. `devices remove` rewrites `devices.json`
 without that device, and the host loads it at its next start. The command never
 rewrites a `remote-access.json` or `devices.json` that isn't valid, never creates
-a missing `devices.json`, and `status` never creates the machine secret or the
+a missing `devices.json`, and `status` never creates the machine key or the
 access keys.
 
 The key is passed on the command line, so it can end up in your shell history
 and in `ps`. It is single-use and expires after 15 minutes, which makes that an
 accepted risk.
+
+### Relinking after the machine key change
+
+A machine used to prove itself with a random secret in
+`apps/host/.data/machine-secret`, which the server hashed into its id. It now
+has a machine key instead (section 2), and its id is the hash of the key's
+public half, so a machine set up before the change comes back under a new id.
+The account's list and the old connect link still name the old id, so do this
+once, in this order:
+
+1. Unlink the machine from the client's home page.
+2. On the machine, run `bun run host:remote unlink`.
+3. Delete `apps/host/.data/machine-secret`. The host no longer reads it.
+4. Link the machine again with a new enrollment key (above).
+5. Get a new connect link with `bun run host:rotate-key` (section 4), because
+   the old link names the old id.
 
 ## 6. Database and email
 

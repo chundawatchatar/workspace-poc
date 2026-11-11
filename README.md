@@ -32,9 +32,12 @@ connected; turning it off closes the tunnel and every remote session at once.
 The setting is saved in `apps/host/.data/remote-access.json`, so every later
 start reconnects on its own. `SERVER_URL` and `CLIENT_URL` in the host's
 environment override the saved addresses, and `SERVER_URL` turns the tunnel on
-at start whatever the setting says. The host is identified by a random secret
-it creates in `apps/host/.data/machine-secret`. Keep that file: the machine id
-is derived from it, and deleting it gives the machine a new id. Terminals and
+at start whatever the setting says. The host is identified by an Ed25519 key
+it creates in `apps/host/.data/machine-key`, which never leaves the machine: it
+signs the server's challenge when the tunnel opens, and the machine id is the
+hash of its public key. Keep that file: deleting it gives the machine a new id.
+A machine set up with the older `machine-secret` file relinks once (see
+`docs/remote-access.md`). Terminals and
 layout sync work through the tunnel as well as the HTTP API.
 
 Every tunneled request and socket needs an access key. The first time remote
