@@ -63,6 +63,7 @@ function setup(overrides: Partial<Props> = {}) {
       onDismiss: mock(),
       onRevoke: mock(),
     },
+    activity: { entries: [], failed: false },
     error: null,
     busy: false,
     onClose: mock(),

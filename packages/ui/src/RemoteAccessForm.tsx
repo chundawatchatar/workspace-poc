@@ -2,6 +2,7 @@ import type { RemoteAccessStatus } from '@orch/shared'
 import { useState } from 'react'
 import { Check, Copy, Link } from './icons'
 import { Modal } from './Modal'
+import { RemoteAccessActivity, type RemoteAccessActivityProps } from './RemoteAccessActivity'
 import { RemoteAccessDevices, type RemoteAccessDevicesProps } from './RemoteAccessDevices'
 import { RemoteAccessLink, type RemoteAccessLinkProps } from './RemoteAccessLink'
 import { RemoteAccessSessions, type RemoteAccessSessionsProps } from './RemoteAccessSessions'
@@ -40,6 +41,8 @@ interface Props {
   accountLink: Omit<RemoteAccessLinkProps, 'linkedAccount' | 'busy'>
   /** The browsers approved for the linked account, and those waiting. Shown only while an account is linked. */
   devices: Omit<RemoteAccessDevicesProps, 'busy'>
+  /** The newest remote access recorded on this machine. Shown once the status has loaded. */
+  activity: RemoteAccessActivityProps
   /** The browsers with tunneled sockets open. Shown while an account is linked or any session is listed. */
   sessions?: Omit<RemoteAccessSessionsProps, 'busy'>
   error: string | null
@@ -51,8 +54,8 @@ interface Props {
 /**
  * The remote access setting: the server and client addresses, an on/off
  * switch, where the tunnel stands, a button for a fresh connect link, the
- * account this machine is linked to, and the browsers approved for it. An address set by the host's environment
- * is shown read-only.
+ * account this machine is linked to, the browsers approved for it, and the
+ * recent remote access. An address set by the host's environment is shown read-only.
  */
 export function RemoteAccessForm(props: Props) {
   const { status, link, error, busy } = props
@@ -141,6 +144,7 @@ export function RemoteAccessForm(props: Props) {
         {props.sessions && (status?.linkedAccount || (props.sessions.sessions?.sessions.length ?? 0) > 0) && (
           <RemoteAccessSessions {...props.sessions} busy={busy} />
         )}
+        {status && <RemoteAccessActivity {...props.activity} />}
 
         {link && (
           <div>

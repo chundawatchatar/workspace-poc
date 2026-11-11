@@ -16,6 +16,7 @@ import {
 } from '@orch/shared'
 import type { z } from 'zod'
 import type { Principal } from '../../lib/principal'
+import type { RecordAudit } from '../remote-access/audit-log.service'
 import { AUTH_TIMEOUT_MS, type OpenChannel, type OpenSocket, TunnelChannels } from './tunnel-channels.service'
 import { type Authorize, type TunnelHandler, TunnelHttp } from './tunnel-http.service'
 import { TunnelOutbox } from './tunnel-outbox.service'
@@ -125,6 +126,8 @@ export interface TunnelClientOptions {
    * decides what, if anything, to close.
    */
   onSessionEnded?: (accountId: string) => void
+  /** Where tunneled sockets that open and close, and refused requests and sockets, are recorded. */
+  record?: RecordAudit
 }
 
 /** One socket and everything that lives only as long as it does. */
@@ -235,9 +238,11 @@ export class TunnelClient {
         this.options.authorize,
         (frame) => this.send(conn, frame),
         () => outbox.room(),
+        this.options.record,
       ),
       channels: new TunnelChannels(this.options.openSocket, this.options.authorize, (frame) => this.send(conn, frame), {
         authTimeoutMs: this.timings.authTimeoutMs,
+        record: this.options.record,
       }),
       welcomed: false,
       nonce: 0,

@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import { hostname } from 'node:os'
 import {
+  type AuditLogResponse,
   CLOSE_SESSION_ENDED,
   type DevicesResponse,
   type LinkBody,
@@ -29,10 +30,12 @@ import {
   type TunnelClientOptions,
 } from '../tunnel/tunnel.service'
 import type { OpenSocket } from '../tunnel/tunnel-channels.service'
-import type { Authorization, Credentials, TunnelHandler } from '../tunnel/tunnel-http.service'
+import type { Authorization, Credentials, Refusal, TunnelHandler } from '../tunnel/tunnel-http.service'
+import type { AuditLogService } from './audit-log.service'
 import type { DevicesRepository } from './devices.repository'
 import { DevicesService } from './devices.service'
 import type { LinkedAccountRepository, SavedLinkedAccount } from './linked-account.repository'
+import { AmbiguousDevice, InvalidRemoteAccessSetting, LinkError, UnknownDevice } from './remote-access.errors'
 import type { RemoteAccessRepository, RemoteAccessSettings } from './remote-access.repository'
 import { groupSessions } from './sessions.service'
 import { TunnelAccess } from './tunnel-access.service'
@@ -59,6 +62,8 @@ export interface RemoteAccessServiceOptions {
   linkedAccounts: LinkedAccountRepository
   /** Where the browsers approved for the linked account are kept. */
   devices: DevicesRepository
+  /** Where tunneled sockets and refusals are recorded, for the owner to read. */
+  audit: AuditLogService
   /** The machine secret file, created the first time remote access is needed. */
   secretFile: string
   /** The access keys file. */
@@ -72,41 +77,6 @@ export interface RemoteAccessServiceOptions {
   openSocket: OpenSocket
   /** Builds the tunnel. Defaults to a real `TunnelClient`; tests pass a fake so they need no network. */
   createTunnel?: (options: TunnelClientOptions) => Tunnel
-}
-
-/** A setting the host refuses, such as a server address `parseServerUrl` rejects. Its message is meant for the user. */
-export class InvalidRemoteAccessSetting extends Error {}
-
-/**
- * A typed fingerprint that matches no waiting or approved device, whether it is
- * unknown, expired or malformed. Its message is meant for the user and echoes
- * what they typed, which is not secret.
- */
-export class UnknownDevice extends Error {
-  constructor(typed: string) {
-    super(
-      `No browser with the fingerprint ${typed.trim()} is waiting. Open this machine in your own browser and type the fingerprint it shows.`,
-    )
-  }
-}
-
-/** A typed fingerprint that more than one device shares, so none was approved. Its message is meant for the user. */
-export class AmbiguousDevice extends Error {
-  constructor(typed: string) {
-    super(
-      `More than one browser has the fingerprint ${typed.trim()}, so none was approved. Dismiss the ones you don't recognise, then try again.`,
-    )
-  }
-}
-
-/** Why linking with a key failed, with the HTTP status to answer. Its message is meant for the user and never holds the key. */
-export class LinkError extends Error {
-  constructor(
-    readonly status: 400 | 409 | 429 | 502 | 503,
-    message: string,
-  ) {
-    super(message)
-  }
 }
 
 /**
@@ -391,8 +361,13 @@ export class RemoteAccessService {
   }
 
   /** Decides a tunneled request or socket; see `TunnelAccess.authorize`. */
-  authorize(credentials: Credentials): Authorization {
-    return this.access.authorize(credentials)
+  authorize(credentials: Credentials, refused?: (refusal: Refusal) => void): Authorization {
+    return this.access.authorize(credentials, refused)
+  }
+
+  /** The newest remote access recorded on this machine, newest first; see `AuditLogService.recent`. */
+  auditLog(): AuditLogResponse {
+    return { entries: this.options.audit.recent() }
   }
 
   /**
@@ -449,10 +424,11 @@ export class RemoteAccessService {
       url,
       secret,
       expectedMachineId: machineIdFromSecret(secret),
-      authorize: (credentials) => this.authorize(credentials),
+      authorize: (credentials, refused) => this.authorize(credentials, refused),
       handle: (request, principal) => this.options.handle(request, principal),
       openSocket: (path, headers, conn, principal) => this.options.openSocket(path, headers, conn, principal),
       onSessionEnded: (accountId) => this.sessionEnded(accountId),
+      record: (event) => this.options.audit.record(event),
     })
     this.tunnel = tunnel
     this.tunnelUrl = url

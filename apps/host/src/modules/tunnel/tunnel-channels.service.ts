@@ -15,7 +15,8 @@ import {
 import type { Principal } from '../../lib/principal'
 import type { SocketConn, SocketData, SocketSession } from '../../lib/socket'
 import type { SocketRefusal } from '../../lib/socketRouter'
-import { type Authorize, bodySha256, DEVICE_NOT_APPROVED } from './tunnel-http.service'
+import type { RecordAudit } from '../remote-access/audit-log.service'
+import { type Authorize, authorizeWithReason, bodySha256, DEVICE_NOT_APPROVED } from './tunnel-http.service'
 
 /**
  * Opens the socket a `ws.open` asks for, as the principal that authorized it,
@@ -69,8 +70,12 @@ interface Channel {
   ticket: string | null
   /** Null until the channel's auth message has been accepted. */
   principal: Principal | null
-  /** When the auth message was accepted, in milliseconds. Null until then. */
-  openedAt: number | null
+  /**
+   * The channel's session, from when its auth message was accepted: a random
+   * id that ties its `opened` and `closed` in the audit log, and when it was,
+   * in milliseconds, as `list` shows it. Null until then.
+   */
+  opened: { session: string; at: number } | null
   /** Runs out when no auth message arrives in time. Cleared once one does. */
   authTimer: Timer | undefined
   /** Null until the handler has returned it. */
@@ -99,6 +104,9 @@ interface Channel {
  * channel's path. A device that isn't approved gets a `CLOSE_DEVICE_NOT_APPROVED` close
  * and no `auth.failed`. Anything else, or nothing within the auth timeout,
  * gets `auth.failed` and a `CLOSE_ACCESS_DENIED` close.
+ *
+ * Every refusal is recorded with its reason, and every socket that starts is
+ * recorded as `opened`, then `closed` when its channel ends for any reason.
  */
 export class TunnelChannels {
   private readonly channels = new Map<number, Channel>()
@@ -108,17 +116,19 @@ export class TunnelChannels {
 
   private readonly queueCapBytes: number
   private readonly authTimeoutMs: number
+  private readonly record: RecordAudit
   private readonly now: () => number
 
   constructor(
     private readonly openSocket: OpenSocket,
     private readonly authorize: Authorize,
     private readonly send: (frame: MachineFrame) => void,
-    options: { queueCapBytes?: number; authTimeoutMs?: number; now?: () => number } = {},
+    options: { queueCapBytes?: number; authTimeoutMs?: number; now?: () => number; record?: RecordAudit } = {},
   ) {
     this.queueCapBytes = options.queueCapBytes ?? CHANNEL_QUEUE_CAP_BYTES
     this.authTimeoutMs = options.authTimeoutMs ?? AUTH_TIMEOUT_MS
     this.now = options.now ?? Date.now
+    this.record = options.record ?? (() => {})
   }
 
   /** Takes a `ws.*` frame from the server. Frames for unknown or closed channels are ignored. */
@@ -158,8 +168,8 @@ export class TunnelChannels {
   /** The open channels whose auth message was accepted, with their principal and when it was. */
   list(): OpenChannel[] {
     const listed: OpenChannel[] = []
-    for (const { principal, openedAt } of this.channels.values()) {
-      if (principal && openedAt !== null) listed.push({ principal, openedAt })
+    for (const { principal, opened } of this.channels.values()) {
+      if (principal && opened) listed.push({ principal, openedAt: opened.at })
     }
     return listed
   }
@@ -179,7 +189,7 @@ export class TunnelChannels {
       headers: headers.filter(([name]) => name.toLowerCase() !== 'sec-websocket-protocol'),
       ticket: protocols.length === 1 ? ticketFromProtocols(protocols[0]?.[1]) : null,
       principal: null,
-      openedAt: null,
+      opened: null,
       authTimer: undefined,
       session: null,
       open: true,
@@ -189,7 +199,10 @@ export class TunnelChannels {
       owed: 0,
     }
     this.channels.set(id, channel)
-    channel.authTimer = setTimeout(() => this.deny(channel, 'auth timeout'), this.authTimeoutMs)
+    channel.authTimer = setTimeout(() => {
+      this.record({ kind: 'refused', reason: 'no_auth' })
+      this.deny(channel, 'auth timeout')
+    }, this.authTimeoutMs)
   }
 
   /** Reads a channel's first message as its auth message, then opens its socket or refuses it. */
@@ -203,12 +216,19 @@ export class TunnelChannels {
       path: channel.path,
       bodySha256: EMPTY_SHA256,
     }
+    if (!message) {
+      this.record({ kind: 'refused', reason: 'no_auth' })
+      this.deny(channel, 'access denied')
+      return
+    }
     // A key socket spends no ticket, so it isn't `once`; its proof's nonce bounds a replay.
-    const principal = !message
-      ? null
-      : 'key' in message
-        ? this.authorize({ key: message.key, ticket: null, device })
-        : this.authorize({ key: null, ticket: channel.ticket, device, once: true })
+    const { authorization: principal, refusal } = authorizeWithReason(
+      this.authorize,
+      'key' in message
+        ? { key: message.key, ticket: null, device }
+        : { key: null, ticket: channel.ticket, device, once: true },
+    )
+    if (refusal) this.record({ kind: 'refused', ...refusal })
     if (!principal) {
       this.deny(channel, 'access denied')
       return
@@ -218,7 +238,8 @@ export class TunnelChannels {
       return
     }
     channel.principal = principal
-    channel.openedAt = this.now()
+    channel.opened = { session: crypto.randomUUID(), at: this.now() }
+    this.record({ kind: 'opened', session: channel.opened.session, principal })
     this.start(channel, principal)
   }
 
@@ -344,7 +365,9 @@ export class TunnelChannels {
     channel.session?.close()
   }
 
+  /** Marks a channel closed and drops it. Every way a channel ends comes through here, so its socket's close is recorded once. */
   private remove(channel: Channel) {
+    if (channel.open && channel.opened) this.record({ kind: 'closed', session: channel.opened.session })
     channel.open = false
     clearTimeout(channel.authTimer)
     channel.authTimer = undefined

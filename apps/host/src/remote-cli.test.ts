@@ -9,15 +9,10 @@ import { fingerprintOf } from './modules/remote-access/device-proof.service'
 import { DevicesRepository, devicesPath } from './modules/remote-access/devices.repository'
 import { DevicesService } from './modules/remote-access/devices.service'
 import { linkedAccountPath } from './modules/remote-access/linked-account.repository'
+import { AmbiguousDevice, LinkError, UnknownDevice } from './modules/remote-access/remote-access.errors'
 import { remoteAccessPath } from './modules/remote-access/remote-access.repository'
 import { createRemoteAccessRoutes } from './modules/remote-access/remote-access.routes'
-import {
-  AmbiguousDevice,
-  DEFAULT_SERVER_URL,
-  LinkError,
-  type RemoteAccessEnv,
-  UnknownDevice,
-} from './modules/remote-access/remote-access.service'
+import { DEFAULT_SERVER_URL, type RemoteAccessEnv } from './modules/remote-access/remote-access.service'
 import { NoRemoteSessions } from './modules/remote-access/remote-access.testing'
 import { machineSecretFile } from './modules/tunnel/tunnel.repository'
 import { createHostCaller, runRemote } from './remote-cli'
@@ -34,9 +29,7 @@ function device(seed: number) {
   const publicKey = { kty: 'EC', crv: 'P-256', x: coordinate(100), y: coordinate(150) } as const
   return { id, fingerprint: fingerprintOf(id), publicKey }
 }
-const alice = device(1)
-const bob = device(2)
-const carol = device(3)
+const [alice, bob, carol] = [device(1), device(2), device(3)]
 const MINUTE = 60_000
 
 /** Stands in for `RemoteAccessService` behind the real routes, recording each call it gets. */
@@ -101,6 +94,7 @@ class FakeRemoteAccess extends NoRemoteSessions {
     if (result === 'several') throw new AmbiguousDevice(fingerprint)
     return this.devices.list()
   }
+  auditLog = () => ({ entries: [] })
   removeDevice(id: string) {
     this.calls.push(['removeDevice', id])
     this.devices.remove(id)

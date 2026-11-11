@@ -33,6 +33,7 @@ import {
   hostDevicesLine,
   parseDevicesArgs,
 } from './remote-cli-devices'
+import { logFromFile, logThroughHost } from './remote-cli-log'
 import { messageOf, printable, refused } from './remote-cli-output'
 import { parseSessionsArgs, type SessionsCommand, sessionsFromFile, sessionsThroughHost } from './remote-cli-sessions'
 
@@ -112,13 +113,15 @@ const USAGE = `Usage: bun run host:remote <command>
   devices approve <fingerprint> [--yes] Approve a waiting device by the fingerprint its browser shows (needs
                                         the running host)
   devices remove <fingerprint>          Dismiss a waiting device, or revoke an approved one
-  sessions                              List the approved devices with tunneled sockets open`
+  sessions                              List the approved devices with tunneled sockets open
+  log                                   Show the newest remote access: who opened this machine through the
+                                        tunnel, and who was refused`
 
 const FORGOTTEN =
   'The account is forgotten on this machine only. The server still lists the machine until you unlink it in the client.'
 
 type Command =
-  | { name: 'status' | 'unlink' }
+  | { name: 'status' | 'unlink' | 'log' }
   | { name: 'on' | 'off' }
   | { name: 'server'; url: string }
   | { name: 'link'; key: string; yes: boolean }
@@ -131,7 +134,7 @@ type SettingCommand = Extract<Command, { name: 'server' | 'on' | 'off' }>
 /** The command `args` names, or null when they don't make one. */
 function parseArgs(args: string[]): Command | null {
   const [name, ...rest] = args
-  if (name === 'status' || name === 'unlink') return rest.length === 0 ? { name } : null
+  if (name === 'status' || name === 'unlink' || name === 'log') return rest.length === 0 ? { name } : null
   if (name === 'on' || name === 'off') return rest.length === 0 ? { name } : null
   if (name === 'server') return rest.length === 1 && rest[0] ? { name, url: rest[0] } : null
   if (name === 'link') {
@@ -189,6 +192,8 @@ async function running(command: Command, current: RemoteAccessStatus, deps: Remo
       return sessionsThroughHost(deps)
     case 'link':
       return linkThroughHost(command, deps)
+    case 'log':
+      return logThroughHost(deps)
     case 'unlink': {
       if (!current.linkedAccount) {
         deps.out('No account is linked')
@@ -260,6 +265,8 @@ function stopped(command: Command, deps: RemoteCliDeps): number {
     case 'link':
       deps.err('Start the host and turn remote access on, then run this again')
       return 1
+    case 'log':
+      return logFromFile(deps)
     case 'unlink': {
       const file = linkedAccountPath(deps.hostRoot)
       if (!existsSync(file)) {

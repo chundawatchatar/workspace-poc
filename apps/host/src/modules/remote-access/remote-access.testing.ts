@@ -8,6 +8,8 @@ import type { Principal } from '../../lib/principal'
 import { AccessKeyRepository } from '../access/access.repository'
 import type { EnrollAnswer, EnrollRequest, TunnelClientOptions } from '../tunnel/tunnel.service'
 import type { OpenChannel } from '../tunnel/tunnel-channels.service'
+import { AuditLogRepository } from './audit-log.repository'
+import { AuditLogService } from './audit-log.service'
 import { DevicesRepository } from './devices.repository'
 import { LinkedAccountRepository } from './linked-account.repository'
 import { testRelayKey } from './relay-ticket.testing'
@@ -103,6 +105,7 @@ export function setup(saved?: RemoteAccessSettings | string, env: RemoteAccessEn
     repository: new RemoteAccessRepository(settingsFile()),
     linkedAccounts: new LinkedAccountRepository(linkedFile()),
     devices: new DevicesRepository(devicesFile()),
+    audit: new AuditLogService(new AuditLogRepository(join(dir, 'remote-audit.jsonl'))),
     secretFile: secretFile(),
     keysFile: keysFile(),
     env,

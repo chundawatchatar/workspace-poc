@@ -13,7 +13,8 @@ const POLL_MS = 2000
  * The Remote access dialog, connected to the host's `routes.remoteAccess` and
  * `routes.access.rotate`. While an account is linked it also lists the
  * browsers approved for it, and always the browsers connected through the
- * tunnel now, both polled like the status. A link key lives only in
+ * tunnel now and the recent remote access the host recorded, all polled like
+ * the status. A link key lives only in
  * this component's state: preview and link go through `callApi`, not a
  * mutation, so it never enters TanStack Query's caches, and it is dropped on
  * link, cancel and close.
@@ -31,6 +32,7 @@ export function RemoteAccessSetting() {
     refetchInterval: POLL_MS,
     retry: false,
   })
+  const auditLog = useQuery({ ...apiQuery(routes.remoteAccess.auditLog, {}), refetchInterval: POLL_MS, retry: false })
   const approveDevice = useMutation(apiMutation(routes.remoteAccess.approveDevice))
   const removeDevice = useMutation(apiMutation(routes.remoteAccess.removeDevice))
   const sessions = useQuery({ ...apiQuery(routes.remoteAccess.sessions, {}), refetchInterval: POLL_MS, retry: false })
@@ -184,6 +186,7 @@ export function RemoteAccessSetting() {
         onDismiss: (id) => changeDevice(() => removeDevice.mutateAsync({ id })),
         onRevoke: (id) => changeDevice(() => removeDevice.mutateAsync({ id })),
       }}
+      activity={{ entries: auditLog.data?.entries, failed: auditLog.isError }}
       sessions={{ sessions: sessions.data, onEnd: endDeviceSession }}
       error={error}
       busy={

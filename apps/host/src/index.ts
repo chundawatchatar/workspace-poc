@@ -12,6 +12,8 @@ import { AgentTrackingRepository, agentTrackingPath } from './modules/agent-trac
 import { AgentTrackingService } from './modules/agent-tracking/agent-tracking.service'
 import { EventHub } from './modules/events/events.service'
 import { dataFile, LayoutRepository } from './modules/layout/layout.repository'
+import { AuditLogRepository, auditLogPath } from './modules/remote-access/audit-log.repository'
+import { AuditLogService } from './modules/remote-access/audit-log.service'
 import { DevicesRepository, devicesPath } from './modules/remote-access/devices.repository'
 import { LinkedAccountRepository, linkedAccountPath } from './modules/remote-access/linked-account.repository'
 import { RemoteAccessRepository, remoteAccessPath } from './modules/remote-access/remote-access.repository'
@@ -62,6 +64,7 @@ const remoteAccess = new RemoteAccessService({
   repository: new RemoteAccessRepository(remoteAccessPath(hostRoot)),
   linkedAccounts: new LinkedAccountRepository(linkedAccountPath(hostRoot)),
   devices: new DevicesRepository(devicesPath(hostRoot)),
+  audit: new AuditLogService(new AuditLogRepository(auditLogPath(hostRoot))),
   secretFile: machineSecretFile(hostRoot),
   keysFile: accessKeysPath(hostRoot),
   env: { SERVER_URL: optionalEnv('SERVER_URL'), CLIENT_URL: optionalEnv('CLIENT_URL') },

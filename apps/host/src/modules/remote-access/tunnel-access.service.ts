@@ -1,9 +1,11 @@
+import type { Principal } from '../../lib/principal'
 import type { AccessKeys } from '../access/access.service'
 import {
   type Authorization,
   type Credentials,
   DEVICE_NOT_APPROVED,
   type PresentedProof,
+  type Refusal,
 } from '../tunnel/tunnel-http.service'
 import { SpentNonces, type VerifiedDeviceProof, verifyDeviceProof } from './device-proof.service'
 import type { DevicesService } from './devices.service'
@@ -46,28 +48,38 @@ export class TunnelAccess {
    * proof from any other device records it as waiting and answers
    * `DEVICE_NOT_APPROVED`. With `once`, as for a socket, a ticket that already
    * opened one is refused. A linked file without `accountId` or `relayKeys`
-   * accepts no ticket.
+   * accepts no ticket. Each refusal tells `refused` why, with the device when
+   * its proof verified.
    */
-  authorize({ key, ticket, device = null, once = false }: Credentials): Authorization {
+  authorize(
+    { key, ticket, device = null, once = false }: Credentials,
+    refused: (refusal: Refusal) => void = () => {},
+  ): Authorization {
     const machineId = this.state.machineId()
     const now = Date.now()
+    const refuse = (reason: Refusal['reason'], verified?: VerifiedDeviceProof, principal?: Principal['kind']) => {
+      refused(verified && principal ? { reason, device: { id: verified.deviceId, principal } } : { reason })
+      return reason === 'device_not_approved' ? DEVICE_NOT_APPROVED : null
+    }
     if (key !== null) {
       const principal = this.state.keys()?.authorize(key)
-      if (!principal || !device || !machineId) return null
+      if (!principal || !machineId) return refuse('key_refused')
+      if (!device) return refuse('proof_refused')
       const verified = this.verifyProof(device, machineId, now)
-      if (!verified) return null
-      if (!this.isApproved(verified)) return DEVICE_NOT_APPROVED
+      if (!verified) return refuse('proof_refused')
+      if (!this.isApproved(verified)) return refuse('device_not_approved', verified, 'key')
       return { ...principal, deviceId: verified.deviceId }
     }
     const linked = this.state.linked()
-    if (!ticket || !device || !linked?.accountId || !linked.relayKeys || !machineId) return null
-    if (linked.serverUrl !== this.state.serverUrl()) return null
+    if (!ticket || !linked?.accountId || !linked.relayKeys || !machineId) return refuse('ticket_refused')
+    if (linked.serverUrl !== this.state.serverUrl()) return refuse('ticket_refused')
     const payload = verifyRelayTicket(ticket, { keys: linked.relayKeys, machineId, accountId: linked.accountId, now })
-    if (!payload) return null
+    if (!payload) return refuse('ticket_refused')
+    if (!device) return refuse('proof_refused')
     const verified = this.verifyProof(device, machineId, now)
-    if (!verified) return null
-    if (once && !this.spentTickets.spend(payload, now)) return null
-    if (!this.isApproved(verified)) return DEVICE_NOT_APPROVED
+    if (!verified) return refuse('proof_refused')
+    if (once && !this.spentTickets.spend(payload, now)) return refuse('ticket_reused', verified, 'account')
+    if (!this.isApproved(verified)) return refuse('device_not_approved', verified, 'account')
     return { kind: 'account', accountId: payload.sub, deviceId: verified.deviceId }
   }
 

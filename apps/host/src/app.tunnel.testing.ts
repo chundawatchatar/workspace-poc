@@ -24,6 +24,8 @@ import { AccessKeyRepository } from './modules/access/access.repository'
 import { AccessKeys, machineIdFromSecret } from './modules/access/access.service'
 import { EventHub } from './modules/events/events.service'
 import type { LayoutRepository } from './modules/layout/layout.repository'
+import { AuditLogRepository } from './modules/remote-access/audit-log.repository'
+import { AuditLogService } from './modules/remote-access/audit-log.service'
 import { testDevice } from './modules/remote-access/device-proof.testing'
 import { DevicesRepository } from './modules/remote-access/devices.repository'
 import { LinkedAccountRepository } from './modules/remote-access/linked-account.repository'
@@ -92,6 +94,8 @@ export let keys: AccessKeys
 export let key: string
 export let remoteAccess: RemoteAccessService
 export let settingsFile: string
+/** The remote access audit log the harness's service writes. */
+export const auditFile = () => join(dir, 'remote-audit.jsonl')
 /** A browser approved on the machine before it starts, which signs the proofs that go with `key`. */
 export let device: Awaited<ReturnType<typeof testDevice>>
 
@@ -163,6 +167,7 @@ async function setUp() {
     repository: new RemoteAccessRepository(settingsFile),
     linkedAccounts: new LinkedAccountRepository(join(dir, 'linked-account.json')),
     devices: new DevicesRepository(join(dir, 'devices.json')),
+    audit: new AuditLogService(new AuditLogRepository(auditFile())),
     secretFile,
     keysFile,
     handle: async (request, principal) => app.fetch(request, tunnelEnv(principal)),
