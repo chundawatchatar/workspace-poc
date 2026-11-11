@@ -131,7 +131,7 @@ describe('machines module', () => {
     expect(await rowsOf(machineId)).toHaveLength(1)
   })
 
-  test("lists only the caller's machines, newest first, online exactly while the registry holds them", async () => {
+  test("lists only the caller's machines, newest first, online while registered, remote off after `remote.off`", async () => {
     const ada = await signedIn()
     const bob = await signedIn()
     const [older, newer, bobs] = [freshMachineId(), freshMachineId(), freshMachineId()]
@@ -144,11 +144,27 @@ describe('machines module', () => {
       ['Older', false],
     ])
 
+    const state = async () => {
+      const machine = (await list(ada)).find((m) => m.machineId === older)
+      return { online: machine?.online, remoteOff: machine?.remoteOff }
+    }
     const conn: MachineConnection = { machineId: older, send: () => {}, close: () => {} }
     ctx.registry.register(conn)
-    expect((await list(ada)).find((m) => m.machineId === older)?.online).toBe(true)
+    expect(await state()).toEqual({ online: true, remoteOff: false })
     ctx.registry.remove(conn)
-    expect((await list(ada)).find((m) => m.machineId === older)?.online).toBe(false)
+    expect(await state()).toEqual({ online: false, remoteOff: false })
+
+    // `remote.off` shows only once its tunnel is gone, and a tunnel that drops without it is plain offline.
+    const off: MachineConnection = { ...conn }
+    ctx.registry.register(off)
+    ctx.registry.markRemoteOff(off)
+    expect(await state()).toEqual({ online: true, remoteOff: false })
+    ctx.registry.remove(off)
+    expect(await state()).toEqual({ online: false, remoteOff: true })
+    const dropped: MachineConnection = { ...conn }
+    ctx.registry.register(dropped)
+    ctx.registry.remove(dropped)
+    expect(await state()).toEqual({ online: false, remoteOff: false })
   })
 
   test("renames and unlinks the caller's machine, and answers 404 for one only another user linked", async () => {

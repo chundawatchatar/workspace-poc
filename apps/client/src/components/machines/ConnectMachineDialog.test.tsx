@@ -13,7 +13,7 @@ const account = authUser({ id: 'u1', email: 'u1@example.com', name: 'U' })
 const at = '2026-10-30T12:00:00.000Z'
 
 function machine(id: string, name: string): ServerMachine {
-  return { machineId: id.repeat(43), name, createdAt: at, lastOpenedAt: at, online: true }
+  return { machineId: id.repeat(43), name, createdAt: at, lastOpenedAt: at, online: true, remoteOff: false }
 }
 
 /** A fake enrollment key with the contract's shape, ending in `tail` (4 characters), so its fingerprint is `tail`. */

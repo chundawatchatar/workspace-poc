@@ -168,6 +168,13 @@ describe('tunnel frames', () => {
     expect(decodeFrame(machineFrame, JSON.stringify(frame))).toBeNull()
   })
 
+  test('remote.off carries nothing else, and only the machine sends it', () => {
+    const frame = { type: 'remote.off' } as const
+    expect(decodeFrame(machineFrame, encodeFrame(frame))).toEqual(frame)
+    expect(decodeFrame(machineFrame, JSON.stringify({ ...frame, reason: 'x' }))).toBeNull()
+    expect(decodeFrame(serverFrame, JSON.stringify(frame))).toBeNull()
+  })
+
   test('ws payloads count their UTF-8 length for strings and their byte length for binary', () => {
     for (const text of ['', 'abc', 'héllo', '€', '😀 ok', 'lone \ud800 surrogate']) {
       expect(wsPayloadBytes(text)).toBe(new TextEncoder().encode(text).byteLength)

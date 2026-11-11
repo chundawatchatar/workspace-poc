@@ -11,7 +11,7 @@ type MachineRow = typeof schema.machines.$inferSelect
 
 /**
  * The signed-in user's machines, as the accounts API sees them. Every query
- * goes through the user's scoped repository, and online state comes from the
+ * goes through the user's scoped repository, and online and remote-off state come from the
  * in-memory `registry`, so it is only right with one server instance.
  */
 export class MachinesService {
@@ -64,12 +64,14 @@ export class MachinesService {
   }
 
   private toMachine(row: MachineRow): ServerMachine {
+    const online = this.registry.get(row.machineId) !== undefined
     return {
       machineId: row.machineId,
       name: row.name,
       createdAt: row.createdAt.toISOString(),
       lastOpenedAt: row.lastOpenedAt.toISOString(),
-      online: this.registry.get(row.machineId) !== undefined,
+      online,
+      remoteOff: !online && this.registry.isRemoteOff(row.machineId),
     }
   }
 }

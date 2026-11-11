@@ -29,7 +29,10 @@ export class FakeTunnel {
   start() {
     this.status = 'connecting'
   }
-  stop() {
+  /** The options of every `stop` call, in order: `{ remoteOff: true }` or undefined. */
+  stops: ({ remoteOff: true } | undefined)[] = []
+  stop(options?: { remoteOff: true }) {
+    this.stops.push(options)
     this.status = 'off'
   }
   /** The open, authorized channels it reports. `closeChannels` drops the ones it matches. */

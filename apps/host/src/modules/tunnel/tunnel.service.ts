@@ -2,6 +2,7 @@ import {
   CLOSE_REPLACED,
   CLOSE_UNSUPPORTED_VERSION,
   decodeFrame,
+  encodeFrame,
   type enrollFailedFrame,
   type enrollPreviewedFrame,
   type enrollPreviewFrame,
@@ -178,12 +179,21 @@ export class TunnelClient {
     this.connect()
   }
 
-  /** Closes the tunnel with 1000 and cancels every timer and any pending reconnect. */
-  stop() {
+  /**
+   * Closes the tunnel with 1000 and cancels every timer and any pending
+   * reconnect. With `remoteOff`, a welcomed connection first tells the server
+   * the owner turned remote access off.
+   */
+  stop(options?: { remoteOff: true }) {
     this.stopped = true
     clearTimeout(this.reconnectTimer)
     this.reconnectTimer = undefined
     const conn = this.conn
+    // Written straight to the socket, not through the outbox, which may hold it back and drops it on release. Data
+    // queued before close() goes out before the close frame.
+    if (options?.remoteOff && conn?.welcomed && conn.ws.readyState === WebSocket.OPEN) {
+      conn.ws.send(encodeFrame({ type: 'remote.off' }))
+    }
     if (conn) this.release(conn)
     conn?.ws.close(1000, 'stopped')
     this.setState('off')

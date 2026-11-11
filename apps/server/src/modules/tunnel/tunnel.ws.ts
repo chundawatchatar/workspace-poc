@@ -30,7 +30,7 @@ export interface TunnelSocketDeps extends LimitsDeps {
   pingIntervalMs?: number
   /** How long a machine may stay silent before it is dropped. Defaults to 45 s. */
   heartbeatTimeoutMs?: number
-  /** Receives the `http.*` and `ws.*` frames of a welcomed machine. */
+  /** Receives the `http.*`, `ws.*`, `auth.failed` and `enroll.*` frames of a welcomed machine. */
   onFrame?(conn: MachineConnection, frame: MachineFrame): void
   /** Called once when a welcomed machine's tunnel closes, is dropped or is replaced. */
   onClose?(conn: MachineConnection): void
@@ -139,6 +139,7 @@ export function createTunnelSocket({
           heartbeatTimer?.refresh()
           if (frame.type === 'hello') shutdown(ws, CLOSE_POLICY, 'unexpected hello')
           else if (frame.type === 'ping') conn.send({ type: 'pong', nonce: frame.nonce })
+          else if (frame.type === 'remote.off') registry.markRemoteOff(conn)
           else if (frame.type !== 'pong') onFrame?.(conn, frame)
         },
         onDrain() {

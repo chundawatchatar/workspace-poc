@@ -12,14 +12,15 @@ import { focusClass, linkClass } from '../Centered'
 const smallButtonClass = `px-1.5 py-0.5 text-xs text-dim hover:bg-raised hover:text-ink active:bg-line ${focusClass}`
 
 /**
- * One of the account's machines: its name and online state, an Open link, and rename and unlink. The account opens
+ * One of the account's machines: its name, whether it is online, offline or has remote access turned off, an Open
+ * link, and rename and unlink. The account opens
  * it from any browser, so every row can be opened.
  */
 export function MachineRow({ machine, userId }: { machine: ServerMachine; userId: string }) {
   const queryClient = useQueryClient()
   const [renaming, setRenaming] = useState(false)
   const unlink = useMutation(unlinkMachineMutation(queryClient, userId))
-  const { machineId, name, online } = machine
+  const { machineId, name, online, remoteOff } = machine
 
   return (
     <li className="flex flex-col gap-2 px-3 py-2">
@@ -33,7 +34,7 @@ export function MachineRow({ machine, userId }: { machine: ServerMachine; userId
           </span>
           <span className={`flex items-center gap-1.5 text-xs ${online ? 'text-good' : 'text-faint'}`}>
             <span aria-hidden className={`size-1.5 rounded-full ${online ? 'bg-good' : 'bg-faint'}`} />
-            {online ? 'Online' : 'Offline'}
+            {remoteOff ? 'Remote access off' : online ? 'Online' : 'Offline'}
           </span>
           <Link
             to="/m/$machineId"

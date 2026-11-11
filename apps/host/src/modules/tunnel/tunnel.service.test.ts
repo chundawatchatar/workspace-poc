@@ -266,6 +266,23 @@ describe('TunnelClient', () => {
     expect(conns[0]?.closed?.code).toBe(1000)
   })
 
+  test('stop with remoteOff sends one remote.off before the 1000 close, and a plain stop sends none', async () => {
+    const off = start()
+    await until(() => logs.includes('tunnel connected as machine-0'))
+    off.stop({ remoteOff: true })
+    await until(() => conns[0]?.closed !== null)
+    expect(conns[0]?.frames.filter((f) => f.type === 'remote.off')).toHaveLength(1)
+    expect(conns[0]?.frames.at(-1)).toEqual({ type: 'remote.off' })
+    expect(conns[0]?.closed?.code).toBe(1000)
+
+    const plain = start()
+    await until(() => logs.includes('tunnel connected as machine-1'))
+    plain.stop()
+    await until(() => conns[1]?.closed !== null)
+    expect(conns[1]?.frames.some((f) => f.type === 'remote.off')).toBe(false)
+    expect(conns[1]?.closed?.code).toBe(1000)
+  })
+
   test('enroll resolves each request with its own answer, and rejects before welcome, on timeout and on a lost tunnel', async () => {
     const key = `oek_${'k'.repeat(43)}`
     const account = { name: 'Ada', maskedEmail: 'a***@example.com' }

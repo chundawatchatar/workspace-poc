@@ -165,7 +165,7 @@ describe('enrollment over the tunnel', () => {
     })
     expect((await enrollmentRow(created.key))?.usedAt).toBeInstanceOf(Date)
     const [linked] = await machinesOf(ada)
-    expect(linked).toMatchObject({ machineId: box.machineId, name: 'Build box', online: true })
+    expect(linked).toMatchObject({ machineId: box.machineId, name: 'Build box', online: true, remoteOff: false })
     expect(await machinesOf(bob)).toEqual([])
 
     // A second key for a machine the owner already has keeps its name and refreshes `lastOpenedAt`.
