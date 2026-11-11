@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { type DevicesResponse, fingerprintKey, type LinkedAccount, type RemoteAccessStatus, routes } from '@orch/shared'
+import {
+  type DevicesResponse,
+  fingerprintKey,
+  type LinkedAccount,
+  type RemoteAccessStatus,
+  type RemoteSession,
+  routes,
+} from '@orch/shared'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -49,11 +56,14 @@ function setup({ linked = false } = {}) {
     tunnel: 'connected',
     linkedAccount: linked ? linkedAccount : null,
   }
+  // The fake host's open sessions; a test sets them to stand for browsers connecting.
+  const live = { sessions: [] as RemoteSession[] }
   const sent: [string, unknown][] = []
   const transport: HostTransport = {
     request: async (path, init) => {
       if (path === routes.remoteAccess.status.path) return Response.json(status)
       if (path === routes.remoteAccess.devices.path) return Response.json(devices)
+      if (path === routes.remoteAccess.sessions.path) return Response.json(live)
       const body: unknown = JSON.parse(String(init.body))
       sent.push([path, body])
       if (path === routes.remoteAccess.previewLink.path) {
@@ -83,11 +93,17 @@ function setup({ linked = false } = {}) {
       }
       if (path === routes.remoteAccess.removeDevice.path) {
         const { id } = body as { id: string }
+        live.sessions = live.sessions.filter((session) => session.deviceId !== id)
         devices = {
           pending: devices.pending.filter((d) => d.id !== id),
           approved: devices.approved.filter((d) => d.id !== id),
         }
         return Response.json(devices)
+      }
+      if (path === routes.remoteAccess.endSession.path) {
+        const { id } = body as { id: string }
+        live.sessions = live.sessions.filter((session) => session.deviceId !== id)
+        return Response.json(live)
       }
       if (path === routes.remoteAccess.unlink.path) {
         status = { ...status, linkedAccount: null }
@@ -104,7 +120,7 @@ function setup({ linked = false } = {}) {
       <RemoteAccessSetting />
     </QueryClientProvider>,
   )
-  return { sent, queryClient }
+  return { sent, queryClient, live }
 }
 
 describe('RemoteAccessSetting', () => {
@@ -168,6 +184,37 @@ describe('RemoteAccessSetting', () => {
     expect(sent).toEqual([
       [routes.remoteAccess.approveDevice.path, { fingerprint: 'aaaaaaaa-aaaaaaaa' }],
       [routes.remoteAccess.removeDevice.path, { id: deviceB.id }],
+      [routes.remoteAccess.removeDevice.path, { id: deviceC.id }],
+    ])
+  })
+
+  test('Sessions picks up a connected browser within a poll, End closes it, and Revoke drops its session', async () => {
+    const user = userEvent.setup()
+    const { sent, live } = setup({ linked: true })
+    const section = await screen.findByRole('region', { name: 'Sessions' })
+    expect(section).toHaveTextContent('No browser is connected through the tunnel.')
+
+    const session = (device: typeof deviceA): RemoteSession => ({
+      deviceId: device.id,
+      fingerprint: device.fingerprint,
+      credentials: [{ kind: 'account' }],
+      sockets: 2,
+      startedAt: '2026-11-04T12:10:00.000Z',
+    })
+    live.sessions = [session(deviceA), session(deviceC)]
+    const end = await screen.findByRole('button', { name: `End ${deviceA.fingerprint}` }, { timeout: 3000 })
+    expect(section).toHaveTextContent('Account · 2 sockets')
+
+    await user.click(end)
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: `End ${deviceA.fingerprint}` })).not.toBeInTheDocument(),
+    )
+    await user.click(screen.getByRole('button', { name: `Revoke ${deviceC.fingerprint}` }))
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: `End ${deviceC.fingerprint}` })).not.toBeInTheDocument(),
+    )
+    expect(sent).toEqual([
+      [routes.remoteAccess.endSession.path, { id: deviceA.id }],
       [routes.remoteAccess.removeDevice.path, { id: deviceC.id }],
     ])
   })
