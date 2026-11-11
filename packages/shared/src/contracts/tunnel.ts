@@ -8,7 +8,7 @@ import { machineNameSchema } from './serverMachines'
 // HTTP requests and WebSockets over it as these frames. This file runs in the
 // host, the server and the browser, so it uses only web-standard APIs.
 
-export const TUNNEL_PROTOCOL_VERSION = 1
+export const TUNNEL_PROTOCOL_VERSION = 2
 
 /** The server path machines open their tunnel socket on. Its messages are tunnel frames, not JSON client messages. */
 export const TUNNEL_PATH = '/tunnel'
@@ -36,11 +36,26 @@ const bytes = z.instanceof(Uint8Array)
 /** Header `[name, value]` pairs in order, so repeated headers survive. */
 const headers = z.array(z.tuple([z.string(), z.string()]))
 
-/** Opens the tunnel. `proof` is the machine secret (32 bytes, base64url), which the server hashes into the machine id. */
+const base64url = (length: number) => z.string().regex(new RegExp(`^[A-Za-z0-9_-]{${length}}$`))
+
+/**
+ * The server's first frame on every tunnel socket: 32 fresh random bytes as
+ * unpadded base64url, which the machine signs in its `hello`. Each nonce
+ * answers one `hello` on that one socket.
+ */
+export const challengeFrame = z.object({ type: z.literal('challenge'), nonce: base64url(43) })
+
+/**
+ * Opens the tunnel, answering `challenge`. `publicKey` is the machine's raw
+ * 32-byte Ed25519 key and `signature` its 64-byte signature over
+ * `helloSignedMessage(nonce)`, both unpadded base64url. The server hashes the
+ * key into the machine id and never sees the private key.
+ */
 export const helloFrame = z.object({
   type: z.literal('hello'),
   version: z.number().int().positive(),
-  proof: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  publicKey: base64url(43),
+  signature: base64url(86),
 })
 
 /** The server's answer to `hello`, telling the machine its id. */
@@ -197,6 +212,7 @@ export const machineFrame = z.discriminatedUnion('type', [
 
 /** Frames the server sends to the machine. */
 export const serverFrame = z.discriminatedUnion('type', [
+  challengeFrame,
   welcomeFrame,
   httpRequestFrame,
   wsOpenFrame,
@@ -224,6 +240,40 @@ const byteField: Partial<Record<TunnelFrame['type'], string>> = {
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder('utf-8', { fatal: true })
+
+/** Sets the signed `hello` apart from every other use of an Ed25519 key. */
+const HELLO_CONTEXT = 'orch-tunnel-hello'
+
+/**
+ * The exact bytes a machine signs in its `hello`: the context string, the
+ * protocol version and the server's nonce, one per line. The context and the
+ * version keep the signature from counting as any other message.
+ */
+export function helloSignedMessage(nonce: string): Uint8Array<ArrayBuffer> {
+  return encoder.encode(`${HELLO_CONTEXT}\n${TUNNEL_PROTOCOL_VERSION}\n${nonce}`)
+}
+
+/**
+ * The machine id for a `hello`'s `publicKey`: the SHA-256 of the raw key
+ * bytes as unpadded base64url (43 characters). Anyone holding the key can
+ * check it against the id without trusting the server.
+ */
+export async function machineIdFromPublicKey(publicKey: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', fromBase64url(publicKey))
+  return toBase64url(new Uint8Array(digest))
+}
+
+function fromBase64url(value: string): Uint8Array<ArrayBuffer> {
+  const base64 = value.replace(/-/g, '+').replace(/_/g, '/')
+  const binary = atob(base64 + '='.repeat((4 - (base64.length % 4)) % 4))
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0))
+}
+
+function toBase64url(bytes: Uint8Array): string {
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
 
 /**
  * The bytes a `ws.data` payload counts for in a channel's window: the UTF-8

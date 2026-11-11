@@ -12,6 +12,7 @@ import {
   type HostInfo,
   type MachineFrame,
   machineFrame,
+  machineIdFromPublicKey,
   type ServerFrame,
   TUNNEL_PATH,
   wsPayloadBytes,
@@ -21,7 +22,7 @@ import type { Server, ServerWebSocket } from 'bun'
 import { type AppDeps, createApp } from './app'
 import { tunnelEnv } from './lib/principal'
 import { AccessKeyRepository } from './modules/access/access.repository'
-import { AccessKeys, machineIdFromSecret } from './modules/access/access.service'
+import { AccessKeys } from './modules/access/access.service'
 import { EventHub } from './modules/events/events.service'
 import type { LayoutRepository } from './modules/layout/layout.repository'
 import { AuditLogRepository } from './modules/remote-access/audit-log.repository'
@@ -33,6 +34,7 @@ import { testRelayKey } from './modules/remote-access/relay-ticket.testing'
 import { RemoteAccessRepository } from './modules/remote-access/remote-access.repository'
 import { RemoteAccessService } from './modules/remote-access/remote-access.service'
 import { TunnelClient } from './modules/tunnel/tunnel.service'
+import { createTestMachineKey, helloVerifies, testNonce } from './modules/tunnel/tunnel.testing'
 
 // Test-only harness for the host's sockets end to end: a real app, remote
 // access service and tunnel client, wired as `index.ts` wires them and turned
@@ -40,7 +42,9 @@ import { TunnelClient } from './modules/tunnel/tunnel.service'
 // the other, and the same app served locally to compare against. Each test
 // file calls `useTunnelHarness()` once. Never imported by production code.
 
-export const secret = `${'S'.repeat(42)}s`
+/** The machine key the harness's host loads from its `machine-key` file, and the id the fake server derives from it. */
+export const machineKey = createTestMachineKey()
+export const machineId = await machineIdFromPublicKey(machineKey.publicKey)
 /** The user id the fake server says owns every enrollment key, and the key it signs relay tickets with. */
 export const ACCOUNT_ID = 'acct-ada-1'
 export const relay = testRelayKey()
@@ -79,6 +83,10 @@ function stubSessions() {
 export interface Conn {
   ws: ServerWebSocket<unknown>
   frames: MachineFrame[]
+  /** Every message the machine sent, as received. */
+  raw: string[]
+  /** The nonce of the `challenge` the fake server sent this socket. */
+  nonce: string
 }
 
 export let server: Server<unknown>
@@ -130,17 +138,23 @@ async function setUp() {
     },
     websocket: {
       open(ws) {
-        conns.push({ ws, frames: [] })
+        // Like the server, it challenges every socket and welcomes only a hello signed over that challenge.
+        const nonce = testNonce()
+        conns.push({ ws, frames: [], raw: [], nonce })
+        ws.send(encodeFrame({ type: 'challenge', nonce }))
       },
-      message(ws, data) {
+      async message(ws, data) {
         const conn = conns.find((c) => c.ws === ws)
+        if (!conn) return
+        conn.raw.push(typeof data === 'string' ? data : Buffer.from(data).toString('latin1'))
         const frame = decodeFrame(machineFrame, data)
-        if (!conn || !frame) return
+        if (!frame) return
         conn.frames.push(frame)
-        if (frame.type === 'hello') send(conn, { type: 'welcome', machineId: machineIdFromSecret(secret) })
+        if (frame.type === 'hello' && helloVerifies(frame, conn.nonce)) {
+          send(conn, { type: 'welcome', machineId: await machineIdFromPublicKey(frame.publicKey) })
+        }
         if (frame.type === 'enroll.redeem') {
           const account = { name: 'Ada', maskedEmail: 'a***@example.com' }
-          const machineId = machineIdFromSecret(secret)
           const relayKeys = [relay.relayKey]
           send(conn, { type: 'enroll.redeemed', id: frame.id, machineId, accountId: ACCOUNT_ID, account, relayKeys })
         }
@@ -152,10 +166,10 @@ async function setUp() {
     },
   })
 
-  const secretFile = join(dir, 'machine-secret')
+  const machineKeyFile = join(dir, 'machine-key')
   const keysFile = join(dir, 'access-keys.json')
   settingsFile = join(dir, 'remote-access.json')
-  writeFileSync(secretFile, secret)
+  writeFileSync(machineKeyFile, machineKey.pem, { mode: 0o600 })
   const approved = [{ id: device.id, publicKey: device.publicKey, approvedAt: new Date().toISOString() }]
   new DevicesRepository(join(dir, 'devices.json')).save(approved)
   key = new AccessKeys(new AccessKeyRepository(keysFile)).create('default')
@@ -168,7 +182,7 @@ async function setUp() {
     linkedAccounts: new LinkedAccountRepository(join(dir, 'linked-account.json')),
     devices: new DevicesRepository(join(dir, 'devices.json')),
     audit: new AuditLogService(new AuditLogRepository(auditFile())),
-    secretFile,
+    machineKeyFile,
     keysFile,
     handle: async (request, principal) => app.fetch(request, tunnelEnv(principal)),
     openSocket: (path, headers, conn, principal) => sockets.open(path, headers, conn, principal),
@@ -231,7 +245,7 @@ export const dataOn = (conn: Conn, channel: number) =>
 
 /** The auth message for key `presented` on a socket at `path`, with a fresh proof from the approved `device`. */
 export const auth = async (presented: string, path: string) =>
-  JSON.stringify({ type: 'auth', key: presented, device: await device.socket(machineIdFromSecret(secret), path) })
+  JSON.stringify({ type: 'auth', key: presented, device: await device.socket(machineId, path) })
 
 /** The headers of a tunneled request with key `presented`, and a fresh proof from the approved `device`. */
 export async function keyHeaders(
@@ -240,7 +254,7 @@ export async function keyHeaders(
   path: string,
   body = '',
 ): Promise<[string, string][]> {
-  const proof = await device.proof({ machineId: machineIdFromSecret(secret), method, path, body })
+  const proof = await device.proof({ machineId, method, path, body })
   return [
     [ACCESS_KEY_HEADER, presented],
     [DEVICE_PROOF_HEADER, proof],

@@ -79,7 +79,7 @@ export let service: RemoteAccessService
 
 export const settingsFile = () => join(dir, 'remote-access.json')
 export const keysFile = () => join(dir, 'access-keys.json')
-export const secretFile = () => join(dir, 'machine-secret')
+export const machineKeyFile = () => join(dir, 'machine-key')
 export const linkedFile = () => join(dir, 'linked-account.json')
 export const devicesFile = () => join(dir, 'devices.json')
 
@@ -109,7 +109,7 @@ export function setup(saved?: RemoteAccessSettings | string, env: RemoteAccessEn
     linkedAccounts: new LinkedAccountRepository(linkedFile()),
     devices: new DevicesRepository(devicesFile()),
     audit: new AuditLogService(new AuditLogRepository(join(dir, 'remote-audit.jsonl'))),
-    secretFile: secretFile(),
+    machineKeyFile: machineKeyFile(),
     keysFile: keysFile(),
     env,
     handle: async () => new Response('ok'),

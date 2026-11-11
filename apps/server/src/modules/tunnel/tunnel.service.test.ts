@@ -1,22 +1,9 @@
 import { describe, expect, test } from 'bun:test'
-import { type MachineConnection, MachineRegistry, machineIdFromProof } from './tunnel.service'
-
-const proofA = 'a'.repeat(43)
-const proofB = 'b'.repeat(43)
+import { type MachineConnection, MachineRegistry } from './tunnel.service'
 
 function connection(machineId: string): MachineConnection {
-  return { machineId, send: () => {}, close: () => {} }
+  return { machineId, publicKey: `${'P'.repeat(42)}w`, send: () => {}, close: () => {} }
 }
-
-describe('machineIdFromProof', () => {
-  test('gives each proof a stable 43-character base64url id that does not contain it', () => {
-    const id = machineIdFromProof(proofA)
-    expect(id).toMatch(/^[A-Za-z0-9_-]{43}$/)
-    expect(machineIdFromProof(proofA)).toBe(id)
-    expect(machineIdFromProof(proofB)).not.toBe(id)
-    expect(id).not.toContain(proofA)
-  })
-})
 
 describe('MachineRegistry', () => {
   test('keeps the newest connection per machine and ignores the removal of a replaced one', () => {

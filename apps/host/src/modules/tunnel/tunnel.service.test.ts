@@ -18,8 +18,9 @@ import {
   type TunnelClientOptions,
   type TunnelTimings,
 } from './tunnel.service'
+import { createTestMachineKey, helloVerifies, testNonce } from './tunnel.testing'
 
-const secret = `${'S'.repeat(42)}s`
+const key = createTestMachineKey()
 const timings: Partial<TunnelTimings> = {
   welcomeTimeoutMs: 80,
   pingIntervalMs: 20,
@@ -33,16 +34,22 @@ const timings: Partial<TunnelTimings> = {
 interface Conn {
   ws: ServerWebSocket<unknown>
   frames: MachineFrame[]
+  /** Every message the machine sent, as received. */
+  raw: string[]
+  /** The nonce of the `challenge` this socket was sent, if any. */
+  nonce: string | null
   closed: { code: number; reason: string } | null
   openedAt: number
 }
 
 /**
- * How the fake server treats a socket: `normal` welcomes it and answers pings,
- * `silent` welcomes it then says nothing, `mute` never welcomes it, and a
- * function runs after the welcome.
+ * How the fake server treats a socket: `normal` challenges it, welcomes a
+ * `hello` signed over the challenge and answers pings, `silent` welcomes it
+ * then says nothing, `mute` challenges it but never welcomes it, `old` sends
+ * no challenge (a server on the previous protocol), and a function runs after
+ * the welcome.
  */
-type Mode = 'normal' | 'silent' | 'mute' | ((conn: Conn, index: number) => void)
+type Mode = 'normal' | 'silent' | 'mute' | 'old' | ((conn: Conn, index: number) => void)
 
 let server: Server<unknown>
 let conns: Conn[]
@@ -68,16 +75,20 @@ beforeEach(() => {
     },
     websocket: {
       open(ws) {
-        conns.push({ ws, frames: [], closed: null, openedAt: Date.now() })
+        const nonce = mode === 'old' ? null : testNonce()
+        conns.push({ ws, frames: [], raw: [], nonce, closed: null, openedAt: Date.now() })
+        if (nonce) ws.send(encodeFrame({ type: 'challenge', nonce }))
       },
       message(ws, data) {
         const index = conns.findIndex((c) => c.ws === ws)
         const conn = conns[index]
         const frame = decodeFrame(machineFrame, data)
-        if (!conn || !frame) return
+        if (!conn) return
+        conn.raw.push(typeof data === 'string' ? data : Buffer.from(data).toString('latin1'))
+        if (!frame) return
         conn.frames.push(frame)
         if (frame.type === 'hello') {
-          if (mode === 'mute') return
+          if (mode === 'mute' || !conn.nonce || !helloVerifies(frame, conn.nonce)) return
           send(conn, { type: 'welcome', machineId: `machine-${index}` })
           if (typeof mode === 'function') mode(conn, index)
         }
@@ -95,8 +106,8 @@ afterEach(async () => {
   for (const client of clients) client.stop()
   await server.stop(true)
   for (const spy of spies) spy.mockRestore()
-  // No log line, from any test, may carry the secret.
-  expect(logs.join('\n')).not.toContain(secret)
+  // No log line, from any test, may carry the private key.
+  expect(logs.join('\n')).not.toContain(key.privateKey)
 })
 
 function send(conn: Conn, frame: ServerFrame) {
@@ -108,7 +119,7 @@ function start(options: Partial<TunnelClientOptions> = {}) {
   if (!url) throw new Error('rejected the test server URL')
   const client = new TunnelClient({
     url,
-    secret,
+    key,
     authorize: () => ({ kind: 'key', keyId: 'k1', name: 'default', deviceId: 'd1' }),
     handle: async () => new Response('ok'),
     openSocket: () => ({ code: 1008, reason: 'no sockets here' }),
@@ -164,7 +175,7 @@ describe('backoffDelay', () => {
 })
 
 describe('TunnelClient', () => {
-  test('says hello once, logs the machine id, and keeps both heartbeats', async () => {
+  test('answers the challenge with one signed hello, logs the machine id, and keeps both heartbeats', async () => {
     start({ expectedMachineId: 'machine-expected' })
     await until(() => conns[0]?.frames.filter((f) => f.type === 'ping').length >= 2)
     const [conn] = conns
@@ -172,13 +183,23 @@ describe('TunnelClient', () => {
     send(conn, { type: 'ping', nonce: 77 })
     await until(() => conn.frames.some((f) => f.type === 'pong'))
 
-    expect(conn.frames[0]).toEqual({ type: 'hello', version: TUNNEL_PROTOCOL_VERSION, proof: secret })
+    const hello = conn.frames[0]
+    if (hello?.type !== 'hello' || !conn.nonce) throw new Error('no hello')
+    expect(hello).toEqual({
+      type: 'hello',
+      version: TUNNEL_PROTOCOL_VERSION,
+      publicKey: key.publicKey,
+      signature: expect.any(String),
+    })
+    expect(helloVerifies(hello, conn.nonce)).toBe(true)
     expect(conn.frames.filter((f) => f.type === 'hello')).toHaveLength(1)
+    // The private key is in no frame the machine sent.
+    expect(conn.raw.some((text) => text.includes(key.privateKey))).toBe(false)
     const nonces = conn.frames.flatMap((f) => (f.type === 'ping' ? [f.nonce] : []))
     expect(new Set(nonces).size).toBe(nonces.length)
     expect(conn.frames.find((f) => f.type === 'pong')).toEqual({ type: 'pong', nonce: 77 })
     expect(logs).toContain('tunnel connected as machine-0')
-    // The id differs from the one the secret implies; the warning names neither.
+    // The id differs from the one the key implies; the warning names neither.
     const warnings = logs.filter((line) => line.startsWith('warning:'))
     expect(warnings).toHaveLength(1)
     expect(warnings[0]).not.toContain('machine-')
@@ -202,13 +223,29 @@ describe('TunnelClient', () => {
     start()
     await until(() => (conns[1]?.frames.length ?? 0) > 0 && conns[0]?.closed !== null)
     expect(conns[0]?.closed?.code).toBe(1000)
-    expect(conns[1]?.frames).toEqual([{ type: 'hello', version: TUNNEL_PROTOCOL_VERSION, proof: secret }])
+    expect(conns[1]?.frames).toMatchObject([{ type: 'hello', version: TUNNEL_PROTOCOL_VERSION }])
+  })
+
+  test('sends nothing until the server challenges it, and says why it gives up on a server that never does', async () => {
+    mode = 'old'
+    start()
+    await until(() => (conns[1]?.openedAt ?? 0) > 0 && conns[0]?.closed !== null)
+    expect(conns[0]?.frames).toEqual([])
+    expect(conns[0]?.closed?.code).toBe(1000)
+    expect(logs.some((line) => line.includes('no challenge from server; is it up to date?'))).toBe(true)
+
+    // A welcome without a challenge does not count either.
+    const [, second] = conns
+    if (!second) throw new Error('no second connection')
+    send(second, { type: 'welcome', machineId: 'm' })
+    await Bun.sleep(20)
+    expect(logs.some((line) => line.startsWith('tunnel connected'))).toBe(false)
   })
 
   test('stops for good when the server refuses the version or another host takes over', async () => {
     for (const [code, message] of [
       [CLOSE_UNSUPPORTED_VERSION, 'Update this host'],
-      [CLOSE_REPLACED, 'another host using this machine secret'],
+      [CLOSE_REPLACED, 'another host using this machine key'],
     ] as const) {
       conns = []
       mode = (conn) => conn.ws.close(code, 'bye')

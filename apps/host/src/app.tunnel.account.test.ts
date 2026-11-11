@@ -11,9 +11,9 @@ import {
   ACCOUNT_ID,
   keys,
   local,
+  machineId,
   relay,
   remoteAccess,
-  secret,
   send,
   server,
   stub,
@@ -21,7 +21,6 @@ import {
   useTunnelHarness,
   welcomed,
 } from './app.tunnel.testing'
-import { machineIdFromSecret } from './modules/access/access.service'
 import { fingerprintOf } from './modules/remote-access/device-proof.service'
 import { testDevice } from './modules/remote-access/device-proof.testing'
 
@@ -32,7 +31,6 @@ useTunnelHarness()
 describe('tunneled account access', () => {
   test('a relay ticket opens requests and sockets only for an approved device, never local-only routes, and revoke and unlink end them', async () => {
     const conn = await welcomed()
-    const machineId = machineIdFromSecret(secret)
     const response = (id: number) => conn.frames.find((f) => f.type === 'http.response' && f.id === id)
     const ticket = () => relay.ticket({ sub: ACCOUNT_ID, aud: machineId })
     const [first, second] = await Promise.all([testDevice(), testDevice()])
@@ -109,7 +107,6 @@ describe('tunneled account access', () => {
 
   test('the sessions list counts the authorized sockets of each approved device by credential, and End closes one device without revoking it', async () => {
     const conn = await welcomed()
-    const machineId = machineIdFromSecret(secret)
     const path = '/ws/term/t1'
     const response = (id: number) => conn.frames.find((f) => f.type === 'http.response' && f.id === id)
     const [first, second] = await Promise.all([testDevice(), testDevice()])

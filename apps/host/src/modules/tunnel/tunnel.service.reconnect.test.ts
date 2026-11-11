@@ -9,11 +9,12 @@ import {
   type ServerFrame,
 } from '@orch/shared'
 import { TunnelClient } from './tunnel.service'
+import { createTestMachineKey, testNonce } from './tunnel.testing'
 
 // The wake watchdog and the pong timeout, under fake timers with a fake socket.
 // The real-server tests are in `tunnel.service.test.ts`.
 
-const secret = `${'S'.repeat(42)}s`
+const key = createTestMachineKey()
 
 let clients: TunnelClient[]
 let logs: string[]
@@ -36,7 +37,7 @@ afterEach(() => {
   for (const client of clients) client.stop()
   jest.useRealTimers()
   for (const spy of spies) spy.mockRestore()
-  expect(logs.join('\n')).not.toContain(secret)
+  expect(logs.join('\n')).not.toContain(key.privateKey)
 })
 
 /** A tunnel socket the test drives by hand, so the client can run under fake timers. */
@@ -57,10 +58,11 @@ class FakeSocket extends EventTarget {
     this.readyState = WebSocket.CLOSED
   }
 
-  /** Opens the socket and welcomes the client. */
+  /** Opens the socket, challenges the client and welcomes it. */
   welcome() {
     this.readyState = WebSocket.OPEN
     this.dispatchEvent(new Event('open'))
+    this.receive({ type: 'challenge', nonce: testNonce() })
     this.receive({ type: 'welcome', machineId: 'm' })
   }
 
@@ -86,7 +88,7 @@ describe('TunnelClient wake and pong checks', () => {
   function startFake() {
     const client = new TunnelClient({
       url: 'ws://127.0.0.1:1/tunnel',
-      secret,
+      key,
       authorize: () => ({ kind: 'key', keyId: 'k1', name: 'default', deviceId: 'd1' }),
       handle: async () => new Response('ok'),
       openSocket: () => ({ code: 1008, reason: 'no sockets here' }),

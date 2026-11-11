@@ -335,7 +335,7 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   shown once with its last 4 characters as a fingerprint. The `machine_enrollments` table stores only the key's
   SHA-256 hash, and a key works once, for 15 minutes. The machine sends it over its own tunnel as `enroll.preview`
   (which account the key belongs to, with the email masked as `a***@example.com`, without using it) and
-  `enroll.redeem` (links the machine). The machine id is always the tunnel's own, derived from its `hello` proof,
+  `enroll.redeem` (links the machine). The machine id is always the tunnel's own, the hash of the public key its `hello` signed with,
   never a field of the frame, so a machine can only enroll itself. Redeeming is one conditional
   `UPDATE … WHERE usedAt IS NULL AND expiresAt > now RETURNING userId`, so of two racing redeems exactly one wins,
   and linking then goes through the owner's `forUser` repositories, keeping an existing name. The lookups start from
@@ -476,6 +476,19 @@ The machine keeps one **always-on outbound WebSocket** to the server over port 4
 and Cloudflare Tunnel do. Polling adds up to a whole interval of delay to every keystroke, so it's unusable for
 terminals. An idle socket costs one TCP connection and a small ping, and one small VM holds thousands of them.
 
+- **The machine proves its key, never a secret.** Each machine has an Ed25519 machine key in
+  `apps/host/.data/machine-key` (`loadOrCreateMachineKey`, PKCS#8 PEM, mode 0600, never overwritten) whose private
+  half never leaves the host. When a tunnel socket opens, the server sends `challenge { nonce }` (32 fresh random
+  bytes), and the host answers `hello { version, publicKey, signature }`, signing `helloSignedMessage(nonce)`: the
+  context `orch-tunnel-hello`, the protocol version and the nonce. The server spends the nonce on the socket's first
+  message, checks the signature against the key in the `hello`, and welcomes the socket with
+  `machineIdFromPublicKey(publicKey)`, the SHA-256 of the raw key. A bad signature, a nonce from another socket or a
+  `hello` in another shape gets 1008 with a generic reason; another version gets `CLOSE_UNSUPPORTED_VERSION`. The
+  server keeps only the public key, on the `MachineConnection` in memory, and neither side logs the nonce, the
+  signature or the key. Since the id names the key, a later browser can pin the key against the id without trusting
+  the server. Open risk: the signed message does not name the server, so a server the machine dials could relay
+  another server's challenge and use the answer to pose as the machine there (the raw-secret `hello` it replaced
+  handed the secret over outright). A host that gets no challenge drops the socket with "no challenge from server".
 - **Heartbeats from both sides.** The server pings and drops a silent machine (job 005). The host also needs its own
   timeout: after sleep or a network switch a TCP connection can look open while it's dead, and only the host's side
   notices. Ping every 20–25 seconds, because many proxies and NATs drop idle connections after 30–60 seconds.

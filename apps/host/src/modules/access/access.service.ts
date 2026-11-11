@@ -17,14 +17,6 @@ function sha256(value: string): Buffer {
   return createHash('sha256').update(value).digest()
 }
 
-/**
- * The id the server gives the machine with `secret`: SHA-256 of the secret,
- * as unpadded base64url. It must match the server's derivation.
- */
-export function machineIdFromSecret(secret: string): string {
-  return sha256(secret).toString('base64url')
-}
-
 /** The connect link for `key`: `<clientUrl>/#machine=<id>&key=<key>`. */
 export function connectLink(clientUrl: string, machineId: string, key: string): string {
   return `${clientUrl.replace(/\/+$/, '')}/${formatConnectFragment({ machineId, key })}`

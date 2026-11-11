@@ -17,11 +17,10 @@ import {
   clientUrlFromServerUrl,
   connectLink,
   DEFAULT_KEY_NAME,
-  machineIdFromSecret,
   parseClientUrl,
   type RemoteAccess,
 } from '../access/access.service'
-import { loadOrCreateMachineSecret } from '../tunnel/tunnel.repository'
+import { loadOrCreateMachineKey, type MachineKey } from '../tunnel/tunnel.repository'
 import {
   type EnrollAnswer,
   type EnrollRequest,
@@ -64,8 +63,8 @@ export interface RemoteAccessServiceOptions {
   devices: DevicesRepository
   /** Where tunneled sockets and refusals are recorded, for the owner to read. */
   audit: AuditLogService
-  /** The machine secret file, created the first time remote access is needed. */
-  secretFile: string
+  /** The machine key file, created the first time remote access is needed. */
+  machineKeyFile: string
   /** The access keys file. */
   keysFile: string
   env?: RemoteAccessEnv
@@ -125,7 +124,7 @@ const ENROLL_FAILURES = {
 
 /**
  * Owns remote access while the host runs: the saved setting, the machine
- * secret, the access keys, the tunnel, the linked account and its devices. `SERVER_URL` and `CLIENT_URL`
+ * key, the access keys, the tunnel, the linked account and its devices. `SERVER_URL` and `CLIENT_URL`
  * override the saved addresses, and `SERVER_URL` turns the tunnel on at start
  * whatever the saved flag says. Nothing is read from disk until `start()`.
  */
@@ -134,7 +133,7 @@ export class RemoteAccessService {
   private readonly defaultServerUrl: string
   private saved: RemoteAccessSettings | null = null
   private linked: SavedLinkedAccount | null = null
-  private secret: string | null = null
+  private machineKey: MachineKey | null = null
   private keys: AccessKeys | null = null
   private tunnel: Tunnel | null = null
   /** The tunnel URL `tunnel` dials, so an update to the same address keeps it. */
@@ -201,7 +200,7 @@ export class RemoteAccessService {
     }
   }
 
-  /** The setting in use and where the tunnel stands. It never holds the machine secret, a key or a hash. */
+  /** The setting in use and where the tunnel stands. It never holds the machine's private key, an access key or a hash. */
   status(): RemoteAccessStatus {
     return {
       enabled: this.tunnel !== null,
@@ -415,15 +414,15 @@ export class RemoteAccessService {
     if (!url) throw new InvalidRemoteAccessSetting('No valid server address is known')
     if (this.tunnel && this.tunnelUrl === url && this.tunnel.status !== 'stopped') return
     const keys = this.loadKeys()
-    const secret = this.secret
-    if (!keys || !secret) throw new Error('the machine secret or the access keys could not be read')
-    this.ensureKey(keys, secret)
+    const machineKey = this.machineKey
+    if (!keys || !machineKey) throw new Error('the machine key or the access keys could not be read')
+    this.ensureKey(keys, machineKey.machineId)
     this.disconnect()
     const create = this.options.createTunnel ?? ((options) => new TunnelClient(options))
     const tunnel = create({
       url,
-      secret,
-      expectedMachineId: machineIdFromSecret(secret),
+      key: machineKey,
+      expectedMachineId: machineKey.machineId,
       authorize: (credentials, refused) => this.authorize(credentials, refused),
       handle: (request, principal) => this.options.handle(request, principal),
       openSocket: (path, headers, conn, principal) => this.options.openSocket(path, headers, conn, principal),
@@ -450,7 +449,7 @@ export class RemoteAccessService {
    * its connect link. Only its hash is kept, so this is the one time it is
    * shown. Throws when the key cannot be saved.
    */
-  private ensureKey(keys: AccessKeys, secret: string) {
+  private ensureKey(keys: AccessKeys, machineId: string) {
     if (keys.size > 0) return
     let key: string
     try {
@@ -458,7 +457,6 @@ export class RemoteAccessService {
     } catch (error) {
       throw new Error(`the access key could not be saved (${error instanceof Error ? error.message : error})`)
     }
-    const machineId = machineIdFromSecret(secret)
     const clientUrl = linkClientUrl(this.env, this.saved, this.defaultServerUrl)
     const target = clientUrl
       ? `Connect link: ${connectLink(clientUrl, machineId, key)}`
@@ -468,11 +466,11 @@ export class RemoteAccessService {
     )
   }
 
-  /** Loads the machine secret, creating it, and the access keys, once. Null when either cannot be read. */
+  /** Loads the machine key, creating it, and the access keys, once. Null when either cannot be read. */
   private loadKeys(): AccessKeys | null {
     if (this.keys) return this.keys
     try {
-      this.secret ??= loadOrCreateMachineSecret(this.options.secretFile)
+      this.machineKey ??= loadOrCreateMachineKey(this.options.machineKeyFile)
       this.keys = new AccessKeys(new AccessKeyRepository(this.options.keysFile), {
         // The tunnel open at the time of a rotation, not the one open when the keys were loaded.
         onRevoked: (keyIds) =>
@@ -482,23 +480,23 @@ export class RemoteAccessService {
           ),
       })
     } catch (error) {
-      // The repositories' messages never contain the secret, a key or a hash.
-      console.error(`no tunnel: ${error instanceof Error ? error.message : 'a secret file could not be read'}`)
+      // The repositories' messages never contain the machine key, an access key or a hash.
+      console.error(`no tunnel: ${error instanceof Error ? error.message : 'a key file could not be read'}`)
       return null
     }
     return this.keys
   }
 
-  /** The machine id, reading an existing secret without creating one. Null until a secret exists. */
+  /** The machine id, reading an existing machine key without creating one. Null until a key exists. */
   private machineId(): string | null {
-    if (!this.secret && existsSync(this.options.secretFile)) {
+    if (!this.machineKey && existsSync(this.options.machineKeyFile)) {
       try {
-        this.secret = loadOrCreateMachineSecret(this.options.secretFile)
+        this.machineKey = loadOrCreateMachineKey(this.options.machineKeyFile)
       } catch {
         return null
       }
     }
-    return this.secret ? machineIdFromSecret(this.secret) : null
+    return this.machineKey?.machineId ?? null
   }
 
   /**

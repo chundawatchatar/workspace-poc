@@ -6,6 +6,7 @@ import {
   decodeFrame,
   encodeFrame,
   type MachineFrame,
+  machineIdFromPublicKey,
   type ServerFrame,
   serverFrame,
   TUNNEL_PATH,
@@ -17,10 +18,11 @@ import { serverWebSocket } from '../../lib/websocket'
 import { ChannelBridge } from '../bridge/bridge.service'
 import { HttpForwarder } from '../forward/forward.service'
 import { ConnectionLimiter } from '../limits/limits.service'
-import { MachineRegistry, machineIdFromProof } from './tunnel.service'
+import { MachineRegistry } from './tunnel.service'
+import { createTestMachineKey, type TestMachineKey } from './tunnel.testing'
 
-const proofA = `${'A'.repeat(42)}a`
-const proofB = `${'B'.repeat(42)}b`
+const keyA = await createTestMachineKey()
+const keyB = await createTestMachineKey()
 const timings = { helloTimeoutMs: 150, pingIntervalMs: 30, heartbeatTimeoutMs: 120 }
 
 let registry: MachineRegistry
@@ -87,64 +89,98 @@ async function until(check: () => boolean, timeoutMs = 1000) {
   }
 }
 
-async function hello(proof: string, options?: { pong?: boolean }) {
+/** The nonce of the `challenge` the server sent `machine`, once it has arrived. */
+async function challengeOf(machine: Machine): Promise<string> {
+  await until(() => machine.frames.some((f) => f.type === 'challenge'))
+  const frame = machine.frames.find((f) => f.type === 'challenge')
+  return frame?.type === 'challenge' ? frame.nonce : ''
+}
+
+/** A welcomed machine: it answers its challenge with `key`'s signed `hello`. */
+async function hello(key: TestMachineKey, options?: { pong?: boolean }) {
   const machine = await connect(options)
-  machine.send({ type: 'hello', version: TUNNEL_PROTOCOL_VERSION, proof })
+  machine.send(key.hello(await challengeOf(machine)))
   await until(() => machine.frames.some((f) => f.type === 'welcome'))
   return machine
 }
 
 describe('tunnel socket', () => {
-  test('welcomes a valid hello with the id derived from its proof, without ever logging or echoing the proof', async () => {
+  test('challenges each socket, and welcomes a hello signed over it under the hash of its key, logging none of it', async () => {
     const logs = (['log', 'info', 'warn', 'error'] as const).map((method) => spyOn(console, method))
     try {
-      const a = await hello(proofA)
-      const b = await hello(proofB)
-      const idA = machineIdFromProof(proofA)
-      expect(a.frames[0]).toEqual({ type: 'welcome', machineId: idA })
-      expect(b.frames[0]).toEqual({ type: 'welcome', machineId: machineIdFromProof(proofB) })
-      expect(idA).not.toBe(machineIdFromProof(proofB))
-      expect(registry.get(idA)?.machineId).toBe(idA)
+      const a = await hello(keyA)
+      const b = await hello(keyB)
+      const [nonceA, nonceB] = [await challengeOf(a), await challengeOf(b)]
+      expect(nonceA).toMatch(/^[A-Za-z0-9_-]{43}$/)
+      expect(nonceA).not.toBe(nonceB)
+      expect(a.frames.slice(0, 2)).toEqual([
+        { type: 'challenge', nonce: nonceA },
+        { type: 'welcome', machineId: keyA.machineId },
+      ])
+      expect(b.frames[1]).toEqual({ type: 'welcome', machineId: keyB.machineId })
+      expect(keyA.machineId).toBe(await machineIdFromPublicKey(keyA.publicKey))
+      expect(keyA.machineId).not.toBe(keyB.machineId)
+      expect(registry.get(keyA.machineId)).toMatchObject({ machineId: keyA.machineId, publicKey: keyA.publicKey })
       expect(registry.size).toBe(2)
-      const seen = [...a.raw, ...b.raw, ...logs.flatMap((spy) => spy.mock.calls.map((call) => call.join(' ')))]
-      expect(seen.some((text) => text.includes(proofA) || text.includes(proofB))).toBe(false)
+      const logged = logs.flatMap((spy) => spy.mock.calls.map((call) => call.join(' ')))
+      for (const value of [keyA.publicKey, keyA.privateKey, nonceA, nonceB]) {
+        expect(logged.some((text) => text.includes(value))).toBe(false)
+      }
+      expect([...a.raw, ...b.raw].some((text) => text.includes(keyA.privateKey))).toBe(false)
     } finally {
       for (const spy of logs) spy.mockRestore()
     }
   })
 
-  test('closes with 1008 and registers nothing when the first message is not a valid hello', async () => {
-    const firstMessages = [
-      'not json',
-      encodeFrame({ type: 'pong', nonce: 1 }),
-      JSON.stringify({ type: 'hello', version: TUNNEL_PROTOCOL_VERSION, proof: 'short' }),
-      null,
+  test('closes with 1008 and registers nothing when the first message is not a hello signed over its own challenge', async () => {
+    const other = await connect()
+    const otherNonce = await challengeOf(other)
+    const firstMessages: ((nonce: string) => string | Uint8Array | null)[] = [
+      () => 'not json',
+      () => encodeFrame({ type: 'pong', nonce: 1 }),
+      () => null,
+      // The old shape at the current version.
+      () => JSON.stringify({ type: 'hello', version: TUNNEL_PROTOCOL_VERSION, proof: keyA.publicKey }),
+      // A signature that does not verify.
+      (nonce) => encodeFrame({ ...keyA.hello(nonce), signature: keyB.privateKey.repeat(2).slice(0, 86) }),
+      // Signed over another socket's nonce.
+      () => encodeFrame(keyA.hello(otherNonce)),
+      // A key that did not make the signature.
+      (nonce) => encodeFrame({ ...keyA.hello(nonce), publicKey: keyB.publicKey }),
+      // Not a point on the curve.
+      (nonce) => encodeFrame({ ...keyA.hello(nonce), publicKey: `${'_'.repeat(42)}w` }),
     ]
     for (const message of firstMessages) {
       const machine = await connect()
-      if (message !== null) machine.ws.send(message)
+      const sent = message(await challengeOf(machine))
+      if (sent !== null) machine.ws.send(sent)
       expect((await machine.closed).code).toBe(1008)
       expect(registry.size).toBe(0)
     }
 
-    const again = await hello(proofA)
-    again.send({ type: 'hello', version: TUNNEL_PROTOCOL_VERSION, proof: proofA })
+    const again = await hello(keyA)
+    again.send(keyA.hello(await challengeOf(again)))
     expect((await again.closed).code).toBe(1008)
     await until(() => registry.size === 0)
   })
 
-  test('closes a hello with another protocol version as unsupported', async () => {
-    const machine = await connect()
-    machine.send({ type: 'hello', version: TUNNEL_PROTOCOL_VERSION + 1, proof: proofA })
-    expect(await machine.closed).toEqual({ code: CLOSE_UNSUPPORTED_VERSION, reason: 'unsupported version' })
-    expect(registry.size).toBe(0)
+  test('closes a hello with another protocol version as unsupported, the old version 1 shape included', async () => {
+    for (const message of [
+      JSON.stringify({ type: 'hello', version: 1, proof: `${'A'.repeat(42)}a` }),
+      encodeFrame({ ...keyA.hello('n'), version: TUNNEL_PROTOCOL_VERSION + 1 }),
+    ]) {
+      const machine = await connect()
+      machine.ws.send(message)
+      expect(await machine.closed).toEqual({ code: CLOSE_UNSUPPORTED_VERSION, reason: 'unsupported version' })
+      expect(registry.size).toBe(0)
+    }
   })
 
   test('a second connection for the same machine replaces the first, and leaving empties the registry', async () => {
-    const id = machineIdFromProof(proofA)
-    const old = await hello(proofA, { pong: true })
+    const id = keyA.machineId
+    const old = await hello(keyA, { pong: true })
     const live = registry.get(id)
-    const next = await hello(proofA, { pong: true })
+    const next = await hello(keyA, { pong: true })
     expect(await old.closed).toEqual({ code: CLOSE_REPLACED, reason: 'replaced' })
     // Give the old socket's close event time to reach the server too.
     await Bun.sleep(20)
@@ -156,17 +192,17 @@ describe('tunnel socket', () => {
   })
 
   test('drops a silent machine after the heartbeat timeout but keeps one that answers its pings', async () => {
-    const silent = await hello(proofA)
-    const healthy = await hello(proofB, { pong: true })
+    const silent = await hello(keyA)
+    const healthy = await hello(keyB, { pong: true })
     expect(await silent.closed).toEqual({ code: CLOSE_HEARTBEAT_TIMEOUT, reason: 'heartbeat timeout' })
     const pings = silent.frames.filter((f) => f.type === 'ping').map((f) => f.nonce)
     expect(pings.length).toBeGreaterThan(0)
     expect(new Set(pings).size).toBe(pings.length)
-    await until(() => registry.get(machineIdFromProof(proofA)) === undefined)
+    await until(() => registry.get(keyA.machineId) === undefined)
 
     await Bun.sleep(timings.heartbeatTimeoutMs * 3)
     expect(healthy.ws.readyState).toBe(WebSocket.OPEN)
-    expect(registry.get(machineIdFromProof(proofB))).toBeDefined()
+    expect(registry.get(keyB.machineId)).toBeDefined()
 
     healthy.send({ type: 'ping', nonce: 77 })
     await until(() => healthy.frames.some((f) => f.type === 'pong'))
@@ -174,20 +210,20 @@ describe('tunnel socket', () => {
   })
 
   test('remote.off marks the machine once its tunnel closes, and its next hello clears the mark', async () => {
-    const id = machineIdFromProof(proofA)
-    const machine = await hello(proofA, { pong: true })
+    const id = keyA.machineId
+    const machine = await hello(keyA, { pong: true })
     machine.send({ type: 'remote.off' })
     await until(() => registry.isRemoteOff(id))
     machine.ws.close(1000)
     await until(() => registry.get(id) === undefined)
     expect(registry.isRemoteOff(id)).toBe(true)
 
-    await hello(proofA, { pong: true })
+    await hello(keyA, { pong: true })
     expect(registry.isRemoteOff(id)).toBe(false)
   })
 
   test('answers enrollment frames with `unavailable` while accounts are off', async () => {
-    const machine = await hello(proofA, { pong: true })
+    const machine = await hello(keyA, { pong: true })
     machine.send({ type: 'enroll.preview', id: 1, key: 'oek_any' })
     machine.send({ type: 'enroll.redeem', id: 2, key: 'oek_any', name: 'Box' })
     await until(() => machine.frames.filter((f) => f.type === 'enroll.failed').length === 2)

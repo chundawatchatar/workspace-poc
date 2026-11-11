@@ -2,14 +2,19 @@ import { describe, expect, test } from 'bun:test'
 import {
   decodeFrame,
   encodeFrame,
+  helloSignedMessage,
   MAX_TUNNEL_FRAME_BYTES,
   machineFrame,
+  machineIdFromPublicKey,
   serverFrame,
+  TUNNEL_PROTOCOL_VERSION,
   type TunnelFrame,
   wsPayloadBytes,
 } from './tunnel'
 
-const proof = `${'A'.repeat(42)}w`
+const publicKey = `${'A'.repeat(42)}w`
+const signature = `${'B'.repeat(85)}w`
+const nonce = `${'C'.repeat(42)}w`
 const allBytes = Uint8Array.from({ length: 256 }, (_, i) => i)
 
 /** A binary frame built by hand: `header` as the JSON header, then `payload`. */
@@ -25,7 +30,7 @@ function binary(header: unknown, payload = new Uint8Array(), headerLength?: numb
 describe('tunnel frames', () => {
   test('every frame round-trips through its direction union, as text unless it carries bytes', () => {
     const machine: TunnelFrame[] = [
-      { type: 'hello', version: 1, proof },
+      { type: 'hello', version: 2, publicKey, signature },
       {
         type: 'http.response',
         id: 1,
@@ -44,6 +49,7 @@ describe('tunnel frames', () => {
       { type: 'enroll.redeem', id: 6, key: 'not even a key', name: 'Laptop' },
     ]
     const server: TunnelFrame[] = [
+      { type: 'challenge', nonce },
       { type: 'welcome', machineId: 'm-1' },
       { type: 'http.request', id: 3, method: 'GET', path: '/api/git/status?cwd=%2Ftmp', headers: [] },
       { type: 'http.request', id: 4, method: 'POST', path: '/api/fs/dirs', headers: [['x', 'y']], body: allBytes },
@@ -118,11 +124,14 @@ describe('tunnel frames', () => {
     const bad: [typeof machineFrame | typeof serverFrame, unknown][] = [
       [machineFrame, 'not json'],
       [machineFrame, '{"type":"nope"}'],
-      [serverFrame, JSON.stringify({ type: 'hello', version: 1, proof })],
+      [serverFrame, JSON.stringify({ type: 'hello', version: 2, publicKey, signature })],
       [machineFrame, JSON.stringify({ type: 'welcome', machineId: 'm' })],
-      [machineFrame, JSON.stringify({ type: 'hello', version: 1, proof: 'short' })],
-      [machineFrame, JSON.stringify({ type: 'hello', version: 1, proof: `${proof.slice(1)}+` })],
-      [machineFrame, JSON.stringify({ type: 'hello', version: 1.5, proof })],
+      [machineFrame, JSON.stringify({ type: 'challenge', nonce })],
+      [serverFrame, JSON.stringify({ type: 'challenge', nonce: 'short' })],
+      [machineFrame, JSON.stringify({ type: 'hello', version: 1, proof: publicKey })],
+      [machineFrame, JSON.stringify({ type: 'hello', version: 2, publicKey: 'short', signature })],
+      [machineFrame, JSON.stringify({ type: 'hello', version: 2, publicKey, signature: `${signature.slice(1)}+` })],
+      [machineFrame, JSON.stringify({ type: 'hello', version: 1.5, publicKey, signature })],
       [serverFrame, JSON.stringify({ type: 'http.request', id: 1, method: 'GET', path: '/health', headers: [] })],
       [serverFrame, JSON.stringify({ type: 'http.request', id: 1, method: 'GET', path: '/apix/a', headers: [] })],
       [serverFrame, JSON.stringify({ type: 'ws.open', channel: 1, path: '/api/x', headers: [] })],
@@ -180,5 +189,21 @@ describe('tunnel frames', () => {
       expect(wsPayloadBytes(text)).toBe(new TextEncoder().encode(text).byteLength)
     }
     expect(wsPayloadBytes(allBytes)).toBe(256)
+  })
+})
+
+describe('hello helpers', () => {
+  test('the signed message is the context, the version and the nonce, and changes with the nonce', () => {
+    const text = new TextDecoder().decode(helloSignedMessage(nonce))
+    expect(text).toBe(`orch-tunnel-hello\n${TUNNEL_PROTOCOL_VERSION}\n${nonce}`)
+    expect(helloSignedMessage(publicKey)).not.toEqual(helloSignedMessage(nonce))
+  })
+
+  test('the machine id is the base64url SHA-256 of the raw key bytes', async () => {
+    const raw = Uint8Array.from({ length: 32 }, (_, i) => i * 7)
+    const key = Buffer.from(raw).toString('base64url')
+    const expected = new Bun.CryptoHasher('sha256').update(raw).digest('base64url')
+    expect(await machineIdFromPublicKey(key)).toBe(expected)
+    expect(expected).toMatch(/^[A-Za-z0-9_-]{43}$/)
   })
 })

@@ -31,7 +31,12 @@ function setup(maxChannelsPerMachine?: number) {
   const registry = new MachineRegistry()
   const sent: Record<string, ServerFrame[]> = { m1: [], m2: [] }
   const conn = (machineId: string): MachineConnection => {
-    const live = { machineId, send: (frame: ServerFrame) => sent[machineId]?.push(frame), close: () => {} }
+    const live = {
+      machineId,
+      publicKey: 'k',
+      send: (frame: ServerFrame) => sent[machineId]?.push(frame),
+      close: () => {},
+    }
     registry.register(live)
     return live
   }

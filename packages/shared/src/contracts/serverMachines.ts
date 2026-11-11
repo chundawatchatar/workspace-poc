@@ -5,7 +5,7 @@ import { defineServerContract } from './server'
 // The machines linked to an account. The accounts API only ever handles machine ids and names: no schema here has a
 // key field, and every input is strict, so a body that carries a key is refused rather than silently dropped.
 
-/** A machine's id, as the relay derives it from the machine's secret: unpadded base64url SHA-256, 43 characters. */
+/** A machine's id: the unpadded base64url SHA-256 of its raw Ed25519 public key, 43 characters. */
 export const machineIdSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/, 'Not a machine id.')
 
 /** A machine's name as the user sees it, trimmed, 1 to 64 characters. */

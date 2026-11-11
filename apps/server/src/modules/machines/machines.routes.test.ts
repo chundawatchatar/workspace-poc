@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { createHash, createPublicKey, randomUUID, verify } from 'node:crypto'
+import { createHash, createPublicKey, randomBytes, randomUUID, verify } from 'node:crypto'
 import { schema } from '@orch/domain'
 import { createTestDomain, type TestDomain } from '@orch/domain/testing'
 import {
@@ -10,7 +10,7 @@ import {
 } from '@orch/shared'
 import { eq } from 'drizzle-orm'
 import { accountsTestApp, cookiePair } from '../auth/auth.testing'
-import { type MachineConnection, machineIdFromProof } from '../tunnel/tunnel.service'
+import type { MachineConnection } from '../tunnel/tunnel.service'
 import { MachinesService } from './machines.service'
 
 let domain: TestDomain
@@ -41,7 +41,8 @@ async function signedIn(): Promise<User> {
   return { userId: row?.id as string, ip, cookie }
 }
 
-const freshMachineId = () => machineIdFromProof(randomUUID())
+/** A machine id's shape: 32 random bytes as unpadded base64url, like the hash of a machine key. */
+const freshMachineId = () => randomBytes(32).toString('base64url')
 const path = (machineId: string) => `/api/machines/${machineId}`
 
 /** Links `machineId` to `user` the way redeeming an enrollment key does, without HTTP. */
@@ -148,7 +149,7 @@ describe('machines module', () => {
       const machine = (await list(ada)).find((m) => m.machineId === older)
       return { online: machine?.online, remoteOff: machine?.remoteOff }
     }
-    const conn: MachineConnection = { machineId: older, send: () => {}, close: () => {} }
+    const conn: MachineConnection = { machineId: older, publicKey: 'k', send: () => {}, close: () => {} }
     ctx.registry.register(conn)
     expect(await state()).toEqual({ online: true, remoteOff: false })
     ctx.registry.remove(conn)

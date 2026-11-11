@@ -11,7 +11,6 @@ import {
   type RemoteAccessStatus,
   routes,
 } from '@orch/shared'
-import { machineIdFromSecret } from './modules/access/access.service'
 import { LinkedAccountRepository, linkedAccountPath } from './modules/remote-access/linked-account.repository'
 import {
   RemoteAccessRepository,
@@ -23,7 +22,7 @@ import {
   enteredServerUrl,
   type RemoteAccessEnv,
 } from './modules/remote-access/remote-access.service'
-import { loadOrCreateMachineSecret, machineSecretFile } from './modules/tunnel/tunnel.repository'
+import { loadOrCreateMachineKey, machineKeyFile } from './modules/tunnel/tunnel.repository'
 import { parseServerUrl } from './modules/tunnel/tunnel.service'
 import {
   type DevicesCommand,
@@ -147,7 +146,7 @@ function parseArgs(args: string[]): Command | null {
   return null
 }
 
-/** Runs one `host:remote` command and answers its exit code. Nothing it prints holds a key or the machine secret. */
+/** Runs one `host:remote` command and answers its exit code. Nothing it prints holds an access key or the machine's private key. */
 export async function runRemote(args: string[], deps: RemoteCliDeps): Promise<number> {
   const command = parseArgs(args)
   if (!command) {
@@ -381,14 +380,14 @@ function readSettings(deps: RemoteCliDeps): RemoteAccessSettings | null | false 
   }
 }
 
-/** The machine id from an existing secret. Never creates one, so `status` leaves `.data/` as it was. */
+/** The machine id from an existing machine key. Never creates one, so `status` leaves `.data/` as it was. */
 function readMachineId(deps: RemoteCliDeps): string | null {
-  const file = machineSecretFile(deps.hostRoot)
+  const file = machineKeyFile(deps.hostRoot)
   if (!existsSync(file)) return null
   try {
-    return machineIdFromSecret(loadOrCreateMachineSecret(file))
+    return loadOrCreateMachineKey(file).machineId
   } catch (error) {
-    // The repository's message never contains the secret.
+    // The repository's message never contains the key.
     deps.err(messageOf(error))
     return null
   }
