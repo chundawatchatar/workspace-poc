@@ -4,14 +4,14 @@ import { buildRequest, type RotateAccessResponse, rotateAccessResponse, routes }
 import { optionalEnv } from '@orch/shared/env'
 import { hostUrl } from './env'
 import { AccessKeyRepository, accessKeysPath } from './modules/access/access.repository'
-import { AccessKeys, machineIdFromSecret, rotateAccess } from './modules/access/access.service'
+import { AccessKeys, rotateAccess } from './modules/access/access.service'
 import {
   RemoteAccessRepository,
   type RemoteAccessSettings,
   remoteAccessPath,
 } from './modules/remote-access/remote-access.repository'
 import { linkClientUrl } from './modules/remote-access/remote-access.service'
-import { loadOrCreateMachineSecret, machineSecretFile } from './modules/tunnel/tunnel.repository'
+import { loadOrCreateMachineKey, machineKeyFile } from './modules/tunnel/tunnel.repository'
 
 // `bun run host:rotate-key`: replaces the access key. A running host rotates it
 // itself, so it can close the sessions of the old key; otherwise the key file is
@@ -44,7 +44,7 @@ async function rotateThroughHost(): Promise<RotateAccessResponse | null> {
  * the saved Remote access setting.
  */
 function rotateFile(): RotateAccessResponse {
-  const secret = loadOrCreateMachineSecret(machineSecretFile(hostRoot))
+  const { machineId } = loadOrCreateMachineKey(machineKeyFile(hostRoot))
   const keys = new AccessKeys(new AccessKeyRepository(accessKeysPath(hostRoot)))
   let saved: RemoteAccessSettings | null = null
   try {
@@ -56,7 +56,7 @@ function rotateFile(): RotateAccessResponse {
     { SERVER_URL: optionalEnv('SERVER_URL'), CLIENT_URL: optionalEnv('CLIENT_URL') },
     saved,
   )
-  return rotateAccess({ keys, machineId: machineIdFromSecret(secret), clientUrl })
+  return rotateAccess({ keys, machineId, clientUrl })
 }
 
 try {

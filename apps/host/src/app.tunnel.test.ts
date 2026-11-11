@@ -8,6 +8,7 @@ import {
   decodeFrame,
   encodeFrame,
   type MachineFrame,
+  machineIdFromPublicKey,
   type RotateAccessResponse,
   remoteAccessStatus,
   routes,
@@ -25,10 +26,11 @@ import {
   keyHeaders,
   keys,
   local,
+  machineId,
+  machineKey,
   OUTPUT,
   openLocal,
   remoteAccess,
-  secret,
   send,
   server,
   settingsFile,
@@ -39,7 +41,7 @@ import {
   welcomed,
 } from './app.tunnel.testing'
 import { tunnelEnv } from './lib/principal'
-import { machineIdFromSecret } from './modules/access/access.service'
+import { helloVerifies } from './modules/tunnel/tunnel.testing'
 import { TunnelHttp } from './modules/tunnel/tunnel-http.service'
 
 // The host's sockets end to end, on the harness in `app.tunnel.testing.ts`.
@@ -167,7 +169,6 @@ describe('tunneled sockets', () => {
 
     const response = await fetch(`http://127.0.0.1:${local.port}${rotatePath}`, { method: 'POST' })
     const rotated = (await response.json()) as RotateAccessResponse
-    const machineId = machineIdFromSecret(secret)
     expect(rotated.machineId).toBe(machineId)
     expect(rotated.link).toBe(`https://orch.example/#machine=${machineId}&key=${rotated.key}`)
     await until(() => conn.frames.some((f) => f.type === 'ws.close'))
@@ -236,6 +237,27 @@ describe('tunneled sockets', () => {
     expect(reachesChannel).toEqual([])
   })
 
+  test('the host answers the challenge with its public key only, under the id the server, status and link all use', async () => {
+    const conn = await welcomed()
+    await until(() => clients[0]?.status === 'connected')
+    const hello = conn.frames.find((f) => f.type === 'hello')
+    if (hello?.type !== 'hello') throw new Error('no hello')
+    expect(hello.publicKey).toBe(machineKey.publicKey)
+    expect(helloVerifies(hello, conn.nonce)).toBe(true)
+    expect(await machineIdFromPublicKey(hello.publicKey)).toBe(machineId)
+
+    const status = await fetch(`http://127.0.0.1:${local.port}${routes.remoteAccess.status.path}`)
+    expect(remoteAccessStatus.parse(await status.json()).machineId).toBe(machineId)
+    expect(remoteAccess.current()?.machineId).toBe(machineId)
+
+    // Neither the raw private key nor any line of the key file went over the tunnel.
+    const sent = conn.raw.join('\n')
+    expect(sent).not.toContain(machineKey.privateKey)
+    for (const line of machineKey.pem.split('\n').filter((l) => l && !l.startsWith('-----'))) {
+      expect(sent).not.toContain(line)
+    }
+  })
+
   test('every remote access route answers 403 through the tunnel and leaves the setting and tunnel alone, but works locally', async () => {
     const conn = await welcomed()
     const saved = readFileSync(settingsFile, 'utf8')
@@ -267,12 +289,13 @@ describe('tunneled sockets', () => {
       clientUrl: 'https://orch.example',
       serverUrlFromEnv: false,
       clientUrlFromEnv: false,
-      machineId: machineIdFromSecret(secret),
+      machineId,
       tunnel: 'connected',
       linkedAccount: null,
     })
     for (const hidden of [
-      secret,
+      machineKey.privateKey,
+      machineKey.pem,
       key,
       readFileSync(join(dir, 'access-keys.json'), 'utf8').match(/"hash": "([^"]+)"/)?.[1],
     ]) {

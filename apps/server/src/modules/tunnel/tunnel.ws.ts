@@ -1,12 +1,15 @@
+import { randomBytes } from 'node:crypto'
 import { upgradeWebSocket } from '@hono/bun'
 import {
   CLOSE_HEARTBEAT_TIMEOUT,
   CLOSE_REPLACED,
   CLOSE_UNSUPPORTED_VERSION,
   decodeFrame,
+  encodeFrame,
   FrameScheduler,
   type MachineFrame,
   machineFrame,
+  machineIdFromPublicKey,
   type ServerFrame,
   TUNNEL_PATH,
   TUNNEL_PROTOCOL_VERSION,
@@ -16,9 +19,9 @@ import type { WSContext } from 'hono/ws'
 import { z } from 'zod'
 import { bunSocket, type ServerSocketEvents } from '../../lib/websocket'
 import { type LimitsDeps, limitTunnelUpgrades } from '../limits/limits.middleware'
-import { type MachineConnection, type MachineRegistry, machineIdFromProof } from './tunnel.service'
+import { helloSignatureValid, type MachineConnection, type MachineRegistry } from './tunnel.service'
 
-/** Close code for a missing, invalid or repeated `hello`. */
+/** Close code for a missing, invalid, unsigned or repeated `hello`. */
 const CLOSE_POLICY = 1008
 
 /** What the tunnel socket needs from the server. The timings are in milliseconds. */
@@ -56,6 +59,10 @@ export function createTunnelSocket({
     limitTunnelUpgrades({ limiter, clientIp }),
     upgradeWebSocket(() => {
       let conn: MachineConnection | null = null
+      /** This socket's `challenge` nonce, until its first message spends it. */
+      let challenge: string | null = null
+      /** True while a verified `hello` waits for its machine id. */
+      let greeting = false
       let closed = false
       let released = false
       let nonce = 0
@@ -87,7 +94,7 @@ export function createTunnelSocket({
         onClose?.(conn)
       }
 
-      const welcome = (ws: WSContext, proof: string) => {
+      const welcome = (ws: WSContext, publicKey: string, machineId: string) => {
         // `http.request` goes in the bulk lane, so a large upload never holds back terminal traffic.
         const lanes = new FrameScheduler<ServerFrame>({
           write: (data) => ws.send(data),
@@ -96,7 +103,8 @@ export function createTunnelSocket({
         })
         scheduler = lanes
         const live: MachineConnection = {
-          machineId: machineIdFromProof(proof),
+          machineId,
+          publicKey,
           send: (frame) => {
             if (!closed) lanes.send(frame)
           },
@@ -112,27 +120,43 @@ export function createTunnelSocket({
         pingTimer = setInterval(() => live.send({ type: 'ping', nonce: ++nonce }), pingIntervalMs)
       }
 
+      // The first message spends the challenge, so each nonce answers at most one `hello`. Close reasons stay
+      // generic, and nothing from the `hello` is logged.
       const greet = (ws: WSContext, frame: MachineFrame | null, data: unknown) => {
         clearTimeout(helloTimer)
+        const nonce = challenge
+        challenge = null
         const version = frame?.type === 'hello' ? frame.version : decodeFrame(versionedHello, data)?.version
         if (version !== undefined && version !== TUNNEL_PROTOCOL_VERSION) {
           shutdown(ws, CLOSE_UNSUPPORTED_VERSION, 'unsupported version')
         } else if (frame?.type !== 'hello') {
           shutdown(ws, CLOSE_POLICY, 'expected hello')
+        } else if (!nonce || !helloSignatureValid(frame, nonce)) {
+          shutdown(ws, CLOSE_POLICY, 'invalid hello')
         } else {
-          welcome(ws, frame.proof)
+          greeting = true
+          machineIdFromPublicKey(frame.publicKey).then(
+            (machineId) => {
+              greeting = false
+              if (!closed) welcome(ws, frame.publicKey, machineId)
+            },
+            () => shutdown(ws, CLOSE_POLICY, 'invalid hello'),
+          )
         }
       }
 
       const events: ServerSocketEvents = {
         onOpen(_event, ws) {
           helloTimer = setTimeout(() => shutdown(ws, CLOSE_POLICY, 'hello timeout'), helloTimeoutMs)
+          challenge = randomBytes(32).toString('base64url')
+          ws.send(encodeFrame({ type: 'challenge', nonce: challenge }))
         },
         onMessage(event, ws) {
           if (closed) return
           const frame = decodeFrame(machineFrame, event.data)
           if (!conn) {
-            greet(ws, frame, event.data)
+            // A machine sends nothing between its `hello` and the `welcome`, so anything in that gap is dropped.
+            if (!greeting) greet(ws, frame, event.data)
             return
           }
           if (!frame) return

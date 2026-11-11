@@ -13,19 +13,19 @@ import {
   type SessionInfo,
   serverFrame,
   TUNNEL_PATH,
-  TUNNEL_PROTOCOL_VERSION,
 } from '@orch/shared'
 import type { Server } from 'bun'
 import { createApp } from '../../app'
 import { serverWebSocket } from '../../lib/websocket'
 import { HttpForwarder } from '../forward/forward.service'
 import { ConnectionLimiter } from '../limits/limits.service'
-import { MachineRegistry, machineIdFromProof } from '../tunnel/tunnel.service'
+import { MachineRegistry } from '../tunnel/tunnel.service'
+import { answerChallenge, createTestMachineKey, type TestMachineKey } from '../tunnel/tunnel.testing'
 import { ChannelBridge } from './bridge.service'
 
-const proofA = `${'A'.repeat(42)}a`
-const proofB = `${'B'.repeat(42)}b`
-const idA = machineIdFromProof(proofA)
+const keyA = await createTestMachineKey()
+const keyB = await createTestMachineKey()
+const idA = keyA.machineId
 
 let registry: MachineRegistry
 let bridge: ChannelBridge
@@ -60,10 +60,11 @@ interface Machine {
   send(frame: MachineFrame): void
 }
 
-async function machine(proof: string, { pong = true } = {}): Promise<Machine> {
+async function machine(key: TestMachineKey, { pong = true } = {}): Promise<Machine> {
   const ws = new WebSocket(`ws://127.0.0.1:${server.port}${TUNNEL_PATH}`)
   ws.binaryType = 'arraybuffer'
   sockets.push(ws)
+  answerChallenge(ws, key)
   let welcomed = false
   const m: Machine = { ws, frames: [], send: (frame) => ws.send(encodeFrame(frame)) }
   ws.addEventListener('message', (event) => {
@@ -72,8 +73,6 @@ async function machine(proof: string, { pong = true } = {}): Promise<Machine> {
     if (frame?.type.startsWith('ws.')) m.frames.push(frame)
     if (pong && frame?.type === 'ping') m.send({ type: 'pong', nonce: frame.nonce })
   })
-  await new Promise((resolve) => ws.addEventListener('open', resolve))
-  m.send({ type: 'hello', version: TUNNEL_PROTOCOL_VERSION, proof })
   await until(() => welcomed)
   return m
 }
@@ -150,7 +149,7 @@ describe('bridge socket', () => {
   test('relays the path, headers and messages of each socket on its own channel, untouched', async () => {
     const logs = (['log', 'info', 'warn', 'error'] as const).map((method) => spyOn(console, method))
     try {
-      const m = await machine(proofA)
+      const m = await machine(keyA)
       // The auth message, with its device proof, is the machine's to read, so it passes through as sent.
       const auth = JSON.stringify({ type: 'auth', account: true, device: 'a.device.proof' })
       const one = browser('/ws/term/abc?cols=80&name=a%20b', idA, { 'x-thing': 'a' })
@@ -184,7 +183,7 @@ describe('bridge socket', () => {
       m.send({ type: 'ws.data', channel: 2, data: 'to two' })
       m.send({ type: 'ws.data', channel: 77, data: 'nobody' })
       // Another machine's tunnel may use the same channel ids.
-      const other = await machine(proofB)
+      const other = await machine(keyB)
       other.send({ type: 'ws.data', channel: 1, data: 'foreign' })
       await until(() => one.received.length === 2 && two.received.length === 1)
       await Bun.sleep(20)
@@ -200,7 +199,7 @@ describe('bridge socket', () => {
   })
 
   test('never relays the account cookies to the machine, and the upgrade response sets none', async () => {
-    const m = await machine(proofA)
+    const m = await machine(keyA)
     const { socket, head } = await rawUpgrade('/ws/events', {
       Cookie: 'session=abc',
       'x-thing': 'a',
@@ -220,7 +219,7 @@ describe('bridge socket', () => {
   })
 
   test('a close on either side closes the other once', async () => {
-    const m = await machine(proofA)
+    const m = await machine(keyA)
     const byBrowser = browser('/ws/a')
     const bare = browser('/ws/b')
     const byMachine = browser('/ws/c')
@@ -243,7 +242,7 @@ describe('bridge socket', () => {
   })
 
   test("carries a session event's agent state to the browser unchanged", async () => {
-    const m = await machine(proofA)
+    const m = await machine(keyA)
     const b = browser('/ws/events')
     await opened(b)
     await until(() => of(m, 'ws.open').length === 1)
@@ -270,7 +269,7 @@ describe('bridge socket', () => {
   })
 
   test('an auth.failed frame keeps the tunnel and the channel open and reaches no browser', async () => {
-    const m = await machine(proofA)
+    const m = await machine(keyA)
     const b = browser('/ws/events')
     await opened(b)
     await until(() => of(m, 'ws.open').length === 1)
@@ -288,23 +287,23 @@ describe('bridge socket', () => {
     const offline = browser('/ws/a')
     expect((await offline.closed).code).toBe(CLOSE_MACHINE_OFFLINE)
 
-    const dropped = await machine(proofA)
+    const dropped = await machine(keyA)
     const onDropped = browser('/ws/a')
     await opened(onDropped)
     await until(() => bridge.size === 1)
     dropped.ws.close()
     expect((await onDropped.closed).code).toBe(CLOSE_MACHINE_OFFLINE)
 
-    const replaced = await machine(proofA)
+    const replaced = await machine(keyA)
     const onReplaced = browser('/ws/a')
     await opened(onReplaced)
     await until(() => of(replaced, 'ws.open').length === 1)
-    const next = await machine(proofA)
+    const next = await machine(keyA)
     expect((await onReplaced.closed).code).toBe(CLOSE_MACHINE_OFFLINE)
     expect(next.frames).toHaveLength(0)
 
-    const silentMachine = await machine(proofB, { pong: false })
-    const onSilent = browser('/ws/a', machineIdFromProof(proofB))
+    const silentMachine = await machine(keyB, { pong: false })
+    const onSilent = browser('/ws/a', keyB.machineId)
     await until(() => of(silentMachine, 'ws.open').length === 1)
     expect((await onSilent.closed).code).toBe(CLOSE_MACHINE_OFFLINE)
     await until(() => silentMachine.ws.readyState === WebSocket.CLOSED)
@@ -312,7 +311,7 @@ describe('bridge socket', () => {
   })
 
   test('answers 404 to a plain request or a path outside the machine sockets', async () => {
-    await machine(proofA)
+    await machine(keyA)
     const base = `http://127.0.0.1:${server.port}${machinePathPrefix(idA)}`
     expect((await fetch(`${base}/ws/term/a`)).status).toBe(404)
     expect((await fetch(`${base}/ws`)).status).toBe(404)

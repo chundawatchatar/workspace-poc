@@ -11,7 +11,7 @@ function setup(requestTimeoutMs = 1000) {
   const sent: Record<string, ServerFrame[]> = { m1: [], m2: [] }
   const conns: Record<string, MachineConnection> = {}
   for (const machineId of ['m1', 'm2']) {
-    conns[machineId] = { machineId, send: (frame) => sent[machineId]?.push(frame), close: () => {} }
+    conns[machineId] = { machineId, publicKey: 'k', send: (frame) => sent[machineId]?.push(frame), close: () => {} }
     registry.register(conns[machineId])
   }
   const forwarder = new HttpForwarder({ registry, requestTimeoutMs })

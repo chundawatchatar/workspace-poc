@@ -5,14 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseConnectFragment } from '@orch/shared'
 import { type AccessKey, AccessKeyRepository } from './access.repository'
-import {
-  AccessKeys,
-  clientUrlFromServerUrl,
-  connectLink,
-  machineIdFromSecret,
-  parseClientUrl,
-  rotateAccess,
-} from './access.service'
+import { AccessKeys, clientUrlFromServerUrl, connectLink, parseClientUrl, rotateAccess } from './access.service'
 
 let dir: string
 let file: string
@@ -95,10 +88,6 @@ describe('AccessKeys', () => {
 })
 
 describe('connect links', () => {
-  test('machineIdFromSecret matches the server derivation', () => {
-    expect(machineIdFromSecret(`${'A'.repeat(42)}w`)).toBe('iaXQeq8zGWOVzmXZ8CSONVci1x_234c8R-Cjqm229fM')
-  })
-
   test('the client URL is an http(s) CLIENT_URL, or SERVER_URL with ws(s) swapped for http(s)', () => {
     expect(parseClientUrl('https://orch.example/app/')).toBe('https://orch.example/app')
     expect(parseClientUrl('http://127.0.0.1:3220')).toBe('http://127.0.0.1:3220')

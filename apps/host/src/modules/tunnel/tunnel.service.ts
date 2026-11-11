@@ -8,6 +8,7 @@ import {
   type enrollPreviewFrame,
   type enrollRedeemedFrame,
   type enrollRedeemFrame,
+  helloSignedMessage,
   type MachineFrame,
   type ServerFrame,
   serverFrame,
@@ -18,6 +19,7 @@ import {
 import type { z } from 'zod'
 import type { Principal } from '../../lib/principal'
 import type { RecordAudit } from '../remote-access/audit-log.service'
+import type { MachineKey } from './tunnel.repository'
 import { AUTH_TIMEOUT_MS, type OpenChannel, type OpenSocket, TunnelChannels } from './tunnel-channels.service'
 import { type Authorize, type TunnelHandler, TunnelHttp } from './tunnel-http.service'
 import { TunnelOutbox } from './tunnel-outbox.service'
@@ -79,7 +81,7 @@ export function backoffDelay(attempt: number, random: () => number, { baseMs, ma
 
 /** The tunnel's timings, in milliseconds. */
 export interface TunnelTimings extends Backoff {
-  /** How long the server has to answer `hello` with `welcome`. */
+  /** How long the server has, from the dial, to send `challenge` and then answer `hello` with `welcome`. */
   welcomeTimeoutMs: number
   /** How often the client pings the server. */
   pingIntervalMs: number
@@ -115,8 +117,8 @@ const defaultTimings: TunnelTimings = {
 export interface TunnelClientOptions {
   /** The tunnel URL, from `parseServerUrl`. */
   url: string
-  /** The machine secret, sent as the `hello` proof. */
-  secret: string
+  /** The machine key, which signs the server's `challenge` in `hello`. Only its public key and signatures leave the host. */
+  key: MachineKey
   /** Decides every tunneled request and socket, by key or account. Nothing reaches `handle` or `openSocket` without it. */
   authorize: Authorize
   /** Answers each tunneled request. */
@@ -148,6 +150,8 @@ interface Connection {
   outbox: TunnelOutbox
   http: TunnelHttp
   channels: TunnelChannels
+  /** True once the server's `challenge` was answered with `hello`. */
+  challenged: boolean
   welcomed: boolean
   nonce: number
   /** Enrollment requests by id, until they are answered, time out or the connection ends. */
@@ -159,7 +163,8 @@ interface Connection {
 }
 
 /**
- * Keeps one outbound tunnel to the server open. It says `hello`, waits for
+ * Keeps one outbound tunnel to the server open. It waits for the server's
+ * `challenge`, answers with a `hello` signed by the machine key, waits for
  * `welcome`, keeps both heartbeats, answers tunneled HTTP requests through
  * `handle`, serves tunneled WebSockets through `openSocket` (both only once
  * `authorize` has accepted their access key or account), and reconnects
@@ -275,6 +280,7 @@ export class TunnelClient {
         authTimeoutMs: this.timings.authTimeoutMs,
         record: this.options.record,
       }),
+      challenged: false,
       welcomed: false,
       nonce: 0,
       enrolls: new Map(),
@@ -282,12 +288,13 @@ export class TunnelClient {
       timers: [],
     }
     this.conn = conn
-    conn.timers.push(setTimeout(() => this.drop(conn, 'no welcome'), this.timings.welcomeTimeoutMs))
+    conn.timers.push(
+      setTimeout(
+        () => this.drop(conn, conn.challenged ? 'no welcome' : 'no challenge from server; is it up to date?'),
+        this.timings.welcomeTimeoutMs,
+      ),
+    )
 
-    ws.addEventListener('open', () => {
-      if (this.conn === conn)
-        this.send(conn, { type: 'hello', version: TUNNEL_PROTOCOL_VERSION, proof: this.options.secret })
-    })
     ws.addEventListener('message', (event) => {
       if (this.conn !== conn) return
       const frame = decodeFrame(serverFrame, event.data)
@@ -300,8 +307,11 @@ export class TunnelClient {
   private receive(conn: Connection, frame: ServerFrame) {
     this.heard(conn)
     switch (frame.type) {
+      case 'challenge':
+        if (!conn.challenged) this.hello(conn, frame.nonce)
+        return
       case 'welcome':
-        if (!conn.welcomed) this.welcomed(conn, frame.machineId)
+        if (conn.challenged && !conn.welcomed) this.welcomed(conn, frame.machineId)
         return
       case 'ping':
         this.send(conn, { type: 'pong', nonce: frame.nonce })
@@ -335,6 +345,18 @@ export class TunnelClient {
     }
   }
 
+  /** Answers the server's one `challenge` with `hello`, signing its nonce with the machine key. */
+  private hello(conn: Connection, nonce: string) {
+    conn.challenged = true
+    const { key } = this.options
+    this.send(conn, {
+      type: 'hello',
+      version: TUNNEL_PROTOCOL_VERSION,
+      publicKey: key.publicKey,
+      signature: key.sign(helloSignedMessage(nonce)),
+    })
+  }
+
   private welcomed(conn: Connection, machineId: string) {
     conn.welcomed = true
     this.setState('connected')
@@ -343,7 +365,7 @@ export class TunnelClient {
     const expected = this.options.expectedMachineId
     if (expected !== undefined && expected !== machineId) {
       console.warn(
-        'warning: the server gave this machine another id than its secret implies, so its connect link will not reach it',
+        'warning: the server gave this machine another id than its machine key implies, so its connect link will not reach it',
       )
     }
     conn.timers = [
@@ -414,7 +436,7 @@ export class TunnelClient {
       this.stopped = true
       this.unwatch()
       this.setState('stopped')
-      console.error('tunnel closed: another host using this machine secret took over. Not reconnecting')
+      console.error('tunnel closed: another host using this machine key took over. Not reconnecting')
       return
     }
     this.reconnect(`closed with ${code}`)

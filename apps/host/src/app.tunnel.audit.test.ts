@@ -17,9 +17,9 @@ import {
   key,
   keyHeaders,
   local,
+  machineId,
   relay,
   remoteAccess,
-  secret,
   send,
   server,
   stub,
@@ -27,7 +27,6 @@ import {
   useTunnelHarness,
   welcomed,
 } from './app.tunnel.testing'
-import { machineIdFromSecret } from './modules/access/access.service'
 import { fingerprintOf } from './modules/remote-access/device-proof.service'
 import { testDevice } from './modules/remote-access/device-proof.testing'
 
@@ -36,7 +35,6 @@ import { testDevice } from './modules/remote-access/device-proof.testing'
 // `remote-audit.jsonl`, and that nothing secret ever does.
 useTunnelHarness()
 
-const machineId = machineIdFromSecret(secret)
 const TERM = '/ws/term/t1'
 const HEALTH = routes.system.health.path
 const TYPED = 'echo typed-into-the-terminal'

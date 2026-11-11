@@ -35,7 +35,7 @@ afterAll(async () => {
 /** A registered fake tunnel that records the frames sent to it. */
 function online(registry: MachineRegistry, machineId: string) {
   const frames: ServerFrame[] = []
-  registry.register({ machineId, send: (frame) => frames.push(frame), close: () => {} })
+  registry.register({ machineId, publicKey: 'k', send: (frame) => frames.push(frame), close: () => {} })
   return frames
 }
 

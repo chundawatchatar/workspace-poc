@@ -19,7 +19,7 @@ import { LinkedAccountRepository, linkedAccountPath } from './modules/remote-acc
 import { RemoteAccessRepository, remoteAccessPath } from './modules/remote-access/remote-access.repository'
 import { RemoteAccessService } from './modules/remote-access/remote-access.service'
 import { daemonFactory, resendTracking, restoreTerminals } from './modules/terminals/daemon.service'
-import { machineSecretFile } from './modules/tunnel/tunnel.repository'
+import { machineKeyFile } from './modules/tunnel/tunnel.repository'
 
 // Composition root: creates the long-lived services, wires them together and starts the server.
 
@@ -65,7 +65,7 @@ const remoteAccess = new RemoteAccessService({
   linkedAccounts: new LinkedAccountRepository(linkedAccountPath(hostRoot)),
   devices: new DevicesRepository(devicesPath(hostRoot)),
   audit: new AuditLogService(new AuditLogRepository(auditLogPath(hostRoot))),
-  secretFile: machineSecretFile(hostRoot),
+  machineKeyFile: machineKeyFile(hostRoot),
   keysFile: accessKeysPath(hostRoot),
   env: { SERVER_URL: optionalEnv('SERVER_URL'), CLIENT_URL: optionalEnv('CLIENT_URL') },
   handle: async (request, principal) => app.fetch(request, tunnelEnv(principal)),

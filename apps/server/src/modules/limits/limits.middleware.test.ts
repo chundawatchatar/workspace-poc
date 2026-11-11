@@ -8,18 +8,18 @@ import {
   type ServerFrame,
   serverFrame,
   TUNNEL_PATH,
-  TUNNEL_PROTOCOL_VERSION,
 } from '@orch/shared'
 import type { Server } from 'bun'
 import { createApp } from '../../app'
 import { serverWebSocket } from '../../lib/websocket'
 import { ChannelBridge } from '../bridge/bridge.service'
 import { HttpForwarder } from '../forward/forward.service'
-import { MachineRegistry, machineIdFromProof } from '../tunnel/tunnel.service'
+import { MachineRegistry } from '../tunnel/tunnel.service'
+import { answerChallenge, createTestMachineKey } from '../tunnel/tunnel.testing'
 import { ConnectionLimiter, type ConnectionLimiterDeps } from './limits.service'
 
-const proof = `${'A'.repeat(42)}a`
-const machineId = machineIdFromProof(proof)
+const machineKey = await createTestMachineKey()
+const { machineId } = machineKey
 
 let server: Server<unknown> | undefined
 const sockets: WebSocket[] = []
@@ -47,6 +47,7 @@ async function setup(limits: ConnectionLimiterDeps) {
 
   const ws = new WebSocket(`ws://${base}${TUNNEL_PATH}`, { headers: { 'x-forwarded-for': 'machine' } })
   sockets.push(ws)
+  answerChallenge(ws, machineKey)
   const frames: ServerFrame[] = []
   ws.addEventListener('message', (event) => {
     const frame = decodeFrame(serverFrame, event.data)
@@ -54,7 +55,6 @@ async function setup(limits: ConnectionLimiterDeps) {
   })
   await new Promise((resolve) => ws.addEventListener('open', resolve))
   const send = (frame: MachineFrame) => ws.send(encodeFrame(frame))
-  send({ type: 'hello', version: TUNNEL_PROTOCOL_VERSION, proof })
   await until(() => frames.some((f) => f.type === 'welcome'))
 
   const request = (ip: string) =>

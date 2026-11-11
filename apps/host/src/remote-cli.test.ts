@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { LinkBody, PreviewLinkBody, RemoteAccessStatus, UpdateRemoteAccessBody } from '@orch/shared'
 import { accessKeysPath } from './modules/access/access.repository'
-import { machineIdFromSecret } from './modules/access/access.service'
 import { fingerprintOf } from './modules/remote-access/device-proof.service'
 import { DevicesRepository, devicesPath } from './modules/remote-access/devices.repository'
 import { DevicesService } from './modules/remote-access/devices.service'
@@ -14,11 +13,12 @@ import { remoteAccessPath } from './modules/remote-access/remote-access.reposito
 import { createRemoteAccessRoutes } from './modules/remote-access/remote-access.routes'
 import { DEFAULT_SERVER_URL, type RemoteAccessEnv } from './modules/remote-access/remote-access.service'
 import { NoRemoteSessions } from './modules/remote-access/remote-access.testing'
-import { machineSecretFile } from './modules/tunnel/tunnel.repository'
+import { machineKeyFile } from './modules/tunnel/tunnel.repository'
+import { createTestMachineKey } from './modules/tunnel/tunnel.testing'
 import { createHostCaller, runRemote } from './remote-cli'
 
 const key = `oek_${'k'.repeat(43)}`
-const secret = 's'.repeat(43)
+const machineKey = createTestMachineKey()
 const account = { name: 'Ada', maskedEmail: 'a***@example.com' }
 const linked = { ...account, serverUrl: DEFAULT_SERVER_URL, linkedAt: '2026-11-04T12:00:00.000Z' }
 
@@ -134,7 +134,7 @@ function stoppedHost(): string {
 
 /**
  * Runs the CLI with `answers` as the lines typed, and answers its exit code and
- * everything it printed, which must never hold the key or the machine secret.
+ * everything it printed, which must never hold the key or the machine's private key.
  */
 async function run(
   baseUrl: string,
@@ -158,7 +158,7 @@ async function run(
   })
   const text = lines.join('\n')
   expect(text).not.toContain(key)
-  expect(text).not.toContain(secret)
+  expect(text).not.toContain(machineKey.privateKey)
   for (const { id, publicKey } of [alice, bob, carol]) {
     for (const value of [id, publicKey.x, publicKey.y]) expect(text).not.toContain(value)
   }
@@ -365,7 +365,7 @@ describe('host:remote with the host running', () => {
 })
 
 describe('host:remote with the host stopped', () => {
-  test('status reads the files without creating a secret or keys', async () => {
+  test('status reads the files without creating a machine key or access keys', async () => {
     const url = stoppedHost()
     const empty = await run(url, ['status'], { env: { SERVER_URL: 'ws://127.0.0.1:4600' } })
     expect(empty.code).toBe(0)
@@ -373,16 +373,16 @@ describe('host:remote with the host stopped', () => {
     expect(empty.text).toContain('host not running')
     expect(empty.text).toContain('none yet')
     expect(empty.text).toContain('not linked')
-    expect(existsSync(machineSecretFile(dir))).toBe(false)
+    expect(existsSync(machineKeyFile(dir))).toBe(false)
     expect(existsSync(accessKeysPath(dir))).toBe(false)
 
-    writeFileSync(machineSecretFile(dir), secret)
+    writeFileSync(machineKeyFile(dir), machineKey.pem)
     writeFileSync(remoteAccessPath(dir), JSON.stringify({ enabled: true, serverUrl: 'wss://host', clientUrl: null }))
     writeFileSync(linkedAccountPath(dir), JSON.stringify(linked))
     const saved = await run(url, ['status'])
     expect(saved.text).toContain('Server address: wss://host\n')
     expect(saved.text).toContain('on, tunnel host not running')
-    expect(saved.text).toContain(machineIdFromSecret(secret))
+    expect(saved.text).toContain(machineKey.machineId)
     expect(saved.text).toContain('Ada (a***@example.com)')
   })
 
@@ -416,7 +416,7 @@ describe('host:remote with the host stopped', () => {
     const link = await run(url, ['link', key, '--yes'])
     expect(link.code).toBe(1)
     expect(link.text).toContain('Start the host and turn remote access on, then run this again')
-    expect(existsSync(machineSecretFile(dir))).toBe(false)
+    expect(existsSync(machineKeyFile(dir))).toBe(false)
     expect(existsSync(linkedAccountPath(dir))).toBe(false)
 
     writeFileSync(linkedAccountPath(dir), 'not json')

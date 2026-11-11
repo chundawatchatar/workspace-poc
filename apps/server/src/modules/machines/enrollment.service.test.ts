@@ -9,14 +9,13 @@ import {
   type ServerMachine,
   serverFrame,
   TUNNEL_PATH,
-  TUNNEL_PROTOCOL_VERSION,
 } from '@orch/shared'
 import type { Server } from 'bun'
 import { eq } from 'drizzle-orm'
 import { serverWebSocket } from '../../lib/websocket'
 import { accountsTestApp, cookiePair } from '../auth/auth.testing'
 import { ConnectionLimiter } from '../limits/limits.service'
-import { machineIdFromProof } from '../tunnel/tunnel.service'
+import { answerChallenge, createTestMachineKey } from '../tunnel/tunnel.testing'
 import { hashEnrollmentKey, maskEmail } from './enrollment.service'
 
 let domain: TestDomain
@@ -101,11 +100,12 @@ async function until(check: () => boolean, timeoutMs = 2000) {
 type EnrollAnswer = Extract<ServerFrame, { type: 'enroll.previewed' | 'enroll.redeemed' | 'enroll.failed' }>
 const isAnswer = (frame: ServerFrame): frame is EnrollAnswer => frame.type.startsWith('enroll.')
 
-/** A welcomed test machine with a fresh secret. Every frame it sends gets its own id. */
+/** A welcomed test machine with a fresh machine key. Every frame it sends gets its own id. */
 async function machine() {
-  const proof = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url')
+  const key = await createTestMachineKey()
   const ws = new WebSocket(`ws://127.0.0.1:${server.port}${TUNNEL_PATH}`)
   sockets.push(ws)
+  answerChallenge(ws, key)
   const frames: ServerFrame[] = []
   const raw: string[] = []
   ws.addEventListener('message', (event) => {
@@ -113,8 +113,6 @@ async function machine() {
     const frame = decodeFrame(serverFrame, event.data)
     if (frame) frames.push(frame)
   })
-  await new Promise((resolve) => ws.addEventListener('open', resolve))
-  ws.send(encodeFrame({ type: 'hello', version: TUNNEL_PROTOCOL_VERSION, proof }))
   await until(() => frames.some((frame) => frame.type === 'welcome'))
   let nextId = 1
   const answer = async (id: number): Promise<EnrollAnswer> => {
@@ -123,7 +121,7 @@ async function machine() {
     return find() as EnrollAnswer
   }
   return {
-    machineId: machineIdFromProof(proof),
+    machineId: key.machineId,
     raw,
     preview(key: string) {
       const id = nextId++

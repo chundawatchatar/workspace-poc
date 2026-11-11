@@ -13,10 +13,10 @@ import {
   key,
   linkedFile,
   logs,
+  machineKeyFile,
   post,
   relay,
   relayKeys,
-  secretFile,
   service,
   settingsFile,
   setup,
@@ -80,7 +80,7 @@ describe('RemoteAccessService', () => {
     expect(readFileSync(settingsFile(), 'utf8')).toBe(invalid)
     expect(logs.some((line) => line.includes('remote-access.json is not valid'))).toBe(true)
     expect(logs.join('\n')).not.toContain(hashLike)
-    expect(existsSync(secretFile())).toBe(false)
+    expect(existsSync(machineKeyFile())).toBe(false)
   })
 
   test('update saves the setting and opens, keeps, moves or closes the tunnel to match', () => {

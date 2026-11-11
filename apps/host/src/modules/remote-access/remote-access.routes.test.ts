@@ -28,7 +28,7 @@ beforeEach(() => {
     linkedAccounts: new LinkedAccountRepository(join(dir, 'linked-account.json')),
     devices: new DevicesRepository(join(dir, 'devices.json')),
     audit: new AuditLogService(new AuditLogRepository(join(dir, 'remote-audit.jsonl'))),
-    secretFile: join(dir, 'machine-secret'),
+    machineKeyFile: join(dir, 'machine-key'),
     keysFile: join(dir, 'access-keys.json'),
     handle: async () => new Response('ok'),
     openSocket: () => ({ code: 1008, reason: 'none' }),

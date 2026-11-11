@@ -31,7 +31,7 @@ export const remoteAccessStatus = z.object({
   serverUrlFromEnv: z.boolean(),
   /** True when `CLIENT_URL` sets the client address, so the saved one is not used. */
   clientUrlFromEnv: z.boolean(),
-  /** The id the server knows this machine by. Null until a machine secret exists. */
+  /** The id the server knows this machine by. Null until a machine key exists. */
   machineId: z.string().nullable(),
   tunnel: tunnelState,
   /** The account this machine is linked to. Null means none. */

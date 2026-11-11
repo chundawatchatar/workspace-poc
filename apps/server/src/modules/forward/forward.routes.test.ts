@@ -11,7 +11,6 @@ import {
   type ServerFrame,
   serverFrame,
   TUNNEL_PATH,
-  TUNNEL_PROTOCOL_VERSION,
 } from '@orch/shared'
 import type { Server } from 'bun'
 import { createApp } from '../../app'
@@ -19,12 +18,13 @@ import { SANDBOX_CSP } from '../../lib/security'
 import { serverWebSocket } from '../../lib/websocket'
 import { ChannelBridge } from '../bridge/bridge.service'
 import { ConnectionLimiter } from '../limits/limits.service'
-import { MachineRegistry, machineIdFromProof } from '../tunnel/tunnel.service'
+import { MachineRegistry } from '../tunnel/tunnel.service'
+import { answerChallenge, createTestMachineKey, type TestMachineKey } from '../tunnel/tunnel.testing'
 import { HttpForwarder } from './forward.service'
 
-const proofA = `${'A'.repeat(42)}a`
-const proofB = `${'B'.repeat(42)}b`
-const idA = machineIdFromProof(proofA)
+const keyA = await createTestMachineKey()
+const keyB = await createTestMachineKey()
+const idA = keyA.machineId
 const encoder = new TextEncoder()
 
 let registry: MachineRegistry
@@ -59,9 +59,10 @@ interface Machine {
   send(frame: MachineFrame): void
 }
 
-async function machine(proof: string, { pong = true } = {}): Promise<Machine> {
+async function machine(key: TestMachineKey, { pong = true } = {}): Promise<Machine> {
   const ws = new WebSocket(`ws://127.0.0.1:${server.port}${TUNNEL_PATH}`)
   ws.binaryType = 'arraybuffer'
+  answerChallenge(ws, key)
   let welcomed = false
   const m: Machine = { ws, requests: [], send: (frame) => ws.send(encodeFrame(frame)) }
   ws.addEventListener('message', (event) => {
@@ -70,8 +71,6 @@ async function machine(proof: string, { pong = true } = {}): Promise<Machine> {
     if (frame?.type === 'http.request') m.requests.push(frame)
     if (pong && frame?.type === 'ping') m.send({ type: 'pong', nonce: frame.nonce })
   })
-  await new Promise((resolve) => ws.addEventListener('open', resolve))
-  m.send({ type: 'hello', version: TUNNEL_PROTOCOL_VERSION, proof })
   machines.push(m)
   await until(() => welcomed)
   return m
@@ -93,7 +92,7 @@ describe('forward routes', () => {
   test('relay the request as sent and stream back the exact status, headers and body the machine answers', async () => {
     const logs = (['log', 'info', 'warn', 'error'] as const).map((method) => spyOn(console, method))
     try {
-      const m = await machine(proofA)
+      const m = await machine(keyA)
       const body = new Uint8Array([0, 1, 2, 250, 255])
       const pending = fetch(url('/api/git/status?cwd=%2Ftmp'), {
         method: 'POST',
@@ -180,28 +179,28 @@ describe('forward routes', () => {
   })
 
   test('give 502 with no machine data when the machine is offline or its tunnel closes before the head', async () => {
-    const other = await machine(proofB)
+    const other = await machine(keyB)
     const offline = await fetch(url('/api/system/health'))
     expect(offline.status).toBe(502)
     expect(await offline.text()).toBe('Machine offline')
     expect(other.requests).toHaveLength(0)
 
-    const dropped = await machine(proofA)
+    const dropped = await machine(keyA)
     const beforeHead = fetch(url('/api/a'))
     await until(() => dropped.requests.length === 1)
     dropped.ws.close()
     expect((await beforeHead).status).toBe(502)
 
-    const replaced = await machine(proofA)
+    const replaced = await machine(keyA)
     const waiting = fetch(url('/api/b'))
     await until(() => replaced.requests.length === 1)
-    await machine(proofA)
+    await machine(keyA)
     expect((await waiting).status).toBe(502)
     expect(forwarder.size).toBe(0)
   })
 
   test('give 502 when a silent tunnel hits its heartbeat timeout before the head', async () => {
-    const m = await machine(proofA, { pong: false })
+    const m = await machine(keyA, { pong: false })
     const pending = fetch(url('/api/a'))
     await until(() => m.requests.length === 1)
     expect((await pending).status).toBe(502)
@@ -209,7 +208,7 @@ describe('forward routes', () => {
   })
 
   test('answer 413 for a body that does not fit in one frame and 404 outside a machine API', async () => {
-    const m = await machine(proofA)
+    const m = await machine(keyA)
     const tooBig = await fetch(url('/api/fs/upload'), { method: 'POST', body: new Uint8Array(MAX_TUNNEL_FRAME_BYTES) })
     expect(tooBig.status).toBe(413)
     expect((await fetch(url('/ws/terminal'))).status).toBe(404)
