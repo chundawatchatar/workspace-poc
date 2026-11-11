@@ -107,6 +107,15 @@ describe('RemoteAccessService', () => {
     expect(tunnels[1]?.status).toBe('off')
     expect(off).toMatchObject({ enabled: false, tunnel: 'off' })
     expect(JSON.parse(readFileSync(settingsFile(), 'utf8'))).toMatchObject({ enabled: false })
+
+    // Only turning it off tells the server so; moving to another address does not.
+    expect(tunnels.map((t) => t.stops)).toEqual([[undefined], [{ remoteOff: true }]])
+  })
+
+  test('shutdown stops the tunnel without telling the server remote access is off', () => {
+    const { tunnel } = connected()
+    service.shutdown()
+    expect(tunnel.stops).toEqual([undefined])
   })
 
   test('an address the host refuses gets a 400, and nothing is saved or changed', async () => {

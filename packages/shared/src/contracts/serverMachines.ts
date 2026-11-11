@@ -20,6 +20,8 @@ export const serverMachine = z.object({
   lastOpenedAt: z.iso.datetime(),
   /** True when the machine's tunnel is connected to this server right now. */
   online: z.boolean(),
+  /** True when the machine is not online and its last tunnel ended with `remote.off`. */
+  remoteOff: z.boolean(),
 })
 export type ServerMachine = z.infer<typeof serverMachine>
 
@@ -58,7 +60,8 @@ export const serverMachinesContract = defineServerContract({
   list: {
     method: 'GET',
     path: '/api/machines',
-    description: "Lists the signed-in user's machines, newest `lastOpenedAt` first, each marked online or offline.",
+    description:
+      "Lists the signed-in user's machines, newest `lastOpenedAt` first, each marked online, offline or remote access off.",
     input: z.strictObject({}),
     output: listMachinesResponse,
   },

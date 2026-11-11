@@ -173,6 +173,19 @@ describe('tunnel socket', () => {
     expect(healthy.frames.find((f) => f.type === 'pong')).toEqual({ type: 'pong', nonce: 77 })
   })
 
+  test('remote.off marks the machine once its tunnel closes, and its next hello clears the mark', async () => {
+    const id = machineIdFromProof(proofA)
+    const machine = await hello(proofA, { pong: true })
+    machine.send({ type: 'remote.off' })
+    await until(() => registry.isRemoteOff(id))
+    machine.ws.close(1000)
+    await until(() => registry.get(id) === undefined)
+    expect(registry.isRemoteOff(id)).toBe(true)
+
+    await hello(proofA, { pong: true })
+    expect(registry.isRemoteOff(id)).toBe(false)
+  })
+
   test('answers enrollment frames with `unavailable` while accounts are off', async () => {
     const machine = await hello(proofA, { pong: true })
     machine.send({ type: 'enroll.preview', id: 1, key: 'oek_any' })

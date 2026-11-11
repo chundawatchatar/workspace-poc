@@ -141,7 +141,14 @@ describe('client routes', () => {
 
   test('a machine with no key here opens through the account when listed, and is not linked otherwise', async () => {
     const at = '2026-10-30T12:00:00.000Z'
-    const listed = { machineId: 'account-machine', name: 'Desktop', createdAt: at, lastOpenedAt: at, online: true }
+    const listed = {
+      machineId: 'account-machine',
+      name: 'Desktop',
+      createdAt: at,
+      lastOpenedAt: at,
+      online: true,
+      remoteOff: false,
+    }
     const firstMessages: string[] = []
     const ticketsFor: string[] = []
     const expiresAt = new Date(Date.now() + 60_000).toISOString()

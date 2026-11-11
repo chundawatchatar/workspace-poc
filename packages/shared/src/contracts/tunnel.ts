@@ -171,6 +171,13 @@ export const enrollFailedFrame = z.strictObject({
  */
 export const sessionEndedFrame = z.strictObject({ type: z.literal('session.ended'), accountId: z.string().min(1) })
 
+/**
+ * Tells the server the owner turned remote access off, just before the machine
+ * closes its tunnel, so the account's machine list can say so instead of
+ * Offline. It carries nothing else.
+ */
+export const remoteOffFrame = z.strictObject({ type: z.literal('remote.off') })
+
 /** Frames the machine sends to the server. */
 export const machineFrame = z.discriminatedUnion('type', [
   helloFrame,
@@ -185,6 +192,7 @@ export const machineFrame = z.discriminatedUnion('type', [
   pongFrame,
   enrollPreviewFrame,
   enrollRedeemFrame,
+  remoteOffFrame,
 ])
 
 /** Frames the server sends to the machine. */

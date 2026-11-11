@@ -202,9 +202,10 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   `.env.example` sets `DATABASE_URL`.
 - The client's home page lists the signed-in account's machines (`src/lib/accountMachines.ts`, `machinesQuery`:
   `accountQuery` on `serverRoutes.machines.list`, so its key is `accountKey(userId, ...)`), in the server's order,
-  each marked Online or Offline. It refetches every 10 seconds while the page is open, since `online` changes without
-  any client action. `online` reflects only the relay's tunnel registry, so Offline can also mean a host that is up
-  with remote access off. Rename (an inline TanStack Form with `machineNameSchema`) and unlink invalidate the list;
+  each marked Online, Offline or Remote access off. It refetches every 10 seconds while the page is open, since the
+  state changes without any client action. Both `online` and `remoteOff` come only from the relay's tunnel registry:
+  `remoteOff` is set when the host's last tunnel ended with `remote.off`, which the host sends only when its owner turns
+  remote access off while it runs. A host that exits, crashes or loses its network shows Offline. Rename (an inline TanStack Form with `machineNameSchema`) and unlink invalidate the list;
   unlink also forgets the machine's local key, since the list no longer shows local-only machines and a key left
   behind could never be seen or removed. Open question: whether unlink should ask for confirmation.
 - The client's settings (`/settings`, a left nav of sections; password and sessions on `/settings/security`) are reached
@@ -237,9 +238,11 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   or logs input. It has no endpoint that links a machine by id: `MachinesService.link` is called only when an
   enrollment key is redeemed. Linking a machine again keeps its name and refreshes `lastOpenedAt`, which is when it
   was last linked; a link that loses a race to the unique index returns the winning row. Each listed machine is
-  `online` when the in-memory `MachineRegistry` holds its tunnel, so `index.ts` builds the registry before the
-  accounts modules and hands the same one to both; with more than one server instance this would be wrong (see
-  "More than one server instance" below).
+  `online` when the in-memory `MachineRegistry` holds its tunnel, and `remoteOff` when it is not online and its last
+  tunnel sent `remote.off` (`markRemoteOff`, accepted only from the machine's live, welcomed connection; its next
+  `hello` clears it). `index.ts` builds the registry before the accounts modules and hands the same one to both. Both
+  live in memory only, so a server restart shows an off machine as Offline until it reconnects, and with more than one
+  server instance they would be wrong (see "More than one server instance" below).
 - Device approval: the server is no longer trusted for access through the account. It still says who is signed in,
   so it decides who owns an enrollment key and who gets relay tickets, but a ticket is not enough. Each browser
   profile keeps one ECDSA P-256 key pair in IndexedDB (`orch-device`, `apps/client/src/lib/deviceKey.ts`), generated

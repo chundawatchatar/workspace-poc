@@ -26,7 +26,7 @@ const accessKey = 'the-access-key-value'
 
 function machine(machineId: string, name: string, online = false): ServerMachine {
   const at = '2026-10-30T12:00:00.000Z'
-  return { machineId, name, createdAt: at, lastOpenedAt: at, online }
+  return { machineId, name, createdAt: at, lastOpenedAt: at, online, remoteOff: false }
 }
 
 /** A server error answer, as `serverRoutes` endpoints send it. */

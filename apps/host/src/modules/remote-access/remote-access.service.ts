@@ -232,7 +232,7 @@ export class RemoteAccessService {
     this.options.repository.save(next)
     this.saved = next
     if (next.enabled) this.connect()
-    else this.disconnect()
+    else this.disconnect({ remoteOff: true })
     return this.status()
   }
 
@@ -435,9 +435,12 @@ export class RemoteAccessService {
     tunnel.start()
   }
 
-  /** Stops the tunnel, which ends its channels. A stopped `TunnelClient` cannot start again, so it is dropped. */
-  private disconnect() {
-    this.tunnel?.stop()
+  /**
+   * Stops the tunnel, which ends its channels. A stopped `TunnelClient` cannot start again, so it is dropped.
+   * `remoteOff` is for the owner turning remote access off, so the server can show it instead of Offline.
+   */
+  private disconnect(options?: { remoteOff: true }) {
+    this.tunnel?.stop(options)
     this.tunnel = null
     this.tunnelUrl = null
   }
