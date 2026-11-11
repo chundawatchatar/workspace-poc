@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import type { RelayTicketPayload } from '@orch/shared'
+import { CLOSE_SESSION_ENDED, type RelayTicketPayload } from '@orch/shared'
 import { deviceKeyFingerprint } from '@orch/terminal-ui/device-proof'
 import type { Principal } from '../../lib/principal'
 import { type Credentials, DEVICE_NOT_APPROVED } from '../tunnel/tunnel-http.service'
@@ -165,6 +165,45 @@ describe('RemoteAccessService.authorize', () => {
     service.unlink()
     expect(service.listDevices()).toEqual({ pending: [], approved: [] })
     expect(existsSync(devicesFile())).toBe(false)
+  })
+
+  test("session.ended closes only the linked account's ticket sockets, and changes no link or device", async () => {
+    writeLinked({ accountId, relayKeys })
+    const { tunnel } = connected()
+    const machineId = service.status().machineId ?? ''
+    const health = { machineId, method: 'GET', path: '/api/health' }
+    const [approved, waiting] = await Promise.all([testDevice(), testDevice()])
+    for (const device of [approved, waiting]) {
+      authorize({ key: null, ticket: ticketFor(), device: await device.presented(health) })
+    }
+    service.approveDevice(fingerprintOf(approved.id))
+    const viaTicket: Principal = { kind: 'account', accountId, deviceId: approved.id }
+    const viaKey: Principal = { kind: 'key', keyId: 'k1', name: 'default', deviceId: approved.id }
+    const otherAccount: Principal = { kind: 'account', accountId: 'acct-bob-2', deviceId: approved.id }
+    const persisted = () => ({
+      linked: readFileSync(linkedFile(), 'utf8'),
+      devices: readFileSync(devicesFile(), 'utf8'),
+      list: service.listDevices(),
+    })
+    const unchanged = persisted()
+    const ended = (id: string) => tunnel.options.onSessionEnded?.(id)
+
+    ended(accountId)
+    expect(tunnel.closed.map(({ reason, code }) => ({ reason, code }))).toEqual([
+      { reason: 'session ended', code: CLOSE_SESSION_ENDED },
+    ])
+    const [closed] = tunnel.closed
+    expect([viaTicket, viaKey, otherAccount].map((p) => closed?.revoked(p))).toEqual([true, false, false])
+    expect(persisted()).toEqual(unchanged)
+
+    // Another account, or no linked account at all, closes nothing.
+    ended('acct-bob-2')
+    expect(tunnel.closed).toHaveLength(1)
+    expect(persisted()).toEqual(unchanged)
+    service.unlink()
+    const afterUnlink = tunnel.closed.length
+    ended(accountId)
+    expect(tunnel.closed).toHaveLength(afterUnlink)
   })
 
   test('an older linked file still shows the account but accepts no ticket, nor does another server', () => {

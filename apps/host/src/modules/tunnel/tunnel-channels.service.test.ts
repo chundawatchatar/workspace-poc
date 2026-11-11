@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, type Mock, spyOn, test } from 
 import {
   CLOSE_ACCESS_DENIED,
   CLOSE_DEVICE_NOT_APPROVED,
+  CLOSE_SESSION_ENDED,
   type MachineFrame,
   relaySocketProtocols,
   WS_CHANNEL_WINDOW_BYTES,
@@ -221,6 +222,16 @@ describe('TunnelChannels', () => {
       channel: 5,
       code: CLOSE_ACCESS_DENIED,
       reason: 'account unlinked',
+    })
+
+    // A caller may choose the code, as a session that ended on the server does.
+    channels.closeChannels((p) => p.kind === 'key', 'session ended', CLOSE_SESSION_ENDED)
+    expect(b.closes).toBe(1)
+    expect(of('ws.close').at(-1)).toEqual({
+      type: 'ws.close',
+      channel: 2,
+      code: CLOSE_SESSION_ENDED,
+      reason: 'session ended',
     })
     channels.close()
   })

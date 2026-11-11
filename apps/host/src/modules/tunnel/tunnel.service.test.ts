@@ -303,6 +303,26 @@ describe('TunnelClient', () => {
     expect(logs.join('\n')).not.toContain(key)
   })
 
+  test('passes session.ended on only after welcome, and ignores a malformed one without dropping the tunnel', async () => {
+    mode = 'mute'
+    const ended: string[] = []
+    const client = start({ onSessionEnded: (accountId) => ended.push(accountId) })
+    await until(() => conns[0]?.frames.some((f) => f.type === 'hello') ?? false)
+    const [conn] = conns
+    if (!conn) throw new Error('no connection')
+    send(conn, { type: 'session.ended', accountId: 'too-early' })
+    send(conn, { type: 'welcome', machineId: 'machine-0' })
+    await until(() => client.status === 'connected')
+    conn.ws.send(JSON.stringify({ type: 'session.ended', accountId: 'with-extra', sessionId: 's1' }))
+    send(conn, { type: 'session.ended', accountId: 'acct-1' })
+    await until(() => ended.length > 0)
+
+    expect(ended).toEqual(['acct-1'])
+    expect(client.status).toBe('connected')
+    expect(conns).toHaveLength(1)
+    expect(conn.closed).toBeNull()
+  })
+
   test('drops the requests of a lost connection, and answers a refused ws.open with a close', async () => {
     let signal: AbortSignal | undefined
     let cancelled = false

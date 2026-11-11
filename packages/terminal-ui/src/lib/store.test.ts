@@ -3,6 +3,7 @@ import {
   CLOSE_ACCESS_DENIED,
   CLOSE_DEVICE_NOT_APPROVED,
   CLOSE_MACHINE_OFFLINE,
+  CLOSE_SESSION_ENDED,
   type ClientEvent,
   makeWorkspace,
   type ServerEvent,
@@ -136,7 +137,12 @@ describe('connection status', () => {
     expect(getSnapshot().status).toBe('offline')
     expect(getSnapshot().state).toBe(layout)
 
+    // A session that ended on the server is not a denial: a browser still signed in gets a fresh ticket.
     advance(2000)
+    fake.close(CLOSE_SESSION_ENDED)
+    expect(getSnapshot().status).toBe('reconnecting')
+
+    advance(4000)
     fake.close(CLOSE_ACCESS_DENIED)
     expect(getSnapshot().status).toBe('denied')
   })

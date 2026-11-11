@@ -18,6 +18,7 @@ import { ConnectionLimiter } from './modules/limits/limits.service'
 import { ENROLLMENT_LOOKUP_REASON, EnrollmentService } from './modules/machines/enrollment.service'
 import { createMachinesModule } from './modules/machines/machines.routes'
 import { RelayTickets } from './modules/machines/relay-ticket.service'
+import { SessionEnded } from './modules/machines/session-ended.service'
 import { createMailer, type Mailer } from './modules/mailer/mailer.service'
 import { createSmtpTransport } from './modules/mailer/mailer.transport'
 import { loadStaticSite } from './modules/static/static.service'
@@ -64,7 +65,8 @@ interface Accounts {
  * are on: Better Auth at `/api/auth/*`, the account endpoints and the machines
  * endpoints. `forUser` is a closure, so routers never hold the `Domain`, and
  * the enrollment service gets only a closure that logs its fixed reason on
- * every key lookup.
+ * every key lookup. Each session Better Auth ends sends `session.ended` to
+ * the user's online machines.
  */
 function createAccountsModules({
   domain,
@@ -74,14 +76,16 @@ function createAccountsModules({
   clientIp,
   registry,
 }: AccountsDeps): Accounts {
+  const forUser = (principal: Principal) => domain.forUser(principal)
+  const sessionEnded = new SessionEnded({ forUser, registry })
   const auth = createAuth({
     domain,
     mailer,
     secret: accounts.betterAuthSecret,
     baseUrl: accounts.betterAuthUrl,
     trustedOrigins,
+    onSessionEnded: (userId) => sessionEnded.ended(userId),
   })
-  const forUser = (principal: Principal) => domain.forUser(principal)
   const relayTickets = new RelayTickets({
     signingKey: accounts.relaySigningKey,
     extraPublicKeys: accounts.relayExtraPublicKeys,

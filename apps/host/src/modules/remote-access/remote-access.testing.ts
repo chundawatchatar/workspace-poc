@@ -20,8 +20,8 @@ import { type RemoteAccessEnv, RemoteAccessService } from './remote-access.servi
 /** Stands in for `TunnelClient`, recording what the service asks of it. */
 export class FakeTunnel {
   status: TunnelState = 'off'
-  /** Every `closeChannels` call: which principals it matches, and the reason. */
-  closed: { revoked: (principal: Principal) => boolean; reason: string }[] = []
+  /** Every `closeChannels` call: which principals it matches, the reason and the close code, if one was given. */
+  closed: { revoked: (principal: Principal) => boolean; reason: string; code?: number }[] = []
   constructor(readonly options: TunnelClientOptions) {}
   start() {
     this.status = 'connecting'
@@ -29,8 +29,8 @@ export class FakeTunnel {
   stop() {
     this.status = 'off'
   }
-  closeChannels(revoked: (principal: Principal) => boolean, reason: string) {
-    this.closed.push({ revoked, reason })
+  closeChannels(revoked: (principal: Principal) => boolean, reason: string, code?: number) {
+    this.closed.push({ revoked, reason, ...(code === undefined ? {} : { code }) })
   }
   /** Every enrollment frame sent, in order. */
   sent: EnrollRequest[] = []

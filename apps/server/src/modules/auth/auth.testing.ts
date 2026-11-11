@@ -156,6 +156,8 @@ export interface AccountsTestAppOptions {
   now?: () => Date
   /** Defaults to a limiter with the production limits. */
   limiter?: ConnectionLimiter
+  /** Passed to `createAuth`, told the user id of each session Better Auth ends. */
+  onSessionEnded?: (userId: string) => unknown
 }
 
 /**
@@ -164,7 +166,11 @@ export interface AccountsTestAppOptions {
  * `forUser`, the enrollment service the tunnel answers with, and the
  * `registry` the machines module reads online state from.
  */
-export function accountsTestApp(domain: TestDomain, ipPrefix: string, { now, limiter }: AccountsTestAppOptions = {}) {
+export function accountsTestApp(
+  domain: TestDomain,
+  ipPrefix: string,
+  { now, limiter, onSessionEnded }: AccountsTestAppOptions = {},
+) {
   const mail = createCaptureTransport()
   const auth = createAuth({
     domain,
@@ -172,6 +178,7 @@ export function accountsTestApp(domain: TestDomain, ipPrefix: string, { now, lim
     secret: 'a-test-secret-that-is-at-least-32-bytes-long',
     baseUrl: TEST_BASE,
     trustedOrigins: [TEST_TRUSTED_ORIGIN],
+    onSessionEnded,
   })
   const registry = new MachineRegistry()
   const forUser = (principal: Principal) => domain.forUser(principal)

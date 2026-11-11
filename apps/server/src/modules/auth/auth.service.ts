@@ -17,6 +17,13 @@ export interface AuthDeps {
   baseUrl: string
   /** Exact origins, besides the server's own, that may send non-GET requests (`SERVER_TRUSTED_ORIGINS`). */
   trustedOrigins: readonly string[]
+  /**
+   * Told the user id of every session row Better Auth deletes: a revoke, a
+   * sign-out, a password change that ends other sessions or a password reset.
+   * It is not awaited, and a throw or rejection is logged and dropped, so a
+   * sign-out never waits for it or fails because of it.
+   */
+  onSessionEnded?: (userId: string) => unknown
 }
 
 /**
@@ -25,7 +32,7 @@ export interface AuthDeps {
  * cookie, and a session cookie on `Path=/api`, so browsers never send it to
  * the relayed machines under `/m/*`.
  */
-export function createAuth({ domain, mailer, secret, baseUrl, trustedOrigins }: AuthDeps) {
+export function createAuth({ domain, mailer, secret, baseUrl, trustedOrigins, onSessionEnded }: AuthDeps) {
   return betterAuth({
     secret,
     baseURL: baseUrl,
@@ -51,6 +58,10 @@ export function createAuth({ domain, mailer, secret, baseUrl, trustedOrigins }: 
       // older than this, so a page that lists devices must ask for a fresh sign-in first. Revoking needs no freshness.
       freshAge: 60 * 60 * 24,
     },
+    // Runs once per deleted row, the bulk deletes of `revoke-sessions` and `revoke-other-sessions` included.
+    databaseHooks: {
+      session: { delete: { after: async (session) => notifySessionEnded(onSessionEnded, session.userId) } },
+    },
     // Better Auth turns these off when `NODE_ENV` is `test`; set them so tests see what production does.
     rateLimit: { enabled: true, storage: 'memory' },
     advanced: {
@@ -71,6 +82,17 @@ export function createAuth({ domain, mailer, secret, baseUrl, trustedOrigins }: 
  */
 export function emailLinkUrl(baseUrl: string, page: 'verify-email' | 'reset-password', token: string): string {
   return `${new URL(baseUrl).origin}/auth/${page}#token=${encodeURIComponent(token)}`
+}
+
+/** Calls `onSessionEnded` without waiting for it, logging a fixed line, never the user id, if it fails. */
+function notifySessionEnded(onSessionEnded: AuthDeps['onSessionEnded'], userId: string) {
+  if (!onSessionEnded) return
+  const failed = () => console.error('auth: telling machines that a session ended failed')
+  try {
+    Promise.resolve(onSessionEnded(userId)).catch(failed)
+  } catch {
+    failed()
+  }
 }
 
 /** A Better Auth instance from `createAuth`. */

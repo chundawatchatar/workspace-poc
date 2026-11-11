@@ -163,6 +163,14 @@ export const enrollFailedFrame = z.strictObject({
   code: z.enum(['invalid_key', 'rate_limited', 'unavailable']),
 })
 
+/**
+ * Tells a machine that the account `accountId` ended a session on the server
+ * (a revoke, a sign-out or a password change), so it closes the sockets that
+ * account's relay tickets opened. It names only the account: tickets carry no
+ * session id, and the machine checks the account against its own link.
+ */
+export const sessionEndedFrame = z.strictObject({ type: z.literal('session.ended'), accountId: z.string().min(1) })
+
 /** Frames the machine sends to the server. */
 export const machineFrame = z.discriminatedUnion('type', [
   helloFrame,
@@ -192,6 +200,7 @@ export const serverFrame = z.discriminatedUnion('type', [
   enrollPreviewedFrame,
   enrollRedeemedFrame,
   enrollFailedFrame,
+  sessionEndedFrame,
 ])
 
 export type MachineFrame = z.infer<typeof machineFrame>
