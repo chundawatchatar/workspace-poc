@@ -17,7 +17,7 @@ import {
 import type { z } from 'zod'
 import type { Principal } from '../../lib/principal'
 import type { RecordAudit } from '../remote-access/audit-log.service'
-import { AUTH_TIMEOUT_MS, type OpenSocket, TunnelChannels } from './tunnel-channels.service'
+import { AUTH_TIMEOUT_MS, type OpenChannel, type OpenSocket, TunnelChannels } from './tunnel-channels.service'
 import { type Authorize, type TunnelHandler, TunnelHttp } from './tunnel-http.service'
 import { TunnelOutbox } from './tunnel-outbox.service'
 
@@ -192,6 +192,11 @@ export class TunnelClient {
   /** Closes the open tunneled sockets whose principal `revoked` matches with `code`; see `TunnelChannels.closeChannels`. */
   closeChannels(revoked: (principal: Principal) => boolean, reason: string, code?: number) {
     this.conn?.channels.closeChannels(revoked, reason, code)
+  }
+
+  /** The open, authorized tunneled sockets of the current connection; see `TunnelChannels.list`. Empty with none. */
+  listChannels(): OpenChannel[] {
+    return this.conn?.channels.list() ?? []
   }
 
   /**

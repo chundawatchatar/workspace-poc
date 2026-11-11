@@ -6,6 +6,7 @@ import {
   formatLocalDateTime,
   type LinkedAccount,
   type RemoteAccessStatus,
+  type RemoteSession,
   routes,
 } from '@orch/shared'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -35,9 +36,10 @@ const notWaiting = (typed: string) =>
 
 /**
  * Renders the dialog against a fake host that answers the link and device endpoints and records what it was sent.
- * `linked` starts it linked, with two browsers waiting and one approved. `auditLog` is what its audit log holds.
+ * `linked` starts it linked, with two browsers waiting and one approved. `auditLog` is what its audit log
+ * holds at first, and `audit.entries` later; null makes that request fail.
  */
-function setup({ linked = false, auditLog = [] as AuditLogEntry[] } = {}) {
+function setup({ linked = false, auditLog = [] as AuditLogEntry[] | null } = {}) {
   const seenAt = '2026-11-04T12:05:00.000Z'
   let devices: DevicesResponse = {
     pending: [
@@ -57,12 +59,21 @@ function setup({ linked = false, auditLog = [] as AuditLogEntry[] } = {}) {
     tunnel: 'connected',
     linkedAccount: linked ? linkedAccount : null,
   }
+  // The fake host's open sessions; a test sets them to stand for browsers connecting.
+  const live = { sessions: [] as RemoteSession[] }
+  const audit = { entries: auditLog }
+  const reads: Record<string, () => Response> = {
+    [routes.remoteAccess.status.path]: () => Response.json(status),
+    [routes.remoteAccess.devices.path]: () => Response.json(devices),
+    [routes.remoteAccess.sessions.path]: () => Response.json(live),
+    [routes.remoteAccess.auditLog.path]: () =>
+      audit.entries ? Response.json(audit) : new Response('the host stopped', { status: 500 }),
+  }
   const sent: [string, unknown][] = []
   const transport: HostTransport = {
     request: async (path, init) => {
-      if (path === routes.remoteAccess.status.path) return Response.json(status)
-      if (path === routes.remoteAccess.devices.path) return Response.json(devices)
-      if (path === routes.remoteAccess.auditLog.path) return Response.json({ entries: auditLog })
+      const read = reads[path]
+      if (read) return read()
       const body: unknown = JSON.parse(String(init.body))
       sent.push([path, body])
       if (path === routes.remoteAccess.previewLink.path) {
@@ -92,11 +103,17 @@ function setup({ linked = false, auditLog = [] as AuditLogEntry[] } = {}) {
       }
       if (path === routes.remoteAccess.removeDevice.path) {
         const { id } = body as { id: string }
+        live.sessions = live.sessions.filter((session) => session.deviceId !== id)
         devices = {
           pending: devices.pending.filter((d) => d.id !== id),
           approved: devices.approved.filter((d) => d.id !== id),
         }
         return Response.json(devices)
+      }
+      if (path === routes.remoteAccess.endSession.path) {
+        const { id } = body as { id: string }
+        live.sessions = live.sessions.filter((session) => session.deviceId !== id)
+        return Response.json(live)
       }
       if (path === routes.remoteAccess.unlink.path) {
         status = { ...status, linkedAccount: null }
@@ -113,7 +130,7 @@ function setup({ linked = false, auditLog = [] as AuditLogEntry[] } = {}) {
       <RemoteAccessSetting />
     </QueryClientProvider>,
   )
-  return { sent, queryClient }
+  return { sent, queryClient, live, audit }
 }
 
 describe('RemoteAccessSetting', () => {
@@ -181,6 +198,37 @@ describe('RemoteAccessSetting', () => {
     ])
   })
 
+  test('Sessions picks up a connected browser within a poll, End closes it, and Revoke drops its session', async () => {
+    const user = userEvent.setup()
+    const { sent, live } = setup({ linked: true })
+    const section = await screen.findByRole('region', { name: 'Sessions' })
+    expect(section).toHaveTextContent('No browser is connected through the tunnel.')
+
+    const session = (device: typeof deviceA): RemoteSession => ({
+      deviceId: device.id,
+      fingerprint: device.fingerprint,
+      credentials: [{ kind: 'account' }],
+      sockets: 2,
+      startedAt: '2026-11-04T12:10:00.000Z',
+    })
+    live.sessions = [session(deviceA), session(deviceC)]
+    const end = await screen.findByRole('button', { name: `End ${deviceA.fingerprint}` }, { timeout: 3000 })
+    expect(section).toHaveTextContent('Account · 2 sockets')
+
+    await user.click(end)
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: `End ${deviceA.fingerprint}` })).not.toBeInTheDocument(),
+    )
+    await user.click(screen.getByRole('button', { name: `Revoke ${deviceC.fingerprint}` }))
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: `End ${deviceC.fingerprint}` })).not.toBeInTheDocument(),
+    )
+    expect(sent).toEqual([
+      [routes.remoteAccess.endSession.path, { id: deviceA.id }],
+      [routes.remoteAccess.removeDevice.path, { id: deviceC.id }],
+    ])
+  })
+
   test('a fingerprint no browser is waiting with shows the host message once and keeps the typed text', async () => {
     const user = userEvent.setup()
     const { sent } = setup({ linked: true })
@@ -196,39 +244,41 @@ describe('RemoteAccessSetting', () => {
     expect(screen.getByRole('region', { name: 'Recent activity' })).toHaveTextContent('No remote access recorded yet.')
   })
 
-  test('shows the recent activity the host recorded: sessions with their times, and refusals with their reason', async () => {
+  test('Recent activity says when it could not load, then shows sessions and refusals within a poll', async () => {
     const openedAt = '2026-11-04T12:00:00.000Z'
     const closedAt = '2026-11-04T12:30:00.000Z'
-    setup({
-      auditLog: [
-        {
-          kind: 'refused',
-          reason: 'device_not_approved',
-          at: closedAt,
-          fingerprint: deviceA.fingerprint,
-          principal: 'account',
-        },
-        {
-          kind: 'session',
-          session: 's2',
-          principal: 'key',
-          keyId: 'k1',
-          fingerprint: deviceB.fingerprint,
-          openedAt,
-          closedAt: null,
-        },
-        {
-          kind: 'session',
-          session: 's1',
-          principal: 'account',
-          accountId: 'u1',
-          fingerprint: deviceC.fingerprint,
-          openedAt,
-          closedAt,
-        },
-      ],
-    })
-    const rows = within(await screen.findByRole('region', { name: 'Recent activity' })).getAllByRole('listitem')
+    const { audit } = setup({ auditLog: null })
+    const section = await screen.findByRole('region', { name: 'Recent activity' })
+    expect(await within(section).findByText("Couldn't load recent activity.")).toBeInTheDocument()
+    audit.entries = [
+      {
+        kind: 'refused',
+        reason: 'device_not_approved',
+        at: closedAt,
+        fingerprint: deviceA.fingerprint,
+        principal: 'account',
+      },
+      {
+        kind: 'session',
+        session: 's2',
+        principal: 'key',
+        keyId: 'k1',
+        fingerprint: deviceB.fingerprint,
+        openedAt,
+        closedAt: null,
+      },
+      {
+        kind: 'session',
+        session: 's1',
+        principal: 'account',
+        accountId: 'u1',
+        fingerprint: deviceC.fingerprint,
+        openedAt,
+        closedAt,
+      },
+    ]
+    const list = await within(section).findByRole('list', { name: 'Recent remote access' }, { timeout: 3000 })
+    const rows = within(list).getAllByRole('listitem')
     expect(rows.map((row) => row.textContent)).toEqual([
       `Refused: browser not approved${formatLocalDateTime(closedAt)}${deviceA.fingerprint}`,
       `${deviceB.fingerprint}With access key k1Opened ${formatLocalDateTime(openedAt)}, still open or not recorded`,

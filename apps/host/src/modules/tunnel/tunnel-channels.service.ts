@@ -53,6 +53,12 @@ const EMPTY_SHA256 = bodySha256()
 /** A `ws.data` payload. Bun never hands the host a `SharedArrayBuffer`, so every `SocketData` is one. */
 type Payload = string | Uint8Array<ArrayBuffer>
 
+/** An open, authorized channel as `TunnelChannels.list` shows it. `openedAt` is in milliseconds. */
+export interface OpenChannel {
+  principal: Principal
+  openedAt: number
+}
+
 type ChannelFrame = Extract<ServerFrame, { type: 'ws.open' | 'ws.data' | 'ws.close' | 'ws.ack' }>
 
 /** One open channel. Byte counts are `ws.data` payload bytes. */
@@ -64,8 +70,12 @@ interface Channel {
   ticket: string | null
   /** Null until the channel's auth message has been accepted. */
   principal: Principal | null
-  /** The audit log's id for the channel's socket. Null until it starts. */
-  auditId: string | null
+  /**
+   * The channel's session, from when its auth message was accepted: a random
+   * id that ties its `opened` and `closed` in the audit log, and when it was,
+   * in milliseconds, as `list` shows it. Null until then.
+   */
+  opened: { session: string; at: number } | null
   /** Runs out when no auth message arrives in time. Cleared once one does. */
   authTimer: Timer | undefined
   /** Null until the handler has returned it. */
@@ -107,15 +117,17 @@ export class TunnelChannels {
   private readonly queueCapBytes: number
   private readonly authTimeoutMs: number
   private readonly record: RecordAudit
+  private readonly now: () => number
 
   constructor(
     private readonly openSocket: OpenSocket,
     private readonly authorize: Authorize,
     private readonly send: (frame: MachineFrame) => void,
-    options: { queueCapBytes?: number; authTimeoutMs?: number; record?: RecordAudit } = {},
+    options: { queueCapBytes?: number; authTimeoutMs?: number; now?: () => number; record?: RecordAudit } = {},
   ) {
     this.queueCapBytes = options.queueCapBytes ?? CHANNEL_QUEUE_CAP_BYTES
     this.authTimeoutMs = options.authTimeoutMs ?? AUTH_TIMEOUT_MS
+    this.now = options.now ?? Date.now
     this.record = options.record ?? (() => {})
   }
 
@@ -153,6 +165,15 @@ export class TunnelChannels {
     }
   }
 
+  /** The open channels whose auth message was accepted, with their principal and when it was. */
+  list(): OpenChannel[] {
+    const listed: OpenChannel[] = []
+    for (const { principal, opened } of this.channels.values()) {
+      if (principal && opened) listed.push({ principal, openedAt: opened.at })
+    }
+    return listed
+  }
+
   /** The number of open channels. */
   get size(): number {
     return this.channels.size
@@ -168,7 +189,7 @@ export class TunnelChannels {
       headers: headers.filter(([name]) => name.toLowerCase() !== 'sec-websocket-protocol'),
       ticket: protocols.length === 1 ? ticketFromProtocols(protocols[0]?.[1]) : null,
       principal: null,
-      auditId: null,
+      opened: null,
       authTimer: undefined,
       session: null,
       open: true,
@@ -217,6 +238,8 @@ export class TunnelChannels {
       return
     }
     channel.principal = principal
+    channel.opened = { session: crypto.randomUUID(), at: this.now() }
+    this.record({ kind: 'opened', session: channel.opened.session, principal })
     this.start(channel, principal)
   }
 
@@ -229,8 +252,6 @@ export class TunnelChannels {
 
   private start(channel: Channel, principal: Principal) {
     const { id, path, headers } = channel
-    channel.auditId = crypto.randomUUID()
-    this.record({ kind: 'opened', session: channel.auditId, principal })
     const conn: SocketConn = {
       send: (data) => this.write(channel, data),
       buffered: () => (channel.open ? channel.unacked + channel.queuedBytes : 0),
@@ -346,7 +367,7 @@ export class TunnelChannels {
 
   /** Marks a channel closed and drops it. Every way a channel ends comes through here, so its socket's close is recorded once. */
   private remove(channel: Channel) {
-    if (channel.open && channel.auditId) this.record({ kind: 'closed', session: channel.auditId })
+    if (channel.open && channel.opened) this.record({ kind: 'closed', session: channel.opened.session })
     channel.open = false
     clearTimeout(channel.authTimer)
     channel.authTimer = undefined

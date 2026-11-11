@@ -2,28 +2,18 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type {
-  LinkBody,
-  PreviewLinkBody,
-  PreviewLinkResponse,
-  RemoteAccessStatus,
-  UpdateRemoteAccessBody,
-} from '@orch/shared'
+import type { LinkBody, PreviewLinkBody, RemoteAccessStatus, UpdateRemoteAccessBody } from '@orch/shared'
 import { accessKeysPath } from './modules/access/access.repository'
 import { machineIdFromSecret } from './modules/access/access.service'
 import { fingerprintOf } from './modules/remote-access/device-proof.service'
 import { DevicesRepository, devicesPath } from './modules/remote-access/devices.repository'
 import { DevicesService } from './modules/remote-access/devices.service'
 import { linkedAccountPath } from './modules/remote-access/linked-account.repository'
+import { AmbiguousDevice, LinkError, UnknownDevice } from './modules/remote-access/remote-access.errors'
 import { remoteAccessPath } from './modules/remote-access/remote-access.repository'
 import { createRemoteAccessRoutes } from './modules/remote-access/remote-access.routes'
-import {
-  AmbiguousDevice,
-  DEFAULT_SERVER_URL,
-  LinkError,
-  type RemoteAccessEnv,
-  UnknownDevice,
-} from './modules/remote-access/remote-access.service'
+import { DEFAULT_SERVER_URL, type RemoteAccessEnv } from './modules/remote-access/remote-access.service'
+import { NoRemoteSessions } from './modules/remote-access/remote-access.testing'
 import { machineSecretFile } from './modules/tunnel/tunnel.repository'
 import { createHostCaller, runRemote } from './remote-cli'
 
@@ -43,7 +33,7 @@ const [alice, bob, carol] = [device(1), device(2), device(3)]
 const MINUTE = 60_000
 
 /** Stands in for `RemoteAccessService` behind the real routes, recording each call it gets. */
-class FakeRemoteAccess {
+class FakeRemoteAccess extends NoRemoteSessions {
   current: RemoteAccessStatus = {
     enabled: true,
     serverUrl: DEFAULT_SERVER_URL,
@@ -73,7 +63,7 @@ class FakeRemoteAccess {
     this.current = { ...this.current, enabled: input.enabled, tunnel: input.enabled ? 'connecting' : 'off' }
     return this.current
   }
-  async previewLink(input: PreviewLinkBody): Promise<PreviewLinkResponse> {
+  async previewLink(input: PreviewLinkBody) {
     this.calls.push(['previewLink', input])
     if (this.linkError) throw this.linkError
     return {

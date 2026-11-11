@@ -12,8 +12,9 @@ const POLL_MS = 2000
 /**
  * The Remote access dialog, connected to the host's `routes.remoteAccess` and
  * `routes.access.rotate`. While an account is linked it also lists the
- * browsers approved for it, polled like the status, and it shows the recent
- * remote access the host recorded, read once each time it opens. A link key lives only in
+ * browsers approved for it, and always the browsers connected through the
+ * tunnel now and the recent remote access the host recorded, all polled like
+ * the status. A link key lives only in
  * this component's state: preview and link go through `callApi`, not a
  * mutation, so it never enters TanStack Query's caches, and it is dropped on
  * link, cancel and close.
@@ -31,9 +32,11 @@ export function RemoteAccessSetting() {
     refetchInterval: POLL_MS,
     retry: false,
   })
-  const auditLog = useQuery({ ...apiQuery(routes.remoteAccess.auditLog, {}), retry: false })
+  const auditLog = useQuery({ ...apiQuery(routes.remoteAccess.auditLog, {}), refetchInterval: POLL_MS, retry: false })
   const approveDevice = useMutation(apiMutation(routes.remoteAccess.approveDevice))
   const removeDevice = useMutation(apiMutation(routes.remoteAccess.removeDevice))
+  const sessions = useQuery({ ...apiQuery(routes.remoteAccess.sessions, {}), refetchInterval: POLL_MS, retry: false })
+  const endSession = useMutation(apiMutation(routes.remoteAccess.endSession))
   // What the user typed. Null means the field still shows the host's value.
   const [serverUrl, setServerUrl] = useState<string | null>(null)
   const [clientUrl, setClientUrl] = useState<string | null>(null)
@@ -81,11 +84,24 @@ export function RemoteAccessSetting() {
     setError(null)
     try {
       queryClient.setQueryData(apiKey(routes.remoteAccess.devices, {}), await change())
+      // A revoked device's sockets are closed, so its session goes too.
+      void sessions.refetch()
       return true
     } catch (failure) {
       setError(requestErrorMessage(failure))
       void devices.refetch()
       return false
+    }
+  }
+
+  /** Closes a device's tunneled sockets, leaving it approved, then shows the list the host answers. */
+  async function endDeviceSession(id: string) {
+    setError(null)
+    try {
+      queryClient.setQueryData(apiKey(routes.remoteAccess.sessions, {}), await endSession.mutateAsync({ id }))
+    } catch (failure) {
+      setError(requestErrorMessage(failure))
+      void sessions.refetch()
     }
   }
 
@@ -170,7 +186,8 @@ export function RemoteAccessSetting() {
         onDismiss: (id) => changeDevice(() => removeDevice.mutateAsync({ id })),
         onRevoke: (id) => changeDevice(() => removeDevice.mutateAsync({ id })),
       }}
-      auditLog={auditLog.data?.entries}
+      activity={{ entries: auditLog.data?.entries, failed: auditLog.isError }}
+      sessions={{ sessions: sessions.data, onEnd: endDeviceSession }}
       error={error}
       busy={
         update.isPending ||
@@ -178,6 +195,7 @@ export function RemoteAccessSetting() {
         unlink.isPending ||
         approveDevice.isPending ||
         removeDevice.isPending ||
+        endSession.isPending ||
         linking
       }
       onClose={() => setOverlay(null)}

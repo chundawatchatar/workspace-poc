@@ -1,9 +1,11 @@
 import type { Workspace } from '@orch/shared'
 import { Bell, PanelLeft } from '@orch/ui/icons'
+import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { revealSurface } from '../lib/commands'
 import { pageView } from '../lib/page'
 import { shortPath } from '../lib/paths'
+import { askedAtLabel, pendingDevicesQuery } from '../lib/pendingDevices'
 import { setOverlay, toggleSidebar, useApp } from '../lib/store'
 import { useGoToWorkspace, useNavigation } from '../navigation'
 import { usePageOptions } from '../pageOptions'
@@ -105,9 +107,15 @@ function Header({ workspace }: { workspace: Workspace }) {
   )
 }
 
+/**
+ * The bell: tabs whose agent wants attention and, on a page that offers the
+ * Remote access setting, browsers waiting for approval, which open that setting.
+ */
 function Notifications() {
   const workspaces = useApp((s) => s.state?.workspaces)
   const sessions = useApp((s) => s.sessions)
+  const { remoteAccessSetting } = usePageOptions()
+  const devices = useQuery(pendingDevicesQuery(remoteAccessSetting)).data ?? []
   const goToWorkspace = useGoToWorkspace()
   const [open, setOpen] = useState(false)
   const root = useRef<HTMLDivElement>(null)
@@ -125,6 +133,13 @@ function Notifications() {
     pendingAttention(workspace, sessions).map((session) => ({ workspace, session })),
   )
 
+  const count = items.length + devices.length
+
+  function openRemoteAccess() {
+    setOpen(false)
+    setOverlay('remote-access')
+  }
+
   function jump(sessionId: string) {
     setOpen(false)
     const workspaceId = revealSurface(sessionId)
@@ -136,20 +151,34 @@ function Notifications() {
       <button
         type="button"
         title="Notifications"
-        aria-label={`Notifications, ${items.length} unread`}
+        aria-label={`Notifications, ${count} unread`}
         className="relative rounded p-1.5 text-dim hover:bg-raised hover:text-ink"
         onClick={() => setOpen(!open)}
       >
         <Bell size={15} />
-        {items.length > 0 && (
+        {count > 0 && (
           <span className="absolute top-0.5 right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-accent px-0.5 text-[9px] font-semibold text-on-accent">
-            {items.length}
+            {count}
           </span>
         )}
       </button>
       {open && (
         <div className="anim-pop absolute top-9 right-0 z-40 w-72 rounded-md border border-line bg-raised py-1 shadow-xl">
-          {items.length === 0 && <div className="px-3 py-3 text-xs text-dim">Nothing needs your attention.</div>}
+          {count === 0 && <div className="px-3 py-3 text-xs text-dim">Nothing needs your attention.</div>}
+          {devices.map((device) => (
+            <button
+              key={`${device.fingerprint} ${device.firstSeenAt}`}
+              type="button"
+              className="block w-full px-3 py-2 text-left hover:bg-accent/20"
+              onClick={openRemoteAccess}
+            >
+              <div className="truncate text-xs font-medium text-ink">A browser asks for approval</div>
+              <div className="truncate text-[11px] text-dim">
+                <span className="font-mono">{device.fingerprint}</span> ·{' '}
+                <time dateTime={device.firstSeenAt}>{askedAtLabel(device.firstSeenAt)}</time>
+              </div>
+            </button>
+          ))}
           {items.map(({ workspace, session }) => (
             <button
               key={session.id}

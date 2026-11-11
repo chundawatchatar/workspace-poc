@@ -7,6 +7,7 @@ import { type AppDeps, createApp } from '../../app'
 import type { Principal } from '../../lib/principal'
 import { AccessKeyRepository } from '../access/access.repository'
 import type { EnrollAnswer, EnrollRequest, TunnelClientOptions } from '../tunnel/tunnel.service'
+import type { OpenChannel } from '../tunnel/tunnel-channels.service'
 import { AuditLogRepository } from './audit-log.repository'
 import { AuditLogService } from './audit-log.service'
 import { DevicesRepository } from './devices.repository'
@@ -31,8 +32,14 @@ export class FakeTunnel {
   stop() {
     this.status = 'off'
   }
+  /** The open, authorized channels it reports. `closeChannels` drops the ones it matches. */
+  channels: OpenChannel[] = []
   closeChannels(revoked: (principal: Principal) => boolean, reason: string, code?: number) {
     this.closed.push({ revoked, reason, ...(code === undefined ? {} : { code }) })
+    this.channels = this.channels.filter((channel) => !revoked(channel.principal))
+  }
+  listChannels() {
+    return this.channels
   }
   /** Every enrollment frame sent, in order. */
   sent: EnrollRequest[] = []
@@ -44,6 +51,12 @@ export class FakeTunnel {
     this.sent.push(request)
     return this.answer(request)
   }
+}
+
+/** A base for fakes of the service that have no remote sessions; `remote-cli-sessions.test.ts` covers the command. */
+export class NoRemoteSessions {
+  listSessions = () => ({ sessions: [] })
+  endSession = () => ({ sessions: [] })
 }
 
 export const key = `oek_${'k'.repeat(43)}`

@@ -1,8 +1,10 @@
 import { type AuditLogEntry, type AuditRefusalReason, formatLocalDateTime } from '@orch/shared'
 
 export interface RemoteAccessActivityProps {
-  /** The newest entries of the host's audit log, newest first, or undefined while they load. */
+  /** The newest entries of the host's audit log, newest first, or undefined until they first load. */
   entries: AuditLogEntry[] | undefined
+  /** True when the last request for them failed. Entries already shown stay. */
+  failed: boolean
 }
 
 /** What each refusal reason says to the owner. */
@@ -20,16 +22,20 @@ const REASON_LABEL: Record<AuditRefusalReason, string> = {
  * browser's fingerprint, who it opened as and when it opened and closed, and
  * each refused request or socket with its reason.
  */
-export function RemoteAccessActivity({ entries }: RemoteAccessActivityProps) {
+export function RemoteAccessActivity({ entries, failed }: RemoteAccessActivityProps) {
   return (
     <section aria-label="Recent activity" className="space-y-2 rounded-md border border-line p-2.5 text-[13px]">
       <div className="text-xs text-dim">Recent activity</div>
       {entries === undefined ? (
-        <p className="text-xs text-faint">Loading…</p>
+        <p className={`text-xs ${failed ? 'text-bad' : 'text-faint'}`}>
+          {failed ? "Couldn't load recent activity." : 'Loading…'}
+        </p>
       ) : entries.length === 0 ? (
         <p className="text-xs text-faint">No remote access recorded yet.</p>
       ) : (
-        <ul className="max-h-48 space-y-1.5 overflow-y-auto">
+        // Focusable, so a keyboard can scroll a long list.
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrollable region must be reachable by keyboard.
+        <ul aria-label="Recent remote access" tabIndex={0} className="max-h-48 space-y-1.5 overflow-y-auto">
           {entries.map((entry, index) => (
             // Refusals have no id of their own; the list is only ever replaced as a whole.
             <li key={entry.kind === 'session' ? entry.session : `refused-${index}`}>
@@ -60,7 +66,7 @@ function ActivityRow({ entry }: { entry: AuditLogEntry }) {
     <div className="min-w-0">
       <div className="text-xs">
         <span className="font-mono">{entry.fingerprint}</span>
-        <span className="ml-1.5 text-dim">{who}</span>
+        <span className="ml-1.5 break-words text-dim">{who}</span>
       </div>
       <div className="text-[11px] text-faint">
         Opened {formatLocalDateTime(entry.openedAt)}, {closed}

@@ -86,7 +86,12 @@ const authorize: Authorize = (credentials) => {
  * Channels whose `openSocket` accepts every path but `/ws/nope`, with the
  * frames they send collected as a fake server would.
  */
-function setup(open?: (opened: Opened) => void, authTimeoutMs = 1000, record?: (event: AuditEvent) => void) {
+function setup(
+  open?: (opened: Opened) => void,
+  authTimeoutMs = 1000,
+  now?: () => number,
+  record?: (event: AuditEvent) => void,
+) {
   const frames: MachineFrame[] = []
   const opened: Opened[] = []
   const openSocket: OpenSocket = (path, headers, conn, principal) => {
@@ -98,6 +103,7 @@ function setup(open?: (opened: Opened) => void, authTimeoutMs = 1000, record?: (
   }
   const channels = new TunnelChannels(openSocket, authorize, (frame) => frames.push(frame), {
     authTimeoutMs,
+    now,
     record,
   })
   /** Opens `channel` and authorizes it with `key`. */
@@ -253,6 +259,26 @@ describe('TunnelChannels', () => {
     channels.close()
   })
 
+  test('list shows only open, authorized channels, each with its principal and when its auth was accepted', () => {
+    let clock = 1000
+    const { channels, openChannel } = setup(undefined, 1000, () => clock)
+    openChannel(1, 'good')
+    clock = 2000
+    channels.receive({ type: 'ws.open', channel: 2, path: '/ws/events', headers: withTicket('t-good') })
+    clock = 3000
+    channels.receive({ type: 'ws.data', channel: 2, data: accountAuth() })
+    channels.receive({ type: 'ws.open', channel: 3, path: '/ws/events', headers: [] })
+    openChannel(4, 'other')
+    channels.receive({ type: 'ws.close', channel: 4 })
+
+    expect(channels.list()).toEqual([
+      { principal: { kind: 'key', keyId: 'k1', name: 'default', deviceId: 'd1' }, openedAt: 1000 },
+      { principal: { kind: 'account', accountId: 'u1', deviceId: 'd1' }, openedAt: 3000 },
+    ])
+    channels.close()
+    expect(channels.list()).toEqual([])
+  })
+
   test('delivers messages in order and acks exactly the payload bytes, ignoring frames for unknown channels', async () => {
     const { channels, openChannel, of, opened } = setup()
     const run = openChannel(1)
@@ -377,7 +403,7 @@ describe('TunnelChannels', () => {
     auditDir = mkdtempSync(join(tmpdir(), 'orch-channels-audit-'))
     const file = auditLogPath(auditDir)
     const audit = new AuditLogService(new AuditLogRepository(file))
-    const { channels, opened, openChannel } = setup(undefined, 30, (event) => audit.record(event))
+    const { channels, opened, openChannel } = setup(undefined, 30, undefined, (event) => audit.record(event))
     const lines = () =>
       readFileSync(file, 'utf8')
         .trimEnd()

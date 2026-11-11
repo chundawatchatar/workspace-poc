@@ -8,6 +8,7 @@ import {
   type PreviewLinkBody,
   type PreviewLinkResponse,
   type RemoteAccessStatus,
+  type SessionsResponse,
   type UpdateRemoteAccessBody,
 } from '@orch/shared'
 import { AccessKeyRepository } from '../access/access.repository'
@@ -34,7 +35,9 @@ import type { AuditLogService } from './audit-log.service'
 import type { DevicesRepository } from './devices.repository'
 import { DevicesService } from './devices.service'
 import type { LinkedAccountRepository, SavedLinkedAccount } from './linked-account.repository'
+import { AmbiguousDevice, InvalidRemoteAccessSetting, LinkError, UnknownDevice } from './remote-access.errors'
 import type { RemoteAccessRepository, RemoteAccessSettings } from './remote-access.repository'
+import { groupSessions } from './sessions.service'
 import { TunnelAccess } from './tunnel-access.service'
 
 /**
@@ -51,7 +54,7 @@ export interface RemoteAccessEnv {
 }
 
 /** The parts of a `TunnelClient` the service drives. */
-export type Tunnel = Pick<TunnelClient, 'start' | 'stop' | 'closeChannels' | 'status' | 'enroll'>
+export type Tunnel = Pick<TunnelClient, 'start' | 'stop' | 'closeChannels' | 'listChannels' | 'status' | 'enroll'>
 
 export interface RemoteAccessServiceOptions {
   repository: RemoteAccessRepository
@@ -74,41 +77,6 @@ export interface RemoteAccessServiceOptions {
   openSocket: OpenSocket
   /** Builds the tunnel. Defaults to a real `TunnelClient`; tests pass a fake so they need no network. */
   createTunnel?: (options: TunnelClientOptions) => Tunnel
-}
-
-/** A setting the host refuses, such as a server address `parseServerUrl` rejects. Its message is meant for the user. */
-export class InvalidRemoteAccessSetting extends Error {}
-
-/**
- * A typed fingerprint that matches no waiting or approved device, whether it is
- * unknown, expired or malformed. Its message is meant for the user and echoes
- * what they typed, which is not secret.
- */
-export class UnknownDevice extends Error {
-  constructor(typed: string) {
-    super(
-      `No browser with the fingerprint ${typed.trim()} is waiting. Open this machine in your own browser and type the fingerprint it shows.`,
-    )
-  }
-}
-
-/** A typed fingerprint that more than one device shares, so none was approved. Its message is meant for the user. */
-export class AmbiguousDevice extends Error {
-  constructor(typed: string) {
-    super(
-      `More than one browser has the fingerprint ${typed.trim()}, so none was approved. Dismiss the ones you don't recognise, then try again.`,
-    )
-  }
-}
-
-/** Why linking with a key failed, with the HTTP status to answer. Its message is meant for the user and never holds the key. */
-export class LinkError extends Error {
-  constructor(
-    readonly status: 400 | 409 | 429 | 502 | 503,
-    message: string,
-  ) {
-    super(message)
-  }
 }
 
 /**
@@ -358,6 +326,21 @@ export class RemoteAccessService {
       this.tunnel?.closeChannels((principal) => principal.deviceId === id, 'device revoked')
     }
     return this.devices.list()
+  }
+
+  /** The devices with authorized tunneled sockets open, one entry each, newest first; see `groupSessions`. */
+  listSessions(): SessionsResponse {
+    return { sessions: groupSessions(this.tunnel?.listChannels() ?? []) }
+  }
+
+  /**
+   * Closes the tunneled sockets of the device with this id, with the default
+   * `CLOSE_ACCESS_DENIED`, and answers the fresh list. The device stays
+   * approved, so it can open the machine again; an unknown id changes nothing.
+   */
+  endSession(id: string): SessionsResponse {
+    this.tunnel?.closeChannels((principal) => principal.deviceId === id, 'session ended by owner')
+    return this.listSessions()
   }
 
   /**

@@ -1,10 +1,11 @@
-import type { AuditLogEntry, RemoteAccessStatus } from '@orch/shared'
+import type { RemoteAccessStatus } from '@orch/shared'
 import { useState } from 'react'
 import { Check, Copy, Link } from './icons'
 import { Modal } from './Modal'
-import { RemoteAccessActivity } from './RemoteAccessActivity'
+import { RemoteAccessActivity, type RemoteAccessActivityProps } from './RemoteAccessActivity'
 import { RemoteAccessDevices, type RemoteAccessDevicesProps } from './RemoteAccessDevices'
 import { RemoteAccessLink, type RemoteAccessLinkProps } from './RemoteAccessLink'
+import { RemoteAccessSessions, type RemoteAccessSessionsProps } from './RemoteAccessSessions'
 
 /** How the status dot is coloured. */
 export type RemoteAccessTone = 'good' | 'warn' | 'bad' | 'off'
@@ -40,8 +41,10 @@ interface Props {
   accountLink: Omit<RemoteAccessLinkProps, 'linkedAccount' | 'busy'>
   /** The browsers approved for the linked account, and those waiting. Shown only while an account is linked. */
   devices: Omit<RemoteAccessDevicesProps, 'busy'>
-  /** The newest remote access recorded on this machine, newest first, or undefined while it loads. */
-  auditLog: AuditLogEntry[] | undefined
+  /** The newest remote access recorded on this machine. Shown once the status has loaded. */
+  activity: RemoteAccessActivityProps
+  /** The browsers with tunneled sockets open. Shown while an account is linked or any session is listed. */
+  sessions?: Omit<RemoteAccessSessionsProps, 'busy'>
   error: string | null
   /** True while a save, a new link or a link step is on its way, so the buttons wait. */
   busy: boolean
@@ -138,7 +141,10 @@ export function RemoteAccessForm(props: Props) {
 
         {status && <RemoteAccessLink {...props.accountLink} linkedAccount={status.linkedAccount} busy={busy} />}
         {status?.linkedAccount && <RemoteAccessDevices {...props.devices} busy={busy} />}
-        {status && <RemoteAccessActivity entries={props.auditLog} />}
+        {props.sessions && (status?.linkedAccount || (props.sessions.sessions?.sessions.length ?? 0) > 0) && (
+          <RemoteAccessSessions {...props.sessions} busy={busy} />
+        )}
+        {status && <RemoteAccessActivity {...props.activity} />}
 
         {link && (
           <div>

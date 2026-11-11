@@ -35,6 +35,7 @@ import {
 } from './remote-cli-devices'
 import { logFromFile, logThroughHost } from './remote-cli-log'
 import { messageOf, printable, refused } from './remote-cli-output'
+import { parseSessionsArgs, type SessionsCommand, sessionsFromFile, sessionsThroughHost } from './remote-cli-sessions'
 
 // `bun run host:remote <command>`: the Remote access dialog for a terminal. A
 // running host is the one owner of the setting, so every command goes through
@@ -112,6 +113,7 @@ const USAGE = `Usage: bun run host:remote <command>
   devices approve <fingerprint> [--yes] Approve a waiting device by the fingerprint its browser shows (needs
                                         the running host)
   devices remove <fingerprint>          Dismiss a waiting device, or revoke an approved one
+  sessions                              List the approved devices with tunneled sockets open
   log                                   Show the newest remote access: who opened this machine through the
                                         tunnel, and who was refused`
 
@@ -124,6 +126,7 @@ type Command =
   | { name: 'server'; url: string }
   | { name: 'link'; key: string; yes: boolean }
   | DevicesCommand
+  | SessionsCommand
 
 /** A command that changes the saved setting. */
 type SettingCommand = Extract<Command, { name: 'server' | 'on' | 'off' }>
@@ -140,6 +143,7 @@ function parseArgs(args: string[]): Command | null {
     return keys.length === 1 && keys[0] ? { name, key: keys[0], yes } : null
   }
   if (name === 'devices') return parseDevicesArgs(rest)
+  if (name === 'sessions') return parseSessionsArgs(rest)
   return null
 }
 
@@ -184,6 +188,8 @@ async function running(command: Command, current: RemoteAccessStatus, deps: Remo
     case 'approve':
     case 'remove':
       return devicesThroughHost(command, deps)
+    case 'sessions':
+      return sessionsThroughHost(deps)
     case 'link':
       return linkThroughHost(command, deps)
     case 'log':
@@ -250,6 +256,8 @@ function stopped(command: Command, deps: RemoteCliDeps): number {
     case 'approve':
     case 'remove':
       return devicesFromFile(command, deps)
+    case 'sessions':
+      return sessionsFromFile(deps)
     case 'server':
     case 'on':
     case 'off':

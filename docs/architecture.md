@@ -252,7 +252,14 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   device it approved. The device id is the SHA-256 of the canonical JWK, and its fingerprint (`ABCD-EFGH-JKMN-PQRS`,
   `deviceFingerprint` in `packages/shared`) is shown by the browser and by the machine. A valid ticket or key and proof
   from any other device get a 403 `device_not_approved` or a 4403 close, with no `auth.failed`, and put the device
-  in a pending list in memory (at most 5, newest kept, 15 minutes each). The owner approves it in the machine's
+  in a pending list in memory (at most 5, newest kept, 15 minutes each). The owner is told in two places, both
+  naming only the fingerprint and when it first asked: the host logs one line when a device joins the list (not
+  again while it waits, again once it expired or was pushed out), and the local page's Notifications bell lists each
+  waiting device (`src/lib/pendingDevices.ts`, polling `routes.remoteAccess.devices` every 5 seconds without retries,
+  only when the page offers the Remote access setting, so remote pages never ask), counted in its badge, and
+  selecting one opens the Remote access setting. Nothing is sent to the account or the server, and only a caller
+  with a valid ticket or key plus a valid proof can add a device, so each new device key it makes adds one log line;
+  that flooding is bounded by who can get there and accepted. The owner approves it in the machine's
   local Remote access setting, which the tunnel can't reach (`routes.remoteAccess.devices`, `approveDevice`,
   `removeDevice`, 403 through the tunnel), by typing the fingerprint their own browser shows: a pending row has
   Dismiss but no Approve button, and `approveDevice` takes `{ fingerprint }`, never an id. The host compares it with
@@ -301,22 +308,23 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   operator script `sessions:revoke-user` deletes rows in a process with no registry and sends nothing, and a session
   that expires sends nothing. HTTP requests are each authorized on their own and need no frame.
 - The host keeps a local, append-only audit log of remote access in `apps/host/.data/remote-audit.jsonl`
-  (`modules/remote-access/audit-log.repository.ts` and `audit-log.service.ts`, created in `index.ts` and handed to
-  the tunnel as a narrow `record(event)`). `TunnelChannels` writes `opened` when a tunneled socket starts (a local
-  random session id, `principal: 'account'` with its `accountId` or `'key'` with its `keyId`, the device fingerprint
-  and `at`) and `closed` when its channel ends for any reason: the browser closed it, a revoke or an ended session,
-  the host, or a dropped tunnel. Every refused tunneled request or socket writes `refused` with a fixed reason from
+  (`modules/remote-access/audit-log.repository.ts` and `audit-log.service.ts`, created in `index.ts` and handed to the
+  tunnel as a narrow `record(event)`). `TunnelChannels` gives a channel one session record when its auth message is
+  accepted, a random id and the time, which the live sessions list also reads, and writes `opened` then (that id,
+  `principal: 'account'` with its `accountId` or `'key'` with its `keyId`, the device fingerprint and `at`) and
+  `closed` when its channel ends for any reason: the browser closed it, a revoke or an ended session, the host, or a
+  dropped tunnel. Every refused tunneled request or socket writes `refused` with a fixed reason from
   `auditRefusalReason` (`key_refused`, `ticket_refused`, `ticket_reused`, `proof_refused`, `device_not_approved`,
   `no_auth` for a missing, malformed or late socket auth message), which `TunnelAccess.authorize` reports through a
-  callback, with the fingerprint and principal only when a proof verified. Accepted HTTP requests are not logged.
-  Each line is one `z.strictObject` per kind (`auditLine` in `packages/shared`), so it can hold only ids,
-  fingerprints, reasons and times, never a key, ticket, proof, nonce, public key, path, header or anything typed;
-  the reader skips any line that doesn't parse. Past 1000 lines an append rewrites the file atomically with the
-  newest 500 plus the new one. A failed write is reported once with no event data and never breaks the request or
-  socket. The owner reads the newest 50 entries, newest first, each `opened` merged with its `closed` into a
-  session (`closedAt` null when none was recorded), through `routes.remoteAccess.auditLog` (403 through the tunnel,
-  like every remote access route): in the Remote access setting's Recent activity section, or with
-  `bun run host:remote log`, which reads the file itself when the host is stopped. Unlinking or revoking does not
+  callback, with the fingerprint and principal only when a proof verified. Accepted HTTP requests are not logged. Each
+  line is one `z.strictObject` per kind (`auditLine` in `packages/shared`), so it can hold only ids, fingerprints,
+  reasons and times, never a key, ticket, proof, nonce, public key, path, header or anything typed; the reader skips
+  any line that doesn't parse. Past 1000 lines an append rewrites the file atomically with the newest 500 plus the new
+  one. A failed write is reported once with no event data and never breaks the request or socket. The owner reads the
+  newest 50 entries, newest first, each `opened` merged with its `closed` into a session (`closedAt` null when none
+  was recorded), through `routes.remoteAccess.auditLog` (403 through the tunnel, like every remote access route): in
+  the Remote access setting's Recent activity section, polled while it is open and saying so when it can't load, or
+  with `bun run host:remote log`, which reads the file itself when the host is stopped. Unlinking or revoking does not
   clear it; deleting the file does. Refusals come from anyone who can reach the relay, so a flood of them can push
   older sessions past the cap; that is accepted for now.
 - Enrollment keys are the only way to link a machine to an account. A signed-in user creates one with
