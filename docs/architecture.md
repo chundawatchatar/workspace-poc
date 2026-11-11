@@ -476,6 +476,9 @@ terminals. An idle socket costs one TCP connection and a small ping, and one sma
 - **Heartbeats from both sides.** The server pings and drops a silent machine (job 005). The host also needs its own
   timeout: after sleep or a network switch a TCP connection can look open while it's dead, and only the host's side
   notices. Ping every 20–25 seconds, because many proxies and NATs drop idle connections after 30–60 seconds.
+  The host drops its socket when the server leaves one of its pings unanswered for 5 seconds, and, since timers stand
+  still while a laptop sleeps, a once-a-second watchdog treats a wall-clock jump of more than 10 seconds as a wake and
+  dials again at once, without a backoff delay and without resetting the backoff.
 - **Reconnect with backoff and full jitter.** Start at about 1 second and double up to 30 seconds, randomized so
   thousands of machines don't reconnect at once after a server restart. Reset the backoff once a connection has been
   stable for a while.
