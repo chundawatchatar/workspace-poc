@@ -275,8 +275,10 @@ both on every request and socket; the server only signs tickets.
   linked this way opens from any browser signed in to the account.
 - The relay still sees access keys in transit, in the header and first socket message it forwards, until end-to-end
   encryption (REM-2). It never checks or stores them.
-- A machine's online state comes from the server's in-memory `MachineRegistry`, the same one the relay uses. Offline
-  can also mean a host that is up with remote access off. With more than one server instance this would be wrong (see
+- A machine's online state comes from the server's in-memory `MachineRegistry`, the same one the relay uses. A host
+  whose owner turns remote access off while it runs sends `remote.off` before closing its tunnel, and the list shows
+  it as Remote access off instead of Offline; a host that exits or crashes stays Offline. The registry keeps that mark
+  in memory only, so a server restart forgets it, and with more than one server instance both would be wrong (see
   [keeping the machine connected](architecture.md#keeping-the-machine-connected)).
 
 Linking: a machine reaches an account's list only by redeeming an enrollment key over its own tunnel, so knowing a
