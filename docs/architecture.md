@@ -300,6 +300,25 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   and ends at `denied`. What remains: a ticket issued before the revoke still works for up to a minute, the
   operator script `sessions:revoke-user` deletes rows in a process with no registry and sends nothing, and a session
   that expires sends nothing. HTTP requests are each authorized on their own and need no frame.
+- The host keeps a local, append-only audit log of remote access in `apps/host/.data/remote-audit.jsonl`
+  (`modules/remote-access/audit-log.repository.ts` and `audit-log.service.ts`, created in `index.ts` and handed to
+  the tunnel as a narrow `record(event)`). `TunnelChannels` writes `opened` when a tunneled socket starts (a local
+  random session id, `principal: 'account'` with its `accountId` or `'key'` with its `keyId`, the device fingerprint
+  and `at`) and `closed` when its channel ends for any reason: the browser closed it, a revoke or an ended session,
+  the host, or a dropped tunnel. Every refused tunneled request or socket writes `refused` with a fixed reason from
+  `auditRefusalReason` (`key_refused`, `ticket_refused`, `ticket_reused`, `proof_refused`, `device_not_approved`,
+  `no_auth` for a missing, malformed or late socket auth message), which `TunnelAccess.authorize` reports through a
+  callback, with the fingerprint and principal only when a proof verified. Accepted HTTP requests are not logged.
+  Each line is one `z.strictObject` per kind (`auditLine` in `packages/shared`), so it can hold only ids,
+  fingerprints, reasons and times, never a key, ticket, proof, nonce, public key, path, header or anything typed;
+  the reader skips any line that doesn't parse. Past 1000 lines an append rewrites the file atomically with the
+  newest 500 plus the new one. A failed write is reported once with no event data and never breaks the request or
+  socket. The owner reads the newest 50 entries, newest first, each `opened` merged with its `closed` into a
+  session (`closedAt` null when none was recorded), through `routes.remoteAccess.auditLog` (403 through the tunnel,
+  like every remote access route): in the Remote access setting's Recent activity section, or with
+  `bun run host:remote log`, which reads the file itself when the host is stopped. Unlinking or revoking does not
+  clear it; deleting the file does. Refusals come from anyone who can reach the relay, so a flood of them can push
+  older sessions past the cap; that is accepted for now.
 - Enrollment keys are the only way to link a machine to an account. A signed-in user creates one with
   `serverRoutes.machines.createEnrollment` (`modules/machines/enrollment.service.ts`): `oek_` plus 32 random bytes,
   shown once with its last 4 characters as a fingerprint. The `machine_enrollments` table stores only the key's
