@@ -1,7 +1,15 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { type DevicesResponse, fingerprintKey, type LinkedAccount, type RemoteAccessStatus, routes } from '@orch/shared'
+import {
+  type AuditLogEntry,
+  type DevicesResponse,
+  fingerprintKey,
+  formatLocalDateTime,
+  type LinkedAccount,
+  type RemoteAccessStatus,
+  routes,
+} from '@orch/shared'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { connect } from '../lib/store'
 import type { HostTransport } from '../transport'
@@ -27,9 +35,9 @@ const notWaiting = (typed: string) =>
 
 /**
  * Renders the dialog against a fake host that answers the link and device endpoints and records what it was sent.
- * `linked` starts it linked, with two browsers waiting and one approved.
+ * `linked` starts it linked, with two browsers waiting and one approved. `auditLog` is what its audit log holds.
  */
-function setup({ linked = false } = {}) {
+function setup({ linked = false, auditLog = [] as AuditLogEntry[] } = {}) {
   const seenAt = '2026-11-04T12:05:00.000Z'
   let devices: DevicesResponse = {
     pending: [
@@ -54,6 +62,7 @@ function setup({ linked = false } = {}) {
     request: async (path, init) => {
       if (path === routes.remoteAccess.status.path) return Response.json(status)
       if (path === routes.remoteAccess.devices.path) return Response.json(devices)
+      if (path === routes.remoteAccess.auditLog.path) return Response.json({ entries: auditLog })
       const body: unknown = JSON.parse(String(init.body))
       sent.push([path, body])
       if (path === routes.remoteAccess.previewLink.path) {
@@ -184,5 +193,46 @@ describe('RemoteAccessSetting', () => {
     expect(field).toHaveValue('ZZZZ-ZZZZ')
     expect(sent).toEqual([[routes.remoteAccess.approveDevice.path, { fingerprint: 'ZZZZ-ZZZZ' }]])
     expect(screen.getByRole('list', { name: 'Approved' })).not.toHaveTextContent(deviceA.fingerprint)
+    expect(screen.getByRole('region', { name: 'Recent activity' })).toHaveTextContent('No remote access recorded yet.')
+  })
+
+  test('shows the recent activity the host recorded: sessions with their times, and refusals with their reason', async () => {
+    const openedAt = '2026-11-04T12:00:00.000Z'
+    const closedAt = '2026-11-04T12:30:00.000Z'
+    setup({
+      auditLog: [
+        {
+          kind: 'refused',
+          reason: 'device_not_approved',
+          at: closedAt,
+          fingerprint: deviceA.fingerprint,
+          principal: 'account',
+        },
+        {
+          kind: 'session',
+          session: 's2',
+          principal: 'key',
+          keyId: 'k1',
+          fingerprint: deviceB.fingerprint,
+          openedAt,
+          closedAt: null,
+        },
+        {
+          kind: 'session',
+          session: 's1',
+          principal: 'account',
+          accountId: 'u1',
+          fingerprint: deviceC.fingerprint,
+          openedAt,
+          closedAt,
+        },
+      ],
+    })
+    const rows = within(await screen.findByRole('region', { name: 'Recent activity' })).getAllByRole('listitem')
+    expect(rows.map((row) => row.textContent)).toEqual([
+      `Refused: browser not approved${formatLocalDateTime(closedAt)}${deviceA.fingerprint}`,
+      `${deviceB.fingerprint}With access key k1Opened ${formatLocalDateTime(openedAt)}, still open or not recorded`,
+      `${deviceC.fingerprint}Through the accountOpened ${formatLocalDateTime(openedAt)}, closed ${formatLocalDateTime(closedAt)}`,
+    ])
   })
 })

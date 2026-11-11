@@ -1,7 +1,8 @@
-import type { RemoteAccessStatus } from '@orch/shared'
+import type { AuditLogEntry, RemoteAccessStatus } from '@orch/shared'
 import { useState } from 'react'
 import { Check, Copy, Link } from './icons'
 import { Modal } from './Modal'
+import { RemoteAccessActivity } from './RemoteAccessActivity'
 import { RemoteAccessDevices, type RemoteAccessDevicesProps } from './RemoteAccessDevices'
 import { RemoteAccessLink, type RemoteAccessLinkProps } from './RemoteAccessLink'
 
@@ -39,6 +40,8 @@ interface Props {
   accountLink: Omit<RemoteAccessLinkProps, 'linkedAccount' | 'busy'>
   /** The browsers approved for the linked account, and those waiting. Shown only while an account is linked. */
   devices: Omit<RemoteAccessDevicesProps, 'busy'>
+  /** The newest remote access recorded on this machine, newest first, or undefined while it loads. */
+  auditLog: AuditLogEntry[] | undefined
   error: string | null
   /** True while a save, a new link or a link step is on its way, so the buttons wait. */
   busy: boolean
@@ -48,8 +51,8 @@ interface Props {
 /**
  * The remote access setting: the server and client addresses, an on/off
  * switch, where the tunnel stands, a button for a fresh connect link, the
- * account this machine is linked to, and the browsers approved for it. An address set by the host's environment
- * is shown read-only.
+ * account this machine is linked to, the browsers approved for it, and the
+ * recent remote access. An address set by the host's environment is shown read-only.
  */
 export function RemoteAccessForm(props: Props) {
   const { status, link, error, busy } = props
@@ -135,6 +138,7 @@ export function RemoteAccessForm(props: Props) {
 
         {status && <RemoteAccessLink {...props.accountLink} linkedAccount={status.linkedAccount} busy={busy} />}
         {status?.linkedAccount && <RemoteAccessDevices {...props.devices} busy={busy} />}
+        {status && <RemoteAccessActivity entries={props.auditLog} />}
 
         {link && (
           <div>

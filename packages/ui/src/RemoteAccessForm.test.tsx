@@ -63,6 +63,7 @@ function setup(overrides: Partial<Props> = {}) {
       onDismiss: mock(),
       onRevoke: mock(),
     },
+    auditLog: [],
     error: null,
     busy: false,
     onClose: mock(),
