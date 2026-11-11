@@ -285,8 +285,21 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
     client origin from asking the browser to sign while the page is open.
   - A browser whose clock is more than 5 minutes off is refused, and its page can't tell that apart from a bad
     proof.
-  - Closing open sockets when a session is revoked on the server is not done; revoking the device on the machine
-    is.
+- Ending a session closes the account's sockets on its machines. Every session row Better Auth deletes (a revoke,
+  `revoke-other-sessions`, `revoke-sessions`, a sign-out, `change-password` with `revokeOtherSessions` or a password
+  reset) runs `databaseHooks.session.delete.after` in `createAuth`, which calls `onSessionEnded(userId)` without
+  waiting for it. `SessionEnded` (`modules/machines/session-ended.service.ts`) lists the user's machines through
+  `forUser({ userId })` and sends `{ type: 'session.ended', accountId }` to each one the `MachineRegistry` holds a
+  tunnel for; a failure logs one fixed line, so a sign-out never waits on it or fails because of it. The frame names
+  only the account, never a session, token, email or device, and the host trusts nothing else in it: only after
+  `welcome`, and only when `accountId` is the account it is linked to, it closes with `CLOSE_SESSION_ENDED` (4410)
+  the sockets whose verified ticket named that account. It never touches key sockets, the link or the devices, so
+  the worst a compromised server can do with it is close sockets it could already cut by dropping the tunnel.
+  Tickets carry no session id, so every account socket on the machine closes, the revoker's own included; 4410 is
+  not a denial, so a browser still signed in reconnects with a fresh ticket, while the revoked one gets no ticket
+  and ends at `denied`. What remains: a ticket issued before the revoke still works for up to a minute, the
+  operator script `sessions:revoke-user` deletes rows in a process with no registry and sends nothing, and a session
+  that expires sends nothing. HTTP requests are each authorized on their own and need no frame.
 - Enrollment keys are the only way to link a machine to an account. A signed-in user creates one with
   `serverRoutes.machines.createEnrollment` (`modules/machines/enrollment.service.ts`): `oek_` plus 32 random bytes,
   shown once with its last 4 characters as a fingerprint. The `machine_enrollments` table stores only the key's

@@ -140,7 +140,9 @@ A signed-in user has Better Auth's four session endpoints:
 
 `list-sessions` refuses a session older than `freshAge`, one day (set in `createAuth`), with 403
 `SESSION_NOT_FRESH`; the revoke endpoints need only a valid session. The revoke endpoints go through the same origin
-check as every other `POST`. A password reset also ends every session of the account.
+check as every other `POST`. A password reset also ends every session of the account. Every session that ends this
+way also sends a `session.ended` frame to the account's online machines, which close the sockets the account's
+relay tickets opened (see [architecture](architecture.md)); browsers still signed in reconnect with a fresh ticket.
 
 The client's `/settings/security` page uses them. It is reached from the account menu
 (`apps/client/src/components/account/AccountMenu.tsx`), shown in the home page's title row and in the machine page's sidebar
@@ -259,7 +261,9 @@ both on every request and socket; the server only signs tickets.
   approved on it, nor with a captured access key alone, which still passes through it. It could push its own key
   into a machine's pending list and hope the owner approves it, and until
   end-to-end encryption (REM-2) it can read and inject into a session an approved browser opens. A revoked session or a machine unlinked on the server gets no new ticket, but an issued one works for up
-  to a minute and an open socket stays until it closes (unlinking on the host closes them). A refused ticket sends
+  to a minute. A session that ends on the server closes the account's sockets on its online machines through a
+  `session.ended` frame (section 5), except one ended by the operator script or by expiry; unlinking on the host
+  closes them too. A refused ticket sends
   `auth.failed` and counts against the browser's bad-key limit; a device waiting for approval sends none. Each
   socket costs one ticket request.
 - The home page's Connect a machine button (`apps/client/src/components/machines/ConnectMachineDialog.tsx`) creates
