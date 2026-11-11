@@ -218,8 +218,16 @@ end-to-end encryption, a compromised server can read and inject into a session
 an approved browser opens, and capture an access key from a connect link,
 which device approval doesn't cover. A browser whose clock is more than 5
 minutes off is refused. Revoking a session or unlinking on the server stops new tickets at
-once, but a ticket already issued works for up to a minute, and an open socket
-stays until it closes; unlinking on the host closes them. A refused ticket sends
+once, but a ticket already issued works for up to a minute. When a session
+ends on the server (a revoke, a sign-out or a password change), the server
+sends the machine a `session.ended` frame that names only the account. The
+host checks that account against its own link and, if it matches, closes the
+sockets that account's tickets opened with code 4410; key sockets, the link
+and the devices stay as they are. Browsers still signed in reconnect with a
+fresh ticket, and the revoked one can't get one. The operator script
+`sessions:revoke-user` and an expired session send no frame, and unlinking on
+the server closes nothing either; unlinking on the host closes the account's
+sockets. A refused ticket sends
 `auth.failed`, so it counts against the browser's bad-key limit like a wrong
 key.
 

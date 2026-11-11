@@ -154,6 +154,20 @@ describe('tunnel frames', () => {
     for (const [schema, input] of bad) expect(decodeFrame(schema, input)).toBeNull()
   })
 
+  test('session.ended holds only a non-empty account id, and only the server sends it', () => {
+    const frame = { type: 'session.ended', accountId: 'u1' } as const
+    expect(decodeFrame(serverFrame, encodeFrame(frame))).toEqual(frame)
+    for (const input of [
+      { type: 'session.ended' },
+      { type: 'session.ended', accountId: '' },
+      { ...frame, sessionId: 's1' },
+      { ...frame, email: 'ada@example.com' },
+    ]) {
+      expect(decodeFrame(serverFrame, JSON.stringify(input))).toBeNull()
+    }
+    expect(decodeFrame(machineFrame, JSON.stringify(frame))).toBeNull()
+  })
+
   test('ws payloads count their UTF-8 length for strings and their byte length for binary', () => {
     for (const text of ['', 'abc', 'héllo', '€', '😀 ok', 'lone \ud800 surrogate']) {
       expect(wsPayloadBytes(text)).toBe(new TextEncoder().encode(text).byteLength)

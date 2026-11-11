@@ -119,6 +119,12 @@ export interface TunnelClientOptions {
   random?: () => number
   /** Told each time `status` changes. */
   onStatus?: (state: TunnelState) => void
+  /**
+   * Told the account a `session.ended` frame names, once the server has
+   * welcomed the tunnel. The frame is only the server's word, so the handler
+   * decides what, if anything, to close.
+   */
+  onSessionEnded?: (accountId: string) => void
 }
 
 /** One socket and everything that lives only as long as it does. */
@@ -180,9 +186,9 @@ export class TunnelClient {
     this.setState('off')
   }
 
-  /** Closes the open tunneled sockets whose principal `revoked` matches, for a rotated key or an unlinked account. */
-  closeChannels(revoked: (principal: Principal) => boolean, reason: string) {
-    this.conn?.channels.closeChannels(revoked, reason)
+  /** Closes the open tunneled sockets whose principal `revoked` matches with `code`; see `TunnelChannels.closeChannels`. */
+  closeChannels(revoked: (principal: Principal) => boolean, reason: string, code?: number) {
+    this.conn?.channels.closeChannels(revoked, reason, code)
   }
 
   /**
@@ -266,6 +272,9 @@ export class TunnelClient {
       case 'ws.close':
       case 'ws.ack':
         if (conn.welcomed) conn.channels.receive(frame)
+        return
+      case 'session.ended':
+        if (conn.welcomed) this.options.onSessionEnded?.(frame.accountId)
         return
       case 'enroll.previewed':
       case 'enroll.redeemed':

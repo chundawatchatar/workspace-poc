@@ -1,12 +1,13 @@
 import { existsSync } from 'node:fs'
 import { hostname } from 'node:os'
-import type {
-  DevicesResponse,
-  LinkBody,
-  PreviewLinkBody,
-  PreviewLinkResponse,
-  RemoteAccessStatus,
-  UpdateRemoteAccessBody,
+import {
+  CLOSE_SESSION_ENDED,
+  type DevicesResponse,
+  type LinkBody,
+  type PreviewLinkBody,
+  type PreviewLinkResponse,
+  type RemoteAccessStatus,
+  type UpdateRemoteAccessBody,
 } from '@orch/shared'
 import { AccessKeyRepository } from '../access/access.repository'
 import {
@@ -355,6 +356,23 @@ export class RemoteAccessService {
     return this.devices.list()
   }
 
+  /**
+   * Handles the server's `session.ended`: when it names the linked account,
+   * closes with `CLOSE_SESSION_ENDED` the sockets that account's tickets
+   * opened, so browsers still signed in reconnect with a fresh ticket. It never
+   * touches key sockets, the link or the devices, and any other account,
+   * or no linked account, closes nothing.
+   */
+  private sessionEnded(accountId: string) {
+    const linked = this.linked?.accountId
+    if (!linked || accountId !== linked) return
+    this.tunnel?.closeChannels(
+      (principal) => principal.kind === 'account' && principal.accountId === linked,
+      'session ended',
+      CLOSE_SESSION_ENDED,
+    )
+  }
+
   /** Decides a tunneled request or socket; see `TunnelAccess.authorize`. */
   authorize(credentials: Credentials): Authorization {
     return this.access.authorize(credentials)
@@ -417,6 +435,7 @@ export class RemoteAccessService {
       authorize: (credentials) => this.authorize(credentials),
       handle: (request, principal) => this.options.handle(request, principal),
       openSocket: (path, headers, conn, principal) => this.options.openSocket(path, headers, conn, principal),
+      onSessionEnded: (accountId) => this.sessionEnded(accountId),
     })
     this.tunnel = tunnel
     this.tunnelUrl = url

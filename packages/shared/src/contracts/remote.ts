@@ -41,6 +41,13 @@ export const CLOSE_MACHINE_OFFLINE = 4502
 /** The close code a browser socket gets when its access key is missing, wrong, late or rotated. */
 export const CLOSE_ACCESS_DENIED = 4401
 
+/**
+ * The close code a browser socket opened with a relay ticket gets when its
+ * account ended a session on the server. It is not a denial: a browser still
+ * signed in reconnects with a fresh ticket, and a signed-out one gets none.
+ */
+export const CLOSE_SESSION_ENDED = 4410
+
 /** The close code a browser socket gets when the server refuses it for a rate limit. */
 export const CLOSE_RATE_LIMITED = 4429
 
