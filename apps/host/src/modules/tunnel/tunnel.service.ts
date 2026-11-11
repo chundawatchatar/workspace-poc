@@ -90,6 +90,12 @@ export interface TunnelTimings extends Backoff {
   authTimeoutMs: number
   /** How long the server has to answer an enrollment frame. */
   enrollTimeoutMs: number
+  /** How often the wake watchdog compares the wall clock with its previous tick. */
+  wakeCheckMs: number
+  /** How far the wall clock may run ahead of the expected tick before the client counts it as waking from sleep. */
+  wakeJumpMs: number
+  /** How long the server has to answer the client's own `ping` with a `pong` of the same nonce. */
+  pongTimeoutMs: number
 }
 
 const defaultTimings: TunnelTimings = {
@@ -100,6 +106,9 @@ const defaultTimings: TunnelTimings = {
   stableAfterMs: 60_000,
   authTimeoutMs: AUTH_TIMEOUT_MS,
   enrollTimeoutMs: 10_000,
+  wakeCheckMs: 1000,
+  wakeJumpMs: 10_000,
+  pongTimeoutMs: 5000,
 }
 
 export interface TunnelClientOptions {
@@ -128,6 +137,8 @@ export interface TunnelClientOptions {
   onSessionEnded?: (accountId: string) => void
   /** Where tunneled sockets that open and close, and refused requests and sockets, are recorded. */
   record?: RecordAudit
+  /** Opens the tunnel socket. Defaults to `new WebSocket(url)`; tests pass a fake one. */
+  createSocket?: (url: string) => WebSocket
 }
 
 /** One socket and everything that lives only as long as it does. */
@@ -140,6 +151,8 @@ interface Connection {
   nonce: number
   /** Enrollment requests by id, until they are answered, time out or the connection ends. */
   enrolls: Map<number, PendingEnroll>
+  /** The timeout of each of this client's pings, by nonce, until its `pong` arrives. */
+  pongs: Map<number, Timer>
   timers: Timer[]
   silence?: Timer
 }
@@ -152,6 +165,9 @@ interface Connection {
  * with backoff until `stop()`, a protocol version the server refuses, or
  * another host taking over this machine's tunnel. Every frame goes through
  * the connection's `TunnelOutbox`, so `ws.*` frames overtake response bodies.
+ * A socket that looks open after sleep or a network change is caught by a
+ * jump in the wall clock between watchdog ticks, which dials again at once,
+ * or by a ping the server leaves unanswered.
  */
 export class TunnelClient {
   private readonly timings: TunnelTimings
@@ -160,6 +176,9 @@ export class TunnelClient {
   private attempt = 0
   private enrollId = 0
   private reconnectTimer: Timer | undefined
+  private watchdog: Timer | undefined
+  /** The wall-clock time of the watchdog's previous tick. */
+  private lastTick = 0
   private stopped = false
   private state: TunnelState = 'off'
 
@@ -175,12 +194,14 @@ export class TunnelClient {
 
   start() {
     if (this.conn || this.reconnectTimer || this.stopped) return
+    this.watch()
     this.connect()
   }
 
   /** Closes the tunnel with 1000 and cancels every timer and any pending reconnect. */
   stop() {
     this.stopped = true
+    this.unwatch()
     clearTimeout(this.reconnectTimer)
     this.reconnectTimer = undefined
     const conn = this.conn
@@ -223,7 +244,7 @@ export class TunnelClient {
     this.setState('connecting')
     let ws: WebSocket
     try {
-      ws = new WebSocket(this.options.url)
+      ws = this.options.createSocket ? this.options.createSocket(this.options.url) : new WebSocket(this.options.url)
     } catch {
       this.reconnect('dial failed')
       return
@@ -247,6 +268,7 @@ export class TunnelClient {
       welcomed: false,
       nonce: 0,
       enrolls: new Map(),
+      pongs: new Map(),
       timers: [],
     }
     this.conn = conn
@@ -273,6 +295,10 @@ export class TunnelClient {
         return
       case 'ping':
         this.send(conn, { type: 'pong', nonce: frame.nonce })
+        return
+      case 'pong':
+        clearTimeout(conn.pongs.get(frame.nonce))
+        conn.pongs.delete(frame.nonce)
         return
       case 'http.request':
         if (conn.welcomed) conn.http.request(frame)
@@ -311,7 +337,7 @@ export class TunnelClient {
       )
     }
     conn.timers = [
-      setInterval(() => this.send(conn, { type: 'ping', nonce: ++conn.nonce }), this.timings.pingIntervalMs),
+      setInterval(() => this.ping(conn), this.timings.pingIntervalMs),
       setTimeout(() => {
         if (this.conn === conn) this.attempt = 0
       }, this.timings.stableAfterMs),
@@ -326,6 +352,16 @@ export class TunnelClient {
     conn.silence = setTimeout(() => this.drop(conn, 'server went silent'), this.timings.silenceTimeoutMs)
   }
 
+  /** Pings the server and drops `conn` unless the matching `pong` arrives within `pongTimeoutMs`. */
+  private ping(conn: Connection) {
+    const nonce = ++conn.nonce
+    conn.pongs.set(
+      nonce,
+      setTimeout(() => this.drop(conn, 'missed pong'), this.timings.pongTimeoutMs),
+    )
+    this.send(conn, { type: 'ping', nonce })
+  }
+
   private send(conn: Connection, frame: MachineFrame) {
     if (this.conn === conn && conn.ws.readyState === WebSocket.OPEN) conn.outbox.send(frame)
   }
@@ -335,6 +371,8 @@ export class TunnelClient {
     this.conn = null
     for (const timer of conn.timers) clearTimeout(timer)
     clearTimeout(conn.silence)
+    for (const timer of conn.pongs.values()) clearTimeout(timer)
+    conn.pongs.clear()
     conn.http.close()
     conn.channels.close()
     conn.outbox.close()
@@ -357,12 +395,14 @@ export class TunnelClient {
     this.release(conn)
     if (code === CLOSE_UNSUPPORTED_VERSION) {
       this.stopped = true
+      this.unwatch()
       this.setState('stopped')
       console.error('tunnel refused: the server speaks another protocol version. Update this host to reconnect')
       return
     }
     if (code === CLOSE_REPLACED) {
       this.stopped = true
+      this.unwatch()
       this.setState('stopped')
       console.error('tunnel closed: another host using this machine secret took over. Not reconnecting')
       return
@@ -377,6 +417,46 @@ export class TunnelClient {
     this.setState('reconnecting')
     console.log(`tunnel lost (${reason}), reconnecting in ${delay} ms`)
     this.reconnectTimer = setTimeout(() => this.connect(), delay)
+  }
+
+  /**
+   * Starts the wake watchdog. Bun's timers and the monotonic clock stand still
+   * while macOS sleeps, so only `Date.now()` shows the gap.
+   */
+  private watch() {
+    this.lastTick = Date.now()
+    this.watchdog = setInterval(() => {
+      const now = Date.now()
+      const ahead = now - this.lastTick - this.timings.wakeCheckMs
+      this.lastTick = now
+      if (ahead > this.timings.wakeJumpMs) this.woke()
+    }, this.timings.wakeCheckMs)
+  }
+
+  private unwatch() {
+    clearInterval(this.watchdog)
+    this.watchdog = undefined
+  }
+
+  /**
+   * Replaces a connection that may have died during sleep, or cuts a pending
+   * backoff short, and dials at once. The attempt counter is left alone, so a
+   * dial that fails again backs off exactly as it would have without the wake.
+   */
+  private woke() {
+    if (this.stopped) return
+    const conn = this.conn
+    if (conn) {
+      this.release(conn)
+      conn.ws.close(1000, 'woke from sleep')
+      this.setState('reconnecting')
+      console.log('tunnel lost (woke from sleep), reconnecting in 0 ms')
+      this.connect()
+    } else if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      console.log('tunnel woke from sleep, reconnecting in 0 ms')
+      this.connect()
+    }
   }
 
   private setState(state: TunnelState) {
