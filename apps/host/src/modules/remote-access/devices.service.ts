@@ -52,13 +52,20 @@ export class DevicesService {
     return this.approved.some((device) => device.id === id)
   }
 
-  /** Records a device that isn't approved as waiting, unless it already is. */
+  /**
+   * Records a device that isn't approved as waiting, unless it already is. A
+   * new entry logs one line for the owner with its fingerprint and time only.
+   */
   recordPending(id: string, publicKey: DeviceJwk) {
     if (this.isApproved(id)) return
     const pending = this.fresh()
     if (pending.some((entry) => entry.id === id)) return
-    pending.push({ id, publicKey, firstSeenAt: this.now() })
+    const firstSeenAt = this.now()
+    pending.push({ id, publicKey, firstSeenAt })
     this.pending = pending.slice(-MAX_PENDING_DEVICES)
+    console.log(
+      `device ${fingerprintOf(id)} asks for approval (${new Date(firstSeenAt).toISOString()}); approve it in Remote access or with bun run host:remote devices approve`,
+    )
   }
 
   /** Both lists, newest first. */

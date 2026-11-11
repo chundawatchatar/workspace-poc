@@ -252,7 +252,14 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   device it approved. The device id is the SHA-256 of the canonical JWK, and its fingerprint (`ABCD-EFGH-JKMN-PQRS`,
   `deviceFingerprint` in `packages/shared`) is shown by the browser and by the machine. A valid ticket or key and proof
   from any other device get a 403 `device_not_approved` or a 4403 close, with no `auth.failed`, and put the device
-  in a pending list in memory (at most 5, newest kept, 15 minutes each). The owner approves it in the machine's
+  in a pending list in memory (at most 5, newest kept, 15 minutes each). The owner is told in two places, both
+  naming only the fingerprint and when it first asked: the host logs one line when a device joins the list (not
+  again while it waits, again once it expired or was pushed out), and the local page's Notifications bell lists each
+  waiting device (`src/lib/pendingDevices.ts`, polling `routes.remoteAccess.devices` every 5 seconds without retries,
+  only when the page offers the Remote access setting, so remote pages never ask), counted in its badge, and
+  selecting one opens the Remote access setting. Nothing is sent to the account or the server, and only a caller
+  with a valid ticket or key plus a valid proof can add a device, so each new device key it makes adds one log line;
+  that flooding is bounded by who can get there and accepted. The owner approves it in the machine's
   local Remote access setting, which the tunnel can't reach (`routes.remoteAccess.devices`, `approveDevice`,
   `removeDevice`, 403 through the tunnel), by typing the fingerprint their own browser shows: a pending row has
   Dismiss but no Approve button, and `approveDevice` takes `{ fingerprint }`, never an id. The host compares it with
