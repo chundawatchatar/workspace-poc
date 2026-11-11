@@ -91,6 +91,31 @@ export type DeviceBody = z.infer<typeof deviceBody>
 export const approveDeviceBody = z.strictObject({ fingerprint: z.string().min(1).max(64) })
 export type ApproveDeviceBody = z.infer<typeof approveDeviceBody>
 
+/** A credential a device's tunneled sockets came in with: the linked account, or an access key by its name. */
+export const sessionCredential = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('account') }),
+  z.object({ kind: z.literal('key'), name: z.string() }),
+])
+export type SessionCredential = z.infer<typeof sessionCredential>
+
+/**
+ * An approved device with tunneled sockets open: each credential they came in
+ * with once, how many are open, and when the first of them was authorized, an
+ * ISO string.
+ */
+export const remoteSession = z.object({
+  deviceId,
+  fingerprint: z.string(),
+  credentials: z.array(sessionCredential),
+  sockets: z.number().int().positive(),
+  startedAt: z.iso.datetime(),
+})
+export type RemoteSession = z.infer<typeof remoteSession>
+
+/** The devices with tunneled sockets open, newest `startedAt` first. */
+export const sessionsResponse = z.object({ sessions: z.array(remoteSession) })
+export type SessionsResponse = z.infer<typeof sessionsResponse>
+
 export const remoteAccessContract = defineContract({
   status: {
     method: 'GET',
@@ -152,5 +177,21 @@ export const remoteAccessContract = defineContract({
     description: 'Dismisses a waiting browser, or revokes an approved one and closes its sockets. Local callers only.',
     input: deviceBody,
     output: devicesResponse,
+  },
+  sessions: {
+    method: 'GET',
+    path: '/api/remote-access/sessions',
+    description:
+      'Lists the devices with tunneled sockets open, with the credentials they came in with. Local callers only.',
+    input: z.object({}),
+    output: sessionsResponse,
+  },
+  endSession: {
+    method: 'POST',
+    path: '/api/remote-access/sessions/end',
+    description:
+      "Closes a device's tunneled sockets with 4401, leaving it approved, and answers the list. An unknown id changes nothing. Local callers only.",
+    input: deviceBody,
+    output: sessionsResponse,
   },
 })

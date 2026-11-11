@@ -52,6 +52,12 @@ const EMPTY_SHA256 = bodySha256()
 /** A `ws.data` payload. Bun never hands the host a `SharedArrayBuffer`, so every `SocketData` is one. */
 type Payload = string | Uint8Array<ArrayBuffer>
 
+/** An open, authorized channel as `TunnelChannels.list` shows it. `openedAt` is in milliseconds. */
+export interface OpenChannel {
+  principal: Principal
+  openedAt: number
+}
+
 type ChannelFrame = Extract<ServerFrame, { type: 'ws.open' | 'ws.data' | 'ws.close' | 'ws.ack' }>
 
 /** One open channel. Byte counts are `ws.data` payload bytes. */
@@ -63,6 +69,8 @@ interface Channel {
   ticket: string | null
   /** Null until the channel's auth message has been accepted. */
   principal: Principal | null
+  /** When the auth message was accepted, in milliseconds. Null until then. */
+  openedAt: number | null
   /** Runs out when no auth message arrives in time. Cleared once one does. */
   authTimer: Timer | undefined
   /** Null until the handler has returned it. */
@@ -100,15 +108,17 @@ export class TunnelChannels {
 
   private readonly queueCapBytes: number
   private readonly authTimeoutMs: number
+  private readonly now: () => number
 
   constructor(
     private readonly openSocket: OpenSocket,
     private readonly authorize: Authorize,
     private readonly send: (frame: MachineFrame) => void,
-    options: { queueCapBytes?: number; authTimeoutMs?: number } = {},
+    options: { queueCapBytes?: number; authTimeoutMs?: number; now?: () => number } = {},
   ) {
     this.queueCapBytes = options.queueCapBytes ?? CHANNEL_QUEUE_CAP_BYTES
     this.authTimeoutMs = options.authTimeoutMs ?? AUTH_TIMEOUT_MS
+    this.now = options.now ?? Date.now
   }
 
   /** Takes a `ws.*` frame from the server. Frames for unknown or closed channels are ignored. */
@@ -145,6 +155,15 @@ export class TunnelChannels {
     }
   }
 
+  /** The open channels whose auth message was accepted, with their principal and when it was. */
+  list(): OpenChannel[] {
+    const listed: OpenChannel[] = []
+    for (const { principal, openedAt } of this.channels.values()) {
+      if (principal && openedAt !== null) listed.push({ principal, openedAt })
+    }
+    return listed
+  }
+
   /** The number of open channels. */
   get size(): number {
     return this.channels.size
@@ -160,6 +179,7 @@ export class TunnelChannels {
       headers: headers.filter(([name]) => name.toLowerCase() !== 'sec-websocket-protocol'),
       ticket: protocols.length === 1 ? ticketFromProtocols(protocols[0]?.[1]) : null,
       principal: null,
+      openedAt: null,
       authTimer: undefined,
       session: null,
       open: true,
@@ -198,6 +218,7 @@ export class TunnelChannels {
       return
     }
     channel.principal = principal
+    channel.openedAt = this.now()
     this.start(channel, principal)
   }
 
