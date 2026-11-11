@@ -7,6 +7,7 @@ import {
   type PreviewLinkBody,
   type PreviewLinkResponse,
   type RemoteAccessStatus,
+  type SessionsResponse,
   type UpdateRemoteAccessBody,
 } from '@orch/shared'
 import { AccessKeyRepository } from '../access/access.repository'
@@ -33,6 +34,7 @@ import type { DevicesRepository } from './devices.repository'
 import { DevicesService } from './devices.service'
 import type { LinkedAccountRepository, SavedLinkedAccount } from './linked-account.repository'
 import type { RemoteAccessRepository, RemoteAccessSettings } from './remote-access.repository'
+import { groupSessions } from './sessions.service'
 import { TunnelAccess } from './tunnel-access.service'
 
 /**
@@ -49,7 +51,7 @@ export interface RemoteAccessEnv {
 }
 
 /** The parts of a `TunnelClient` the service drives. */
-export type Tunnel = Pick<TunnelClient, 'start' | 'stop' | 'closeChannels' | 'status' | 'enroll'>
+export type Tunnel = Pick<TunnelClient, 'start' | 'stop' | 'closeChannels' | 'listChannels' | 'status' | 'enroll'>
 
 export interface RemoteAccessServiceOptions {
   repository: RemoteAccessRepository
@@ -354,6 +356,21 @@ export class RemoteAccessService {
       this.tunnel?.closeChannels((principal) => principal.deviceId === id, 'device revoked')
     }
     return this.devices.list()
+  }
+
+  /** The devices with authorized tunneled sockets open, one entry each, newest first; see `groupSessions`. */
+  listSessions(): SessionsResponse {
+    return { sessions: groupSessions(this.tunnel?.listChannels() ?? []) }
+  }
+
+  /**
+   * Closes the tunneled sockets of the device with this id, with the default
+   * `CLOSE_ACCESS_DENIED`, and answers the fresh list. The device stays
+   * approved, so it can open the machine again; an unknown id changes nothing.
+   */
+  endSession(id: string): SessionsResponse {
+    this.tunnel?.closeChannels((principal) => principal.deviceId === id, 'session ended by owner')
+    return this.listSessions()
   }
 
   /**

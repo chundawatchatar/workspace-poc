@@ -72,7 +72,7 @@ const authorize: Authorize = (credentials) => {
  * Channels whose `openSocket` accepts every path but `/ws/nope`, with the
  * frames they send collected as a fake server would.
  */
-function setup(open?: (opened: Opened) => void, authTimeoutMs = 1000) {
+function setup(open?: (opened: Opened) => void, authTimeoutMs = 1000, now?: () => number) {
   const frames: MachineFrame[] = []
   const opened: Opened[] = []
   const openSocket: OpenSocket = (path, headers, conn, principal) => {
@@ -82,7 +82,7 @@ function setup(open?: (opened: Opened) => void, authTimeoutMs = 1000) {
     open?.(run)
     return { message: (data) => run.messages.push(data), close: () => run.closes++ }
   }
-  const channels = new TunnelChannels(openSocket, authorize, (frame) => frames.push(frame), { authTimeoutMs })
+  const channels = new TunnelChannels(openSocket, authorize, (frame) => frames.push(frame), { authTimeoutMs, now })
   /** Opens `channel` and authorizes it with `key`. */
   const openChannel = (channel: number, key = 'good') => {
     channels.receive({ type: 'ws.open', channel, path: '/ws/events', headers: [] })
@@ -234,6 +234,26 @@ describe('TunnelChannels', () => {
       reason: 'session ended',
     })
     channels.close()
+  })
+
+  test('list shows only open, authorized channels, each with its principal and when its auth was accepted', () => {
+    let clock = 1000
+    const { channels, openChannel } = setup(undefined, 1000, () => clock)
+    openChannel(1, 'good')
+    clock = 2000
+    channels.receive({ type: 'ws.open', channel: 2, path: '/ws/events', headers: withTicket('t-good') })
+    clock = 3000
+    channels.receive({ type: 'ws.data', channel: 2, data: accountAuth() })
+    channels.receive({ type: 'ws.open', channel: 3, path: '/ws/events', headers: [] })
+    openChannel(4, 'other')
+    channels.receive({ type: 'ws.close', channel: 4 })
+
+    expect(channels.list()).toEqual([
+      { principal: { kind: 'key', keyId: 'k1', name: 'default', deviceId: 'd1' }, openedAt: 1000 },
+      { principal: { kind: 'account', accountId: 'u1', deviceId: 'd1' }, openedAt: 3000 },
+    ])
+    channels.close()
+    expect(channels.list()).toEqual([])
   })
 
   test('delivers messages in order and acks exactly the payload bytes, ignoring frames for unknown channels', async () => {

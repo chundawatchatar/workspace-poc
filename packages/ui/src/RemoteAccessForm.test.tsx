@@ -193,6 +193,23 @@ describe('RemoteAccessForm', () => {
     expect(props.accountLink.onUnlink).toHaveBeenCalledTimes(1)
   })
 
+  test('Sessions shows once an account is linked or a session is listed', () => {
+    const none = { sessions: { sessions: [] }, onEnd: mock() }
+    const { unmount } = setup({ sessions: none })
+    expect(screen.queryByRole('region', { name: 'Sessions' })).not.toBeInTheDocument()
+    unmount()
+
+    const session = {
+      deviceId: `a${'d'.repeat(42)}`,
+      fingerprint: 'ABCD-EFGH',
+      credentials: [{ kind: 'key' as const, name: 'laptop' }],
+      sockets: 1,
+      startedAt: '2026-11-06T12:00:00.000Z',
+    }
+    setup({ sessions: { ...none, sessions: { sessions: [session] } } })
+    expect(screen.getByRole('region', { name: 'Sessions' })).toHaveTextContent('Key laptop')
+  })
+
   test('a waiting browser can only be dismissed, and is approved only by typing its fingerprint', async () => {
     const user = userEvent.setup()
     const linkedAccount = {

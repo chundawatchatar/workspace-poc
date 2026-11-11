@@ -192,6 +192,18 @@ kept in `apps/host/.data/devices.json` (public keys only; delete it to approve
 again); Revoke takes one away and closes what it has open. Every browser must
 be approved once, and an older page, which sends no proof, is refused.
 
+The setting's Sessions list shows the approved browsers with sockets open
+through the tunnel right now, polled every 2 seconds: one row per browser, with
+its fingerprint, `Account` and/or `Key <name>` for what it came in with, how
+many sockets it holds and when the first one opened. Sockets still waiting for
+their auth message aren't counted, and tunneled HTTP requests, which hold
+nothing open, aren't shown. End closes that browser's sockets with 4401 but
+leaves it approved, so its page stops at "access denied" and a reload opens the
+machine again; Revoke it under Devices to remove it for good. `bun run
+host:remote sessions` prints the same list. Like the rest of the setting, both
+are refused through the tunnel, and the list lives only in the running host's
+memory.
+
 Anything else gets the same refusal as a wrong key. Access keys from connect
 links need the same approval: through the tunnel a request that carries a key
 is judged by the key (a ticket never rescues a wrong one), then by a fresh
@@ -248,6 +260,7 @@ bun run host:remote unlink
 bun run host:remote devices                         # waiting and approved devices, newest first
 bun run host:remote devices approve <fingerprint>   # add --yes to skip the question
 bun run host:remote devices remove <fingerprint>    # dismiss a waiting device, or revoke an approved one
+bun run host:remote sessions                        # approved devices with tunneled sockets open
 ```
 
 With the host running, every command goes through its local-only Remote access
@@ -270,6 +283,9 @@ prints `<fingerprint> is already approved`. Type only a fingerprint shown in
 your own browser: a compromised server can put its own device in the list. `devices
 remove` asks nothing; for an approved device it also closes the sockets it has
 open. The commands print fingerprints only, never a device's id or public key.
+`sessions` prints one line per session, such as `ABCD-EFGH-JKMN-PQRS  account,
+key laptop  3 sockets  since <local time>`, or `No remote sessions are open`;
+with the host stopped it says no host is running, so none are open, and exits 0.
 
 With the host stopped, the command reads and writes `apps/host/.data/` itself,
 and the host picks the change up at its next start. `status` shows the tunnel as

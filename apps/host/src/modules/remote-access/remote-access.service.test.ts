@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { type RotateAccessResponse, routes } from '@orch/shared'
+import { fingerprintOf } from './device-proof.service'
 import { DEFAULT_SERVER_URL, hostMachineName, linkClientUrl } from './remote-access.service'
 import {
   account,
@@ -255,6 +256,55 @@ describe('RemoteAccessService', () => {
     const offline = await post(app, routes.remoteAccess.previewLink, { key })
     expect(offline).toMatchObject({ status: 409, text: 'Turn remote access on and wait until it is connected' })
     expect(tunnel.sent).toHaveLength(9)
+  })
+})
+
+describe('remote sessions', () => {
+  /** Device ids that differ in their first character, so each has its own fingerprint. */
+  const deviceId = (n: number) => `${n}${'d'.repeat(42)}`
+
+  test('listSessions groups channels per device, newest first, and endSession closes one device with 4401', async () => {
+    const off = setup()
+    expect(await (await off.request(routes.remoteAccess.sessions.path)).json()).toEqual({ sessions: [] })
+
+    const { app, tunnel } = connected()
+    const [a, b] = [deviceId(1), deviceId(2)]
+    tunnel.channels = [
+      { principal: { kind: 'account', accountId, deviceId: a }, openedAt: Date.UTC(2026, 10, 6, 12, 0) },
+      { principal: { kind: 'key', keyId: 'k1', name: 'laptop', deviceId: a }, openedAt: Date.UTC(2026, 10, 6, 11, 0) },
+      { principal: { kind: 'account', accountId, deviceId: a }, openedAt: Date.UTC(2026, 10, 6, 13, 0) },
+      { principal: { kind: 'key', keyId: 'k2', name: 'phone', deviceId: b }, openedAt: Date.UTC(2026, 10, 6, 12, 30) },
+    ]
+    const listed = await app.request(routes.remoteAccess.sessions.path)
+    const text = await listed.text()
+    expect(JSON.parse(text)).toEqual({
+      sessions: [
+        {
+          deviceId: b,
+          fingerprint: fingerprintOf(b),
+          credentials: [{ kind: 'key', name: 'phone' }],
+          sockets: 1,
+          startedAt: '2026-11-06T12:30:00.000Z',
+        },
+        {
+          deviceId: a,
+          fingerprint: fingerprintOf(a),
+          credentials: [{ kind: 'account' }, { kind: 'key', name: 'laptop' }],
+          sockets: 3,
+          startedAt: '2026-11-06T11:00:00.000Z',
+        },
+      ],
+    })
+    for (const hidden of ['k1', 'k2', accountId]) expect(text).not.toContain(hidden)
+
+    const ended = await post(app, routes.remoteAccess.endSession, { id: a })
+    expect(ended.json().sessions.map((session: { deviceId: string }) => session.deviceId)).toEqual([b])
+    // No code means `CLOSE_ACCESS_DENIED`, the tunnel's default.
+    expect(tunnel.closed.map(({ reason, code }) => [reason, code])).toEqual([['session ended by owner', undefined]])
+
+    const unknown = await post(app, routes.remoteAccess.endSession, { id: deviceId(3) })
+    expect(unknown.json().sessions).toHaveLength(1)
+    expect((await post(app, routes.remoteAccess.endSession, { id: 'nope' })).status).toBe(400)
   })
 })
 
