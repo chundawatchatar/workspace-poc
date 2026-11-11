@@ -1,10 +1,10 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fingerprintOf } from './device-proof.service'
 import { DevicesRepository } from './devices.repository'
-import { DevicesService, PENDING_DEVICE_TTL_MS } from './devices.service'
+import { DevicesService, MAX_PENDING_DEVICES, PENDING_DEVICE_TTL_MS } from './devices.service'
 
 const publicKey = { kty: 'EC', crv: 'P-256', x: 'x'.repeat(43), y: 'y'.repeat(43) } as const
 /** Device ids that differ in their first character, so each has its own fingerprint. */
@@ -12,11 +12,19 @@ const id = (n: number) => `${n}${'d'.repeat(42)}`
 
 let dir: string
 let clock: number
+let log: ReturnType<typeof spyOn<Console, 'log'>>
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'orch-devices-'))
   clock = Date.UTC(2026, 10, 4, 12)
+  log = spyOn(console, 'log').mockImplementation(() => {})
 })
-afterEach(() => rmSync(dir, { recursive: true, force: true }))
+afterEach(() => {
+  mock.restore()
+  rmSync(dir, { recursive: true, force: true })
+})
+
+/** The lines `console.log` was called with, in order. */
+const logged = () => log.mock.calls.map((args) => args.join(' '))
 
 function setup() {
   const devices = new DevicesService(new DevicesRepository(join(dir, 'devices.json')), () => clock)
@@ -80,5 +88,39 @@ describe('DevicesService', () => {
     expect(devices.approve(fingerprintOf(twins[0] ?? ''))).toBe('several')
     expect(devices.list().approved).toEqual([])
     expect(devices.list().pending).toHaveLength(2)
+  })
+
+  test('a newly waiting device logs one line with only its fingerprint and time', () => {
+    const devices = setup()
+    devices.recordPending(id(1), publicKey)
+    const lines = logged()
+    expect(lines).toEqual([
+      `device ${fingerprintOf(id(1))} asks for approval (${new Date(clock).toISOString()}); approve it in Remote access or with bun run host:remote devices approve`,
+    ])
+    expect(lines[0]).not.toContain(id(1))
+    for (const field of [publicKey.x, publicKey.y, 'P-256', 'kty']) expect(lines[0]).not.toContain(field)
+  })
+
+  test('logs again only once a device is new to the list, after it expired or was pushed out', () => {
+    const devices = setup()
+    devices.recordPending(id(1), publicKey)
+    devices.recordPending(id(1), publicKey)
+    expect(devices.approve(fingerprintOf(id(1)))).toBe('approved')
+    devices.recordPending(id(1), publicKey)
+    expect(logged()).toHaveLength(1)
+
+    devices.recordPending(id(2), publicKey)
+    clock += PENDING_DEVICE_TTL_MS
+    devices.recordPending(id(2), publicKey)
+    expect(logged()).toHaveLength(3)
+
+    for (let n = 3; n < 3 + MAX_PENDING_DEVICES; n++) {
+      clock += 1000
+      devices.recordPending(id(n), publicKey)
+    }
+    expect(devices.list().pending.map((d) => d.id)).not.toContain(id(2))
+    devices.recordPending(id(2), publicKey)
+    expect(logged()).toHaveLength(4 + MAX_PENDING_DEVICES)
+    expect(logged().at(-1)).toContain(fingerprintOf(id(2)))
   })
 })
