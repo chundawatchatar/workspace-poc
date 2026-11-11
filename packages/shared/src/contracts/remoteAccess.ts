@@ -91,6 +91,95 @@ export type DeviceBody = z.infer<typeof deviceBody>
 export const approveDeviceBody = z.strictObject({ fingerprint: z.string().min(1).max(64) })
 export type ApproveDeviceBody = z.infer<typeof approveDeviceBody>
 
+/**
+ * Why a tunneled request or socket was refused. `no_auth` is a socket whose
+ * first message wasn't a valid auth message, or that sent none in time.
+ */
+export const auditRefusalReason = z.enum([
+  'key_refused',
+  'ticket_refused',
+  'ticket_reused',
+  'proof_refused',
+  'device_not_approved',
+  'no_auth',
+])
+export type AuditRefusalReason = z.infer<typeof auditRefusalReason>
+
+/** A device fingerprint as the audit log keeps it. */
+const auditFingerprint = z.string().min(1).max(64)
+/** A local random id that ties a session's `closed` to its `opened`. */
+const auditSession = z.string().min(1).max(64)
+/** Who a tunneled socket opened as: the linked account's id, or an access key's id, never the key or its name. */
+const auditAccount = z.strictObject({ principal: z.literal('account'), accountId: z.string().min(1).max(200) })
+const auditKey = z.strictObject({ principal: z.literal('key'), keyId: z.string().min(1).max(64) })
+
+/** A line of the audit log for a tunneled socket that opened. `at` is an ISO string, as in every line. */
+export const auditOpenedLine = z.union([
+  auditAccount.extend({
+    kind: z.literal('opened'),
+    session: auditSession,
+    fingerprint: auditFingerprint,
+    at: z.iso.datetime(),
+  }),
+  auditKey.extend({
+    kind: z.literal('opened'),
+    session: auditSession,
+    fingerprint: auditFingerprint,
+    at: z.iso.datetime(),
+  }),
+])
+
+/** A line of the audit log for a tunneled socket that ended, for any reason. */
+export const auditClosedLine = z.strictObject({
+  kind: z.literal('closed'),
+  session: auditSession,
+  at: z.iso.datetime(),
+})
+
+/**
+ * A line of the audit log for a refused tunneled request or socket.
+ * `fingerprint` and `principal` are there only when a device proof verified.
+ */
+export const auditRefusedLine = z.strictObject({
+  kind: z.literal('refused'),
+  reason: auditRefusalReason,
+  at: z.iso.datetime(),
+  fingerprint: auditFingerprint.optional(),
+  principal: z.enum(['account', 'key']).optional(),
+})
+export type AuditRefusedLine = z.infer<typeof auditRefusedLine>
+
+/** One line of `remote-audit.jsonl`. */
+export const auditLine = z.union([...auditOpenedLine.options, auditClosedLine, auditRefusedLine])
+export type AuditLine = z.infer<typeof auditLine>
+
+/** A tunneled socket's session: an `opened` line merged with its `closed`. `closedAt` is null when no close was recorded. */
+export const auditSessionEntry = z.union([
+  auditAccount.extend({
+    kind: z.literal('session'),
+    session: auditSession,
+    fingerprint: auditFingerprint,
+    openedAt: z.iso.datetime(),
+    closedAt: z.iso.datetime().nullable(),
+  }),
+  auditKey.extend({
+    kind: z.literal('session'),
+    session: auditSession,
+    fingerprint: auditFingerprint,
+    openedAt: z.iso.datetime(),
+    closedAt: z.iso.datetime().nullable(),
+  }),
+])
+export type AuditSessionEntry = z.infer<typeof auditSessionEntry>
+
+/** An entry of the audit log as the owner reads it: a session, or a refusal. */
+export const auditLogEntry = z.union([...auditSessionEntry.options, auditRefusedLine])
+export type AuditLogEntry = z.infer<typeof auditLogEntry>
+
+/** The newest audit log entries, newest first. */
+export const auditLogResponse = z.object({ entries: z.array(auditLogEntry) })
+export type AuditLogResponse = z.infer<typeof auditLogResponse>
+
 export const remoteAccessContract = defineContract({
   status: {
     method: 'GET',
@@ -152,5 +241,13 @@ export const remoteAccessContract = defineContract({
     description: 'Dismisses a waiting browser, or revokes an approved one and closes its sockets. Local callers only.',
     input: deviceBody,
     output: devicesResponse,
+  },
+  auditLog: {
+    method: 'GET',
+    path: '/api/remote-access/audit-log',
+    description:
+      'Lists the newest remote access recorded on this machine, at most 50, newest first: the tunneled sockets that opened, as which device and account or key, and when they closed, and the refused requests and sockets. Local callers only.',
+    input: z.object({}),
+    output: auditLogResponse,
   },
 })

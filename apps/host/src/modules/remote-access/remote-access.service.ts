@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import { hostname } from 'node:os'
 import {
+  type AuditLogResponse,
   CLOSE_SESSION_ENDED,
   type DevicesResponse,
   type LinkBody,
@@ -28,7 +29,8 @@ import {
   type TunnelClientOptions,
 } from '../tunnel/tunnel.service'
 import type { OpenSocket } from '../tunnel/tunnel-channels.service'
-import type { Authorization, Credentials, TunnelHandler } from '../tunnel/tunnel-http.service'
+import type { Authorization, Credentials, Refusal, TunnelHandler } from '../tunnel/tunnel-http.service'
+import type { AuditLogService } from './audit-log.service'
 import type { DevicesRepository } from './devices.repository'
 import { DevicesService } from './devices.service'
 import type { LinkedAccountRepository, SavedLinkedAccount } from './linked-account.repository'
@@ -57,6 +59,8 @@ export interface RemoteAccessServiceOptions {
   linkedAccounts: LinkedAccountRepository
   /** Where the browsers approved for the linked account are kept. */
   devices: DevicesRepository
+  /** Where tunneled sockets and refusals are recorded, for the owner to read. */
+  audit: AuditLogService
   /** The machine secret file, created the first time remote access is needed. */
   secretFile: string
   /** The access keys file. */
@@ -374,8 +378,13 @@ export class RemoteAccessService {
   }
 
   /** Decides a tunneled request or socket; see `TunnelAccess.authorize`. */
-  authorize(credentials: Credentials): Authorization {
-    return this.access.authorize(credentials)
+  authorize(credentials: Credentials, refused?: (refusal: Refusal) => void): Authorization {
+    return this.access.authorize(credentials, refused)
+  }
+
+  /** The newest remote access recorded on this machine, newest first; see `AuditLogService.recent`. */
+  auditLog(): AuditLogResponse {
+    return { entries: this.options.audit.recent() }
   }
 
   /**
@@ -432,10 +441,11 @@ export class RemoteAccessService {
       url,
       secret,
       expectedMachineId: machineIdFromSecret(secret),
-      authorize: (credentials) => this.authorize(credentials),
+      authorize: (credentials, refused) => this.authorize(credentials, refused),
       handle: (request, principal) => this.options.handle(request, principal),
       openSocket: (path, headers, conn, principal) => this.options.openSocket(path, headers, conn, principal),
       onSessionEnded: (accountId) => this.sessionEnded(accountId),
+      record: (event) => this.options.audit.record(event),
     })
     this.tunnel = tunnel
     this.tunnelUrl = url

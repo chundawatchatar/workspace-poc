@@ -39,9 +39,7 @@ function device(seed: number) {
   const publicKey = { kty: 'EC', crv: 'P-256', x: coordinate(100), y: coordinate(150) } as const
   return { id, fingerprint: fingerprintOf(id), publicKey }
 }
-const alice = device(1)
-const bob = device(2)
-const carol = device(3)
+const [alice, bob, carol] = [device(1), device(2), device(3)]
 const MINUTE = 60_000
 
 /** Stands in for `RemoteAccessService` behind the real routes, recording each call it gets. */
@@ -106,6 +104,7 @@ class FakeRemoteAccess {
     if (result === 'several') throw new AmbiguousDevice(fingerprint)
     return this.devices.list()
   }
+  auditLog = () => ({ entries: [] })
   removeDevice(id: string) {
     this.calls.push(['removeDevice', id])
     this.devices.remove(id)

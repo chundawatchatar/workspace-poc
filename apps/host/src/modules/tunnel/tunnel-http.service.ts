@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import {
   ACCESS_KEY_HEADER,
   API_PREFIX,
+  type AuditRefusalReason,
   DEVICE_NOT_APPROVED_CODE,
   DEVICE_PROOF_HEADER,
   type httpRequestFrame,
@@ -11,6 +12,7 @@ import {
 import type { z } from 'zod'
 import { HOST_ORIGIN } from '../../lib/localOrigin'
 import type { Principal } from '../../lib/principal'
+import type { RecordAudit } from '../remote-access/audit-log.service'
 
 type HttpRequestFrame = z.infer<typeof httpRequestFrame>
 
@@ -48,13 +50,45 @@ export const DEVICE_NOT_APPROVED = 'device_not_approved'
 /** Who a request or channel is, `DEVICE_NOT_APPROVED`, or null for refused. */
 export type Authorization = Principal | typeof DEVICE_NOT_APPROVED | null
 
+/** Why `Authorize` refused, for the audit log. */
+export interface Refusal {
+  reason: AuditRefusalReason
+  /** The device whose proof verified, and what it came as. Absent when no proof verified. */
+  device?: { id: string; principal: Principal['kind'] }
+}
+
 /**
  * Decides whether a request or channel may in. In the host this is
  * `RemoteAccessService`'s, which checks a key with `AccessKeys.authorize`, or
  * a ticket against the linked account and the server's public keys, either
- * one together with a proof from an approved device.
+ * one together with a proof from an approved device. When it answers null or
+ * `DEVICE_NOT_APPROVED`, it tells `refused` why.
  */
-export type Authorize = (credentials: Credentials) => Authorization
+export type Authorize = (credentials: Credentials, refused?: (refusal: Refusal) => void) => Authorization
+
+/**
+ * Decides with `authorize`, and says why it refused. When `authorize` gives
+ * no reason, a refused key counts as `key_refused` and anything else as
+ * `ticket_refused`.
+ */
+export function authorizeWithReason(
+  authorize: Authorize,
+  credentials: Credentials,
+): { authorization: Authorization; refusal: Refusal | null } {
+  // Set in the callback, which TypeScript can't follow, so the type is named.
+  let refusal = null as Refusal | null
+  const authorization = authorize(credentials, (given) => {
+    refusal = given
+  })
+  if (authorization !== null && authorization !== DEVICE_NOT_APPROVED) return { authorization, refusal: null }
+  const fallback: Refusal['reason'] =
+    authorization === DEVICE_NOT_APPROVED
+      ? 'device_not_approved'
+      : credentials.key !== null
+        ? 'key_refused'
+        : 'ticket_refused'
+  return { authorization, refusal: refusal ?? { reason: fallback } }
+}
 
 /** The base64url SHA-256 of `data`, as a device proof's `bodySha256`. */
 export function bodySha256(data: Uint8Array | string = ''): string {
@@ -127,7 +161,7 @@ export function tunneledRequest(frame: HttpRequestFrame, signal?: AbortSignal): 
  * connection's requests never reach the next one. A request refused by
  * `authorize` gets `auth.failed`, then a 401, and never reaches `handle`; one
  * from a device that isn't approved gets a JSON 403 `device_not_approved`
- * and no `auth.failed`.
+ * and no `auth.failed`. Each refused request is recorded with its reason.
  */
 export class TunnelHttp {
   private readonly inFlight = new Map<number, AbortController>()
@@ -138,6 +172,8 @@ export class TunnelHttp {
     private readonly authorize: Authorize,
     private readonly send: (frame: MachineFrame) => void,
     private readonly room: () => Promise<void> = () => Promise.resolve(),
+    /** Where refused requests are recorded. Accepted ones are not. */
+    private readonly record: RecordAudit = () => {},
   ) {}
 
   /** Starts answering `frame`. A frame whose `id` is already in flight is ignored. */
@@ -168,7 +204,8 @@ export class TunnelHttp {
     }
 
     // Preflights included: the server answers those itself, so one that gets here is an ordinary request.
-    const principal = this.authorize(requestCredentials(frame))
+    const { authorization: principal, refusal } = authorizeWithReason(this.authorize, requestCredentials(frame))
+    if (refusal) this.record({ kind: 'refused', ...refusal })
     if (!principal) {
       // First, so the server still knows the request's browser when it reads it.
       send({ type: 'auth.failed', id })

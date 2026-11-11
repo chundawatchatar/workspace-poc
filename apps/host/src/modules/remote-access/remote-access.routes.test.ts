@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { routes } from '@orch/shared'
+import { AuditLogRepository } from './audit-log.repository'
+import { AuditLogService } from './audit-log.service'
 import { fingerprintOf } from './device-proof.service'
 import { DevicesRepository } from './devices.repository'
 import type { DevicesService } from './devices.service'
@@ -25,6 +27,7 @@ beforeEach(() => {
     repository: new RemoteAccessRepository(join(dir, 'remote-access.json')),
     linkedAccounts: new LinkedAccountRepository(join(dir, 'linked-account.json')),
     devices: new DevicesRepository(join(dir, 'devices.json')),
+    audit: new AuditLogService(new AuditLogRepository(join(dir, 'remote-audit.jsonl'))),
     secretFile: join(dir, 'machine-secret'),
     keysFile: join(dir, 'access-keys.json'),
     handle: async () => new Response('ok'),

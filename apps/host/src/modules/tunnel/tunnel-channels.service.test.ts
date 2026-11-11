@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, type Mock, spyOn, test } from 'bun:test'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
+  auditLine,
   CLOSE_ACCESS_DENIED,
   CLOSE_DEVICE_NOT_APPROVED,
   CLOSE_SESSION_ENDED,
@@ -12,6 +16,9 @@ import { CAUGHT_UP, deliver, type TermClient } from '@orch/terminal'
 import type { Principal } from '../../lib/principal'
 import type { SocketConn, SocketData } from '../../lib/socket'
 import type { SocketRefusal } from '../../lib/socketRouter'
+import { AuditLogRepository, auditLogPath } from '../remote-access/audit-log.repository'
+import { type AuditEvent, AuditLogService } from '../remote-access/audit-log.service'
+import { fingerprintOf } from '../remote-access/device-proof.service'
 import { CHANNEL_QUEUE_CAP_BYTES, type OpenSocket, TunnelChannels } from './tunnel-channels.service'
 import { type Authorize, bodySha256, type Credentials, DEVICE_NOT_APPROVED } from './tunnel-http.service'
 
@@ -34,7 +41,14 @@ beforeEach(() => {
   warn = spyOn(console, 'warn').mockImplementation((...args: unknown[]) => void warnings.push(args.join(' ')))
 })
 
-afterEach(() => warn.mockRestore())
+/** A temp folder a test made for its audit log. Null means none. */
+let auditDir: string | null = null
+
+afterEach(() => {
+  warn.mockRestore()
+  if (auditDir) rmSync(auditDir, { recursive: true, force: true })
+  auditDir = null
+})
 
 /** The auth message for `key`, with the device proof `device`. */
 const auth = (key: string, device = 'p-good') => JSON.stringify({ type: 'auth', key, device })
@@ -72,7 +86,7 @@ const authorize: Authorize = (credentials) => {
  * Channels whose `openSocket` accepts every path but `/ws/nope`, with the
  * frames they send collected as a fake server would.
  */
-function setup(open?: (opened: Opened) => void, authTimeoutMs = 1000) {
+function setup(open?: (opened: Opened) => void, authTimeoutMs = 1000, record?: (event: AuditEvent) => void) {
   const frames: MachineFrame[] = []
   const opened: Opened[] = []
   const openSocket: OpenSocket = (path, headers, conn, principal) => {
@@ -82,7 +96,10 @@ function setup(open?: (opened: Opened) => void, authTimeoutMs = 1000) {
     open?.(run)
     return { message: (data) => run.messages.push(data), close: () => run.closes++ }
   }
-  const channels = new TunnelChannels(openSocket, authorize, (frame) => frames.push(frame), { authTimeoutMs })
+  const channels = new TunnelChannels(openSocket, authorize, (frame) => frames.push(frame), {
+    authTimeoutMs,
+    record,
+  })
   /** Opens `channel` and authorizes it with `key`. */
   const openChannel = (channel: number, key = 'good') => {
     channels.receive({ type: 'ws.open', channel, path: '/ws/events', headers: [] })
@@ -354,5 +371,61 @@ describe('TunnelChannels', () => {
     expect([a.closes, b.closes, c.closes]).toEqual([1, 1, 1])
     expect(frames.length).toBe(before)
     expect(channels.size).toBe(0)
+  })
+
+  test('records each socket opened and closed, however it ends, and each refusal with its reason', async () => {
+    auditDir = mkdtempSync(join(tmpdir(), 'orch-channels-audit-'))
+    const file = auditLogPath(auditDir)
+    const audit = new AuditLogService(new AuditLogRepository(file))
+    const { channels, opened, openChannel } = setup(undefined, 30, (event) => audit.record(event))
+    const lines = () =>
+      readFileSync(file, 'utf8')
+        .trimEnd()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+
+    openChannel(1)
+    channels.receive({ type: 'ws.close', channel: 1, code: 1000 })
+    channels.receive({ type: 'ws.open', channel: 2, path: '/ws/events', headers: withTicket('t-good') })
+    channels.receive({ type: 'ws.data', channel: 2, data: accountAuth() })
+    channels.closeChannels((principal) => principal.kind === 'account', 'device revoked')
+    openChannel(3).conn.close(1000)
+    channels.receive({ type: 'ws.open', channel: 4, path: '/ws/nope', headers: [] })
+    channels.receive({ type: 'ws.data', channel: 4, data: auth('good') })
+    channels.receive({ type: 'ws.open', channel: 5, path: '/ws/events', headers: [] })
+    channels.receive({ type: 'ws.data', channel: 5, data: 'not json' })
+    channels.receive({ type: 'ws.open', channel: 6, path: '/ws/events', headers: [] })
+    channels.receive({ type: 'ws.data', channel: 6, data: auth('wrong') })
+    channels.receive({ type: 'ws.open', channel: 7, path: '/ws/events', headers: [] })
+    channels.receive({ type: 'ws.data', channel: 7, data: auth('good', 'p-new') })
+    channels.receive({ type: 'ws.open', channel: 8, path: '/ws/events', headers: [] })
+    await Bun.sleep(60)
+    openChannel(9)
+    channels.close()
+
+    expect(opened).toHaveLength(4)
+    const written = lines()
+    for (const line of written) expect(auditLine.safeParse(line).success).toBe(true)
+    const fingerprint = fingerprintOf('d1')
+    const sessions = written.filter((line) => line.kind === 'opened').map((line) => line.session)
+    expect(new Set(sessions).size).toBe(5)
+    const [key, account, hostClosed, refusedByHandler, dropped] = sessions
+    expect(written.map(({ at: _, ...line }) => line)).toEqual([
+      { kind: 'opened', session: key, principal: 'key', keyId: 'k1', fingerprint },
+      { kind: 'closed', session: key },
+      { kind: 'opened', session: account, principal: 'account', accountId: 'u1', fingerprint },
+      { kind: 'closed', session: account },
+      { kind: 'opened', session: hostClosed, principal: 'key', keyId: 'k1', fingerprint },
+      { kind: 'closed', session: hostClosed },
+      { kind: 'opened', session: refusedByHandler, principal: 'key', keyId: 'k1', fingerprint },
+      { kind: 'closed', session: refusedByHandler },
+      { kind: 'refused', reason: 'no_auth' },
+      // This stub gives no reasons, so the channel falls back to the credential it was given.
+      { kind: 'refused', reason: 'key_refused' },
+      { kind: 'refused', reason: 'device_not_approved' },
+      { kind: 'refused', reason: 'no_auth' },
+      { kind: 'opened', session: dropped, principal: 'key', keyId: 'k1', fingerprint },
+      { kind: 'closed', session: dropped },
+    ])
   })
 })

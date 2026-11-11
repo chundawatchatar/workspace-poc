@@ -15,7 +15,15 @@ import {
 export interface RemoteAccessDeps {
   remoteAccess: Pick<
     RemoteAccessService,
-    'status' | 'update' | 'previewLink' | 'link' | 'unlink' | 'listDevices' | 'approveDevice' | 'removeDevice'
+    | 'status'
+    | 'update'
+    | 'previewLink'
+    | 'link'
+    | 'unlink'
+    | 'listDevices'
+    | 'approveDevice'
+    | 'removeDevice'
+    | 'auditLog'
   >
 }
 
@@ -59,6 +67,7 @@ export function createRemoteAccessRoutes({ remoteAccess }: RemoteAccessDeps) {
         }
       },
       removeDevice: async ({ id }) => remoteAccess.removeDevice(id),
+      auditLog: async () => remoteAccess.auditLog(),
     }),
   )
 }
