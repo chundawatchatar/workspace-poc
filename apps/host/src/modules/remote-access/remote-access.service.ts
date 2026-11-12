@@ -12,6 +12,7 @@ import {
   type SessionsResponse,
   type UpdateRemoteAccessBody,
 } from '@orch/shared'
+import type { Principal } from '../../lib/principal'
 import { AccessKeyRepository } from '../access/access.repository'
 import {
   AccessKeys,
@@ -21,6 +22,7 @@ import {
   parseClientUrl,
   type RemoteAccess,
 } from '../access/access.service'
+import type { E2eSessions } from '../e2e/e2e.service'
 import { loadOrCreateMachineKey, type MachineKey } from '../tunnel/tunnel.repository'
 import {
   type EnrollAnswer,
@@ -64,6 +66,8 @@ export interface RemoteAccessServiceOptions {
   devices: DevicesRepository
   /** Where tunneled sockets and refusals are recorded, for the owner to read. */
   audit: AuditLogService
+  /** The end-to-end sessions browsers opened, closed together with the sockets of the same access. */
+  e2eSessions: Pick<E2eSessions, 'closeWhere' | 'closeAll'>
   /** The machine key file, created the first time remote access is needed. */
   machineKeyFile: string
   /** The access keys file. */
@@ -298,7 +302,7 @@ export class RemoteAccessService {
     this.options.linkedAccounts.remove()
     this.linked = null
     this.devices.clear()
-    this.tunnel?.closeChannels((principal) => principal.kind === 'account', 'account unlinked')
+    this.closeAccess((principal) => principal.kind === 'account', 'account unlinked')
     return this.status()
   }
 
@@ -321,11 +325,12 @@ export class RemoteAccessService {
 
   /**
    * Dismisses a waiting browser, or revokes an approved one and closes the
-   * sockets it opened, with a key or through the account. An unknown id changes nothing.
+   * sockets and end-to-end sessions it opened, with a key or through the
+   * account. An unknown id changes nothing.
    */
   removeDevice(id: string): DevicesResponse {
     if (this.devices.remove(id) === 'approved') {
-      this.tunnel?.closeChannels((principal) => principal.deviceId === id, 'device revoked')
+      this.closeAccess((principal) => principal.deviceId === id, 'device revoked')
     }
     return this.devices.list()
   }
@@ -337,29 +342,40 @@ export class RemoteAccessService {
 
   /**
    * Closes the tunneled sockets of the device with this id, with the default
-   * `CLOSE_ACCESS_DENIED`, and answers the fresh list. The device stays
+   * `CLOSE_ACCESS_DENIED`, and its end-to-end sessions, and answers the fresh list. The device stays
    * approved, so it can open the machine again; an unknown id changes nothing.
    */
   endSession(id: string): SessionsResponse {
-    this.tunnel?.closeChannels((principal) => principal.deviceId === id, 'session ended by owner')
+    this.closeAccess((principal) => principal.deviceId === id, 'session ended by owner')
     return this.listSessions()
   }
 
   /**
    * Handles the server's `session.ended`: when it names the linked account,
    * closes with `CLOSE_SESSION_ENDED` the sockets that account's tickets
-   * opened, so browsers still signed in reconnect with a fresh ticket. It never
+   * opened, and its end-to-end sessions, so browsers still signed in reconnect
+   * with a fresh ticket. It never
    * touches key sockets, the link or the devices, and any other account,
    * or no linked account, closes nothing.
    */
   private sessionEnded(accountId: string) {
     const linked = this.linked?.accountId
     if (!linked || accountId !== linked) return
-    this.tunnel?.closeChannels(
+    this.closeAccess(
       (principal) => principal.kind === 'account' && principal.accountId === linked,
       'session ended',
       CLOSE_SESSION_ENDED,
     )
+  }
+
+  /**
+   * Closes the tunneled sockets and the end-to-end sessions `revoked` matches,
+   * the sockets with `code` (the tunnel's `CLOSE_ACCESS_DENIED` when absent).
+   * Every path that ends access goes through here, so the two never drift apart.
+   */
+  private closeAccess(revoked: (principal: Principal) => boolean, reason: string, code?: number) {
+    this.tunnel?.closeChannels(revoked, reason, code)
+    this.options.e2eSessions.closeWhere(revoked)
   }
 
   /** Decides a tunneled request or socket; see `TunnelAccess.authorize`. */
@@ -438,11 +454,13 @@ export class RemoteAccessService {
   }
 
   /**
-   * Stops the tunnel, which ends its channels. A stopped `TunnelClient` cannot start again, so it is dropped.
+   * Stops the tunnel, which ends its channels, and closes every end-to-end session. A stopped `TunnelClient` cannot
+   * start again, so it is dropped.
    * `remoteOff` is for the owner turning remote access off, so the server can show it instead of Offline.
    */
   private disconnect(options?: { remoteOff: true }) {
     this.tunnel?.stop(options)
+    this.options.e2eSessions.closeAll()
     this.tunnel = null
     this.tunnelUrl = null
   }
@@ -477,10 +495,7 @@ export class RemoteAccessService {
       this.keys = new AccessKeys(new AccessKeyRepository(this.options.keysFile), {
         // The tunnel open at the time of a rotation, not the one open when the keys were loaded.
         onRevoked: (keyIds) =>
-          this.tunnel?.closeChannels(
-            (principal) => principal.kind === 'key' && keyIds.includes(principal.keyId),
-            'key rotated',
-          ),
+          this.closeAccess((principal) => principal.kind === 'key' && keyIds.includes(principal.keyId), 'key rotated'),
       })
     } catch (error) {
       // The repositories' messages never contain the machine key, an access key or a hash.
@@ -495,16 +510,19 @@ export class RemoteAccessService {
    * a key exists. The private key never leaves the `MachineKey`.
    */
   machinePublicKey(): string | null {
-    return this.existingMachineKey()?.publicKey ?? null
+    return this.signingKey()?.publicKey ?? null
   }
 
   /** The machine id, reading an existing machine key without creating one. Null until a key exists. */
   private machineId(): string | null {
-    return this.existingMachineKey()?.machineId ?? null
+    return this.signingKey()?.machineId ?? null
   }
 
-  /** The machine key, loaded from an existing file but never created. Null until a key exists or when it can't be read. */
-  private existingMachineKey(): MachineKey | null {
+  /**
+   * The machine key, which also signs end-to-end handshakes, loaded from an existing file but never created. Null until
+   * a key exists or when it can't be read. Its private key never leaves its `sign`.
+   */
+  signingKey(): MachineKey | null {
     if (!this.machineKey && existsSync(this.options.machineKeyFile)) {
       try {
         this.machineKey = loadOrCreateMachineKey(this.options.machineKeyFile)

@@ -27,8 +27,8 @@ export interface MachineKeyCheckProps {
   /** Where pins are kept. Defaults to `machineKeyStores.default`. */
   store?: MachineKeyStore
   retryMs?: number
-  /** The machine's page, mounted only once its key is checked. */
-  children: ReactNode
+  /** The machine's page, mounted only once its key is checked, given that key as this browser pinned it. */
+  children: (publicKey: string) => ReactNode
 }
 
 type Phase =
@@ -37,7 +37,7 @@ type Phase =
   | { kind: 'failed'; denied: boolean }
   | { kind: 'confirm'; publicKey: string }
   | { kind: 'mismatch' }
-  | { kind: 'open' }
+  | { kind: 'open'; publicKey: string }
 
 /** What the page does next, once the machine answered its key, or failed to. */
 async function checkKey({
@@ -61,18 +61,19 @@ async function checkKey({
     return { kind: 'failed', denied: refused?.status === 401 }
   }
   const result = await checkMachineKey(machineId, publicKey, store)
-  if (result === 'pinned') return { kind: 'open' }
+  if (result === 'pinned') return { kind: 'open', publicKey }
   if (result === 'mismatch') return { kind: 'mismatch' }
   if (vouchedBy === 'account') return { kind: 'confirm', publicKey }
   const pinned = await pinMachineKey(machineId, publicKey, 'link', store)
-  return { kind: pinned === 'pinned' ? 'open' : 'mismatch' }
+  return pinned === 'pinned' ? { kind: 'open', publicKey } : { kind: 'mismatch' }
 }
 
 /**
  * Checks the machine's key before its page mounts. It fetches `routes.system.machineKey` through `transport` and
  * checks the key hashes to `machineId` and equals this browser's pin. With no pin yet, a link's key is pinned at
  * once and an account's waits for the owner to confirm the fingerprint. A key that fails either check stops here
- * with a warning and no Retry, so no terminal socket opens and nothing reconnects.
+ * with a warning and no Retry, so no terminal socket opens and nothing reconnects. The page gets the checked key, so
+ * its own transport can make the machine prove it holds that key.
  */
 export function MachineKeyCheck({
   machineId,
@@ -112,7 +113,7 @@ export function MachineKeyCheck({
 
   switch (phase.kind) {
     case 'open':
-      return children
+      return children(phase.publicKey)
     case 'mismatch':
       return <KeyMismatch />
     case 'confirm':
@@ -121,7 +122,7 @@ export function MachineKeyCheck({
           machineId={machineId}
           onConfirm={async () => {
             const pinned = await pinMachineKey(machineId, phase.publicKey, 'confirmed', store)
-            setPhase({ kind: pinned === 'pinned' ? 'open' : 'mismatch' })
+            setPhase(pinned === 'pinned' ? { kind: 'open', publicKey: phase.publicKey } : { kind: 'mismatch' })
           }}
           onReject={() => setPhase({ kind: 'mismatch' })}
           onFailed={() => setPhase({ kind: 'failed', denied: false })}
@@ -222,7 +223,7 @@ function ConfirmFingerprint({
 }
 
 /** The stop for a key that isn't the machine's: no Retry, since opening it anyway is what an impostor wants. */
-function KeyMismatch() {
+export function KeyMismatch() {
   return (
     <Centered>
       <ShieldAlert size={20} className="text-bad" />

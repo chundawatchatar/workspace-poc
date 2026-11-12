@@ -285,8 +285,8 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
     capped and expires. What remains is an owner who copies a fingerprint they don't recognise from the pending list
     and types it in: that still approves the server's device. Pending rows keep their fingerprints so the owner can
     tell browsers apart and dismiss strangers.
-  - Without end-to-end encryption (REM-2), a compromised server can read, and inject into, a session an approved
-    browser opens. It just can't open one by itself.
+  - Until traffic is sealed (REM-2: the handshake is in, sealing is not), a compromised server can read, and inject
+    into, a session an approved browser opens. It just can't open one by itself.
   - Access keys from connect links still pass through the server, in a header or the first socket message, so a
     compromised server can capture one. A captured key alone no longer opens the machine through the tunnel, since
     it needs a fresh proof from an approved device, but with a key the server can still push its own device into
@@ -443,8 +443,8 @@ encryption (REM-2) comes later, by adding a sealed frame type: its payload is an
 browser and the host, with keys from a handshake the server passes along but can't read. Only the browser and the
 host change; the server keeps routing the same way.
 
-The crypto for it is in `packages/shared/src/contracts/e2e.ts` (WebCrypto only, so the browser and the host share it),
-not wired into the transport or the host yet. The browser sends a fresh P-256 ephemeral key signed with its device key
+The crypto for it is in `packages/shared/src/contracts/e2e.ts` (WebCrypto only, so the browser and the host share it).
+The browser sends a fresh P-256 ephemeral key signed with its device key
 over `orch-e2e-browser`, the version, the machine id and the device key itself, so no other device can re-sign it
 and have the answer accepted. The machine answers with its own ephemeral key, signed with its
 Ed25519 machine key over `orch-e2e-machine`, the version, the machine id and the SHA-256 of the browser's signed bytes,
@@ -456,6 +456,34 @@ the IV is four zero bytes and the counter, and the AAD binds the direction, the 
 Each direction counts from 0 and accepts only the next counter, which suits an ordered transport, and stops after
 `2^32 - 1` messages rather than wrapping. Approving the device stays the caller's check, with the verified device key
 the machine's side returns.
+
+The session opens as an ordinary machine route, `routes.e2e.open` (`POST /api/e2e/sessions`, in
+`contracts/e2eSession.ts`), so the server relays it like any other and needs no change. With `machinePublicKey` (the
+key `MachineKeyCheck` pinned), `createRemoteTransport` posts the browser hello before the first request or socket,
+with the same key or ticket and device proof as every request, so the tunnel's own check decides that the device is
+approved. The host (`apps/host/src/modules/e2e/`) works only through the tunnel (403 locally), refuses a hello whose
+device key isn't the one that signed the request's proof (403), answers a hello that fails its schema or signature
+with 400, and keeps `{ sessionId, hello, expiresAt }` for the answer: `sessionId` is 128 random bits. The browser
+checks the answer against the pinned key with `finish`; a reply signed by another key, answered to another hello or
+in another shape (or a browser without WebCrypto Ed25519) calls `onMachineUnverified` once, the page shows the key
+mismatch warning with no Retry, and every later call fails with `E2eError` without reaching the machine. A refused
+handshake (401, 403 `device_not_approved`, anything else) answers requests with its status and fails sockets with
+`CLOSE_ACCESS_DENIED`, `CLOSE_DEVICE_NOT_APPROVED` or 1006, and the next call tries again. Concurrent calls share one
+handshake.
+
+Sessions live in the host's memory only (`E2eSessions`), never in `.data`, so a restart forgets them. An account's
+session expires at the `exp` of the relay ticket that opened it (the tunnel puts it on the principal as `ticketExp`),
+and a key's `RELAY_TICKET_TTL_SECONDS` after it opens, so both renew alike: the browser opens a new one 15 seconds
+before expiry, the same margin as tickets. A device holds at most 8 live sessions (tabs share a device), and a ninth
+drops its oldest. Every path in `RemoteAccessService` that closes sockets closes the matching sessions through one
+helper, `closeAccess`: revoking a device, ending its session, unlinking, the server's `session.ended` and key rotation;
+turning remote access off or stopping the tunnel closes them all. Expiry closes no open socket. No request or frame is
+sealed yet, and unsealed traffic is still accepted; the next jobs seal HTTP, then WebSocket traffic, with these
+sessions. A session id, an ephemeral key, a signature or a derived key is never logged, saved or put in an error
+message, a URL or a query key. Open point: the key bootstrap (`routes.system.machineKey`) stays unsealed and outside
+the handshake, since the browser needs the key before it can check one, so `MachineKeyCheck` uses a transport without
+`machinePublicKey`. The job that refuses unsealed traffic must exempt that route or fold it into the handshake. Whether
+a handshake belongs in the remote audit log is also left open.
 
 Accounts (sign-in, sessions, emails and the account's machine list) are described in [accounts](accounts.md).
 
@@ -514,9 +542,10 @@ terminals. An idle socket costs one TCP connection and a small ping, and one sma
   the machine shows locally, which the page never displays itself (`source: 'confirmed'`). A server that lists an id for a key of its own fails that
   comparison. A key that doesn't hash to the id, or differs from the pin, stops the page with a warning and no Retry,
   so no terminal socket opens and nothing reconnects. The check runs once per page open, not when sockets reconnect.
-  Open risk until the e2e handshake: the machine signs nothing for the browser with this key yet, so a compromised
-  relay can pass the real public key through and still read or inject traffic. This step only makes sure the browser
-  holds the right key for that handshake to check.
+  The machine now signs for the browser with this key: `<TerminalUI>` gets a transport that opens an end-to-end session
+  first, and an answer that doesn't verify against the pin stops the page the same way. Open risk until the sealing
+  jobs: traffic is still not sealed with that session, so a compromised relay that passes the handshake through can
+  still read or inject the requests and frames that follow it.
 - **Heartbeats from both sides.** The server pings and drops a silent machine (job 005). The host also needs its own
   timeout: after sleep or a network switch a TCP connection can look open while it's dead, and only the host's side
   notices. Ping every 20–25 seconds, because many proxies and NATs drop idle connections after 30–60 seconds.

@@ -1,5 +1,6 @@
 import { accessContract } from './access'
 import { agentTrackingContract } from './agentTracking'
+import { e2eContract } from './e2eSession'
 import { eventsSocket } from './events'
 import { fsContract } from './fs'
 import { gitContract } from './git'
@@ -55,6 +56,12 @@ export {
   type MachineHandshake,
   startBrowserHandshake,
 } from './e2e'
+export {
+  e2eContract,
+  e2eSessionId,
+  type OpenE2eSessionResponse,
+  openE2eSessionResponse,
+} from './e2eSession'
 export {
   type DirListing,
   listDirsQuery,
@@ -225,6 +232,7 @@ export const routes = {
   access: accessContract,
   remoteAccess: remoteAccessContract,
   agentTracking: agentTrackingContract,
+  e2e: e2eContract,
   sockets: {
     events: eventsSocket,
     terminal: terminalSocket,

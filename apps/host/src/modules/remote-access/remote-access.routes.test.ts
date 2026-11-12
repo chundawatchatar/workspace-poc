@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { routes } from '@orch/shared'
+import { E2eSessions } from '../e2e/e2e.service'
 import { AuditLogRepository } from './audit-log.repository'
 import { AuditLogService } from './audit-log.service'
 import { fingerprintOf } from './device-proof.service'
@@ -28,6 +29,7 @@ beforeEach(() => {
     linkedAccounts: new LinkedAccountRepository(join(dir, 'linked-account.json')),
     devices: new DevicesRepository(join(dir, 'devices.json')),
     audit: new AuditLogService(new AuditLogRepository(join(dir, 'remote-audit.jsonl'))),
+    e2eSessions: new E2eSessions({ machineKey: () => null }),
     machineKeyFile: join(dir, 'machine-key'),
     keysFile: join(dir, 'access-keys.json'),
     handle: async () => new Response('ok'),

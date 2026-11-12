@@ -33,7 +33,7 @@ const unapproved = () => Response.json({ error: 'not approved', code: DEVICE_NOT
 function show(props: Omit<MachineKeyCheckProps, 'children' | 'unapprovedHint' | 'deniedHint'>) {
   return renderWithProviders(
     <MachineKeyCheck {...props} unapprovedHint="Approve ABCD on the machine." deniedHint="Rotate the key." retryMs={5}>
-      <p>The machine's page</p>
+      {() => <p>The machine's page</p>}
     </MachineKeyCheck>,
   )
 }

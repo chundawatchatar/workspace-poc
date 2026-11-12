@@ -1,13 +1,18 @@
 import { describe, expect, test } from 'bun:test'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { machineFingerprint, type RotateAccessResponse, routes } from '@orch/shared'
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { machineFingerprint, type RotateAccessResponse, routes, startBrowserHandshake } from '@orch/shared'
+import type { Principal } from '../../lib/principal'
 import { fingerprintOf } from './device-proof.service'
+import { testDevice } from './device-proof.testing'
+import { DevicesRepository } from './devices.repository'
 import { DEFAULT_SERVER_URL, hostMachineName, linkClientUrl } from './remote-access.service'
 import {
   account,
   accountId,
   connected,
+  devicesFile,
   dir,
+  e2eSessions,
   expiresAt,
   type FakeTunnel,
   key,
@@ -163,7 +168,7 @@ describe('RemoteAccessService', () => {
       true,
     )
     // Account sockets stay open across a rotation.
-    expect(closed?.revoked({ kind: 'account', accountId, deviceId: 'd1' })).toBe(false)
+    expect(closed?.revoked({ kind: 'account', accountId, deviceId: 'd1', ticketExp: 0 })).toBe(false)
 
     service.update({ enabled: true, serverUrl: 'ws://127.0.0.1:4600', clientUrl: 'https://orch.example' })
     const saved = (await (await rotate()).json()) as RotateAccessResponse
@@ -290,9 +295,9 @@ describe('remote sessions', () => {
     const { app, tunnel } = connected()
     const [a, b] = [deviceId(1), deviceId(2)]
     tunnel.channels = [
-      { principal: { kind: 'account', accountId, deviceId: a }, openedAt: Date.UTC(2026, 10, 6, 12, 0) },
+      { principal: { kind: 'account', accountId, deviceId: a, ticketExp: 0 }, openedAt: Date.UTC(2026, 10, 6, 12, 0) },
       { principal: { kind: 'key', keyId: 'k1', name: 'laptop', deviceId: a }, openedAt: Date.UTC(2026, 10, 6, 11, 0) },
-      { principal: { kind: 'account', accountId, deviceId: a }, openedAt: Date.UTC(2026, 10, 6, 13, 0) },
+      { principal: { kind: 'account', accountId, deviceId: a, ticketExp: 0 }, openedAt: Date.UTC(2026, 10, 6, 13, 0) },
       { principal: { kind: 'key', keyId: 'k2', name: 'phone', deviceId: b }, openedAt: Date.UTC(2026, 10, 6, 12, 30) },
     ]
     const listed = await app.request(routes.remoteAccess.sessions.path)
@@ -325,6 +330,48 @@ describe('remote sessions', () => {
     const unknown = await post(app, routes.remoteAccess.endSession, { id: deviceId(3) })
     expect(unknown.json().sessions).toHaveLength(1)
     expect((await post(app, routes.remoteAccess.endSession, { id: 'nope' })).status).toBe(400)
+  })
+})
+
+describe('end-to-end sessions', () => {
+  test('each way access ends closes exactly the matching e2e sessions, like the sockets', async () => {
+    const [one, two] = await Promise.all([testDevice(), testDevice()])
+    writeFileSync(
+      linkedFile(),
+      JSON.stringify({ ...account, serverUrl: 'ws://127.0.0.1:4600', linkedAt: expiresAt, accountId, relayKeys }),
+    )
+    const approvedAt = new Date().toISOString()
+    new DevicesRepository(devicesFile()).save([{ id: one.id, publicKey: one.publicKey, approvedAt }])
+    const { app, tunnel } = connected()
+    const [defaultKey] = storedKeys()
+    const ticketExp = Math.floor(Date.now() / 1000) + 60
+    const principals: Record<string, [Principal, typeof one]> = {
+      keyOne: [{ kind: 'key', keyId: defaultKey?.id ?? '', name: 'default', deviceId: one.id }, one],
+      accountOne: [{ kind: 'account', accountId, deviceId: one.id, ticketExp }, one],
+      accountTwo: [{ kind: 'account', accountId, deviceId: two.id, ticketExp }, two],
+      keyTwo: [{ kind: 'key', keyId: 'k-other', name: 'phone', deviceId: two.id }, two],
+      otherAccount: [{ kind: 'account', accountId: 'acct-bob-2', deviceId: two.id, ticketExp }, two],
+    }
+    const machineId = service.status().machineId ?? ''
+    /** Opens one fresh session per principal, then runs `end`, and answers the names whose session it closed. */
+    const closedBy = async (end: () => unknown) => {
+      e2eSessions.closeAll()
+      const opened: [string, string][] = []
+      for (const [name, [principal, device]] of Object.entries(principals)) {
+        const { hello } = await startBrowserHandshake({ machineId, device: device.signer })
+        opened.push([name, (await e2eSessions.open(principal, hello)).sessionId])
+      }
+      await end()
+      return opened.filter(([, id]) => e2eSessions.get(id) === null).map(([name]) => name)
+    }
+
+    expect(await closedBy(() => service.removeDevice(one.id))).toEqual(['keyOne', 'accountOne'])
+    expect(await closedBy(() => service.endSession(two.id))).toEqual(['accountTwo', 'keyTwo', 'otherAccount'])
+    expect(await closedBy(() => tunnel.options.onSessionEnded?.(accountId))).toEqual(['accountOne', 'accountTwo'])
+    expect(await closedBy(() => post(app, routes.access.rotate, {}))).toEqual(['keyOne'])
+    expect(await closedBy(() => service.unlink())).toEqual(['accountOne', 'accountTwo', 'otherAccount'])
+    const off = () => service.update({ enabled: false, serverUrl: 'ws://127.0.0.1:4600', clientUrl: null })
+    expect(await closedBy(off)).toEqual(Object.keys(principals))
   })
 })
 

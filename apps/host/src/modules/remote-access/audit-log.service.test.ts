@@ -27,7 +27,11 @@ afterEach(() => {
 
 describe('AuditLogService', () => {
   test('merges each opened socket with its close, newest first, keeping only ids and fingerprints', () => {
-    service.record({ kind: 'opened', session: 'a', principal: { kind: 'account', accountId: 'acct-1', deviceId } })
+    service.record({
+      kind: 'opened',
+      session: 'a',
+      principal: { kind: 'account', accountId: 'acct-1', deviceId, ticketExp: 0 },
+    })
     clock = MINUTE
     service.record({ kind: 'opened', session: 'k', principal: { kind: 'key', keyId: 'k1', name: 'laptop', deviceId } })
     clock = 2 * MINUTE
@@ -69,7 +73,7 @@ describe('AuditLogService', () => {
     blocked.record({
       kind: 'opened',
       session: 'secret-session',
-      principal: { kind: 'account', accountId: 'acct-1', deviceId },
+      principal: { kind: 'account', accountId: 'acct-1', deviceId, ticketExp: 0 },
     })
     blocked.record({ kind: 'refused', reason: 'key_refused' })
     expect(errors).toHaveBeenCalledTimes(1)
