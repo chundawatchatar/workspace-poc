@@ -61,6 +61,13 @@ beforeEach(() => {
       const machine = [saved, account].find((m) => m.id === params.machineId)
       return machine ? HttpResponse.json({ publicKey: machine.publicKey }) : new HttpResponse(null, { status: 404 })
     }),
+    // And opens an end-to-end session, signed with that key, before the page's first request or socket.
+    http.post(`*/m/:machineId${routes.e2e.open.path}`, async ({ params, request }) => {
+      const machine = [saved, account].find((m) => m.id === params.machineId)
+      return machine
+        ? HttpResponse.json(await machine.answer(await request.json()))
+        : new HttpResponse(null, { status: 404 })
+    }),
   )
 })
 
