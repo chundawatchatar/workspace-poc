@@ -2,13 +2,18 @@ import { describe, expect, test } from 'bun:test'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
+  ACCESS_KEY_HEADER,
   type AppState,
   buildSocketUrl,
   CLOSE_ACCESS_DENIED,
+  DEVICE_NOT_APPROVED_CODE,
+  DEVICE_PROOF_HEADER,
   decodeFrame,
   encodeFrame,
   type MachineFrame,
+  machineFingerprint,
   machineIdFromPublicKey,
+  machineKeyResponse,
   type RotateAccessResponse,
   remoteAccessStatus,
   routes,
@@ -41,6 +46,7 @@ import {
   welcomed,
 } from './app.tunnel.testing'
 import { tunnelEnv } from './lib/principal'
+import { testDevice } from './modules/remote-access/device-proof.testing'
 import { helloVerifies } from './modules/tunnel/tunnel.testing'
 import { TunnelHttp } from './modules/tunnel/tunnel-http.service'
 
@@ -170,7 +176,9 @@ describe('tunneled sockets', () => {
     const response = await fetch(`http://127.0.0.1:${local.port}${rotatePath}`, { method: 'POST' })
     const rotated = (await response.json()) as RotateAccessResponse
     expect(rotated.machineId).toBe(machineId)
-    expect(rotated.link).toBe(`https://orch.example/#machine=${machineId}&key=${rotated.key}`)
+    expect(rotated.link).toBe(
+      `https://orch.example/#machine=${machineId}&key=${rotated.key}&fp=${machineFingerprint(machineId)}`,
+    )
     await until(() => conn.frames.some((f) => f.type === 'ws.close'))
     expect(conn.frames.filter((f) => f.type === 'ws.close')).toEqual([
       { type: 'ws.close', channel: 1, code: CLOSE_ACCESS_DENIED, reason: 'key rotated' },
@@ -247,7 +255,10 @@ describe('tunneled sockets', () => {
     expect(await machineIdFromPublicKey(hello.publicKey)).toBe(machineId)
 
     const status = await fetch(`http://127.0.0.1:${local.port}${routes.remoteAccess.status.path}`)
-    expect(remoteAccessStatus.parse(await status.json()).machineId).toBe(machineId)
+    expect(remoteAccessStatus.parse(await status.json())).toMatchObject({
+      machineId,
+      machineFingerprint: machineFingerprint(machineId),
+    })
     expect(remoteAccess.current()?.machineId).toBe(machineId)
 
     // Neither the raw private key nor any line of the key file went over the tunnel.
@@ -256,6 +267,37 @@ describe('tunneled sockets', () => {
     for (const line of machineKey.pem.split('\n').filter((l) => l && !l.startsWith('-----'))) {
       expect(sent).not.toContain(line)
     }
+  })
+
+  test('the machine key route answers the public key locally and to an approved device, never the private key', async () => {
+    const conn = await welcomed()
+    const path = routes.system.machineKey.path
+    const near = await fetch(`http://127.0.0.1:${local.port}${path}`)
+    expect(machineKeyResponse.parse(await near.json())).toEqual({ publicKey: machineKey.publicKey })
+
+    const stranger = await testDevice()
+    const strangerProof = await stranger.proof({ machineId, method: 'GET', path })
+    const requests: [number, [string, string][]][] = [
+      [1, await keyHeaders(key, 'GET', path)],
+      [
+        2,
+        [
+          [ACCESS_KEY_HEADER, key],
+          [DEVICE_PROOF_HEADER, strangerProof],
+        ],
+      ],
+      [3, []],
+    ]
+    for (const [id, headers] of requests) send(conn, { type: 'http.request', id, method: 'GET', path, headers })
+    const response = (id: number) => conn.frames.find((f) => f.type === 'http.response' && f.id === id)
+    const body = (id: number) =>
+      Buffer.concat(conn.frames.flatMap((f) => (f.type === 'http.body' && f.id === id ? [f.data] : []))).toString()
+    await until(() => [1, 2, 3].every((id) => conn.frames.some((f) => f.type === 'http.end' && f.id === id)))
+
+    expect([1, 2, 3].map((id) => response(id))).toMatchObject([{ status: 200 }, { status: 403 }, { status: 401 }])
+    expect(machineKeyResponse.parse(JSON.parse(body(1)))).toEqual({ publicKey: machineKey.publicKey })
+    expect(JSON.parse(body(2))).toMatchObject({ code: DEVICE_NOT_APPROVED_CODE })
+    expect(body(1)).not.toContain(machineKey.privateKey)
   })
 
   test('every remote access route answers 403 through the tunnel and leaves the setting and tunnel alone, but works locally', async () => {
@@ -290,6 +332,7 @@ describe('tunneled sockets', () => {
       serverUrlFromEnv: false,
       clientUrlFromEnv: false,
       machineId,
+      machineFingerprint: machineFingerprint(machineId),
       tunnel: 'connected',
       linkedAccount: null,
     })

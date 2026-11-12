@@ -1,4 +1,10 @@
-import { createRemoteTransport, type DeviceSigner, TerminalUI, type TerminalUIProps } from '@orch/terminal-ui'
+import {
+  createRemoteTransport,
+  type DeviceSigner,
+  type HostTransport,
+  TerminalUI,
+  type TerminalUIProps,
+} from '@orch/terminal-ui'
 import { Button } from '@orch/ui'
 import { ArrowLeft } from '@orch/ui/icons'
 import { useQuery } from '@tanstack/react-query'
@@ -10,6 +16,7 @@ import { loadDeviceKey } from '../../lib/deviceKey'
 import { machinePath, type SavedMachine, useMachines } from '../../lib/machines'
 import { AccountMenu } from '../account/AccountMenu'
 import { Centered, linkClass } from '../Centered'
+import { MachineKeyCheck } from './MachineKeyCheck'
 
 /** The cloud server: `VITE_SERVER_URL` from the build, or the origin the client is served from. */
 function serverUrl(): string {
@@ -82,7 +89,7 @@ function DeviceKeyFailed({ retry, pending }: { retry: () => void; pending: boole
 /** A machine saved from a connect link, opened with its key once this browser's device key is loaded. */
 function SavedMachinePage({ machine }: { machine: SavedMachine }) {
   const device = useQuery(deviceKeyQuery)
-  if (device.data) return <MachineTerminalUI machine={{ ...machine, device: device.data }} />
+  if (device.data) return <OpenMachine machine={{ ...machine, device: device.data }} />
   if (device.isError) return <DeviceKeyFailed pending={device.isFetching} retry={() => void device.refetch()} />
   return <Loading />
 }
@@ -95,11 +102,7 @@ function AccountMachinePage({ machineId, userId }: { machineId: string; userId: 
   // Once listed, a failed refetch keeps the page open rather than tearing down its terminals.
   if (list.data && device.data) {
     const listed = list.data.machines.find((m) => m.machineId === machineId)
-    return listed ? (
-      <MachineTerminalUI machine={{ id: machineId, name: listed.name, device: device.data }} />
-    ) : (
-      <NotLinked />
-    )
+    return listed ? <OpenMachine machine={{ id: machineId, name: listed.name, device: device.data }} /> : <NotLinked />
   }
   if (list.isError) {
     return (
@@ -155,11 +158,14 @@ function unapprovedHint(fingerprint: string): ReactNode {
   )
 }
 
-function MachineTerminalUI({ machine }: { machine: OpenedMachine }) {
-  const { id, name, key, device } = machine
+/**
+ * A machine's transport, its key checked against this browser's pin before `<TerminalUI>` mounts, so a machine whose
+ * key doesn't match never gets a terminal socket. A connect link vouched for the id, so its first key is pinned at
+ * once; the account's list didn't, so the owner confirms the fingerprint first.
+ */
+function OpenMachine({ machine }: { machine: OpenedMachine }) {
+  const { id, key, device } = machine
   const { signer, fingerprint } = device
-  const { workspaceId } = useParams({ strict: false })
-  const routerNavigate = useNavigate()
 
   // One transport per machine and key, so moving between workspaces keeps the connection. Without a key, the
   // account opens the machine with relay tickets; either way every request carries this browser's device proof.
@@ -175,6 +181,33 @@ function MachineTerminalUI({ machine }: { machine: OpenedMachine }) {
   )
   const deniedHint: ReactNode = key ? keyDeniedHint : accountDeniedHint
   const unapproved = useMemo(() => unapprovedHint(fingerprint), [fingerprint])
+  return (
+    <MachineKeyCheck
+      machineId={id}
+      transport={transport}
+      vouchedBy={key ? 'link' : 'account'}
+      unapprovedHint={unapproved}
+      deniedHint={deniedHint}
+    >
+      <MachineTerminalUI machine={machine} transport={transport} deniedHint={deniedHint} unapproved={unapproved} />
+    </MachineKeyCheck>
+  )
+}
+
+function MachineTerminalUI({
+  machine,
+  transport,
+  deniedHint,
+  unapproved,
+}: {
+  machine: OpenedMachine
+  transport: HostTransport
+  deniedHint: ReactNode
+  unapproved: ReactNode
+}) {
+  const { id, name } = machine
+  const { workspaceId } = useParams({ strict: false })
+  const routerNavigate = useNavigate()
   const info = useMemo(() => ({ id, name }), [id, name])
   const navigate = useCallback<TerminalUIProps['navigate']>(
     ({ workspaceId }, options) =>

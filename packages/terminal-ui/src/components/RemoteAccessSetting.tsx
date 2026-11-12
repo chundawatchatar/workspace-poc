@@ -1,4 +1,10 @@
-import { type DevicesResponse, type PreviewLinkResponse, type RemoteAccessStatus, routes } from '@orch/shared'
+import {
+  type DevicesResponse,
+  machineFingerprint,
+  type PreviewLinkResponse,
+  type RemoteAccessStatus,
+  routes,
+} from '@orch/shared'
 import { RemoteAccessForm } from '@orch/ui'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
@@ -69,7 +75,8 @@ export function RemoteAccessSetting() {
     setError(null)
     try {
       const result = await rotate.mutateAsync({})
-      setLink(result.link ?? `Machine id: ${result.machineId}  Access key: ${result.key}`)
+      const fingerprint = machineFingerprint(result.machineId)
+      setLink(result.link ?? `Machine id: ${result.machineId}  Machine key: ${fingerprint}  Access key: ${result.key}`)
     } catch (failure) {
       setError(requestErrorMessage(failure))
     }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, jest, test } from 'bun:test'
-import { formatConnectFragment, type ServerMachine, serverRoutes } from '@orch/shared'
+import { formatConnectFragment, machineFingerprint, type ServerMachine, serverRoutes } from '@orch/shared'
 import { FormApi } from '@tanstack/react-form'
 import { MutationObserver, QueryClient, QueryObserver } from '@tanstack/react-query'
 import { waitFor } from '@testing-library/react'
@@ -114,7 +114,9 @@ async function settle() {
 
 /** A window that has just opened a connect link for `machineId`. */
 function connectWindow(machineId: string): ConnectWindow {
-  const location = new URL(`https://app.test/${formatConnectFragment({ machineId, key: accessKey })}`)
+  const location = new URL(
+    `https://app.test/${formatConnectFragment({ machineId, key: accessKey, fingerprint: machineFingerprint(machineId) })}`,
+  )
   return { location, history: { state: null, replaceState: () => {} } }
 }
 
@@ -126,7 +128,7 @@ describe('the machine list', () => {
   test("is the account's machines in the server's order, keyed by the user, read again every 10 seconds", async () => {
     const { queryClient, state } = await setup(userA)
     state.machines[userA.id] = [machine(idTwo, 'Desktop', true), machine(idOne, 'Laptop')]
-    saveMachine({ id: 'only-in-this-browser', name: 'Old', key: 'k' })
+    saveMachine({ id: 'only-in-this-browser', name: 'Old', key: 'k', fingerprint: 'F' })
     expect([...machinesQuery(userA.id).queryKey]).toEqual([
       ...accountKey(userA.id, serverRoutes.machines.list.path, {}),
     ])
@@ -154,7 +156,7 @@ describe('the machine list', () => {
   test('rename and unlink change the list, unlink forgets the key, and a failure leaves it as it was', async () => {
     const { queryClient, state } = await setup(userA)
     state.machines[userA.id] = [machine(idOne, 'Laptop'), machine(idTwo, 'Desktop')]
-    saveMachine({ id: idOne, name: 'Laptop', key: accessKey })
+    saveMachine({ id: idOne, name: 'Laptop', key: accessKey, fingerprint: machineFingerprint(idOne) })
     const stop = watchList(queryClient, userA.id)
     const list = async () => (await queryClient.fetchQuery(machinesQuery(userA.id))).machines.map((m) => m.name)
     expect(await list()).toEqual(['Laptop', 'Desktop'])
@@ -209,7 +211,9 @@ describe('a connect link', () => {
       // Gives a request that something sent a moment to arrive.
       await Bun.sleep(20)
       expect(state.requests).toEqual([])
-      expect(loadMachines()).toEqual([{ id: idOne, name: `Machine ${idOne.slice(0, 8)}`, key: accessKey }])
+      expect(loadMachines()).toEqual([
+        { id: idOne, name: `Machine ${idOne.slice(0, 8)}`, key: accessKey, fingerprint: machineFingerprint(idOne) },
+      ])
       if (user) expect(queryClient.getQueryData(machinesQuery(user.id).queryKey)?.machines).toEqual([])
       stop()
     }

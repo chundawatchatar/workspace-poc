@@ -1,4 +1,10 @@
-import { parseConnectFragment } from '@orch/shared'
+import {
+  type ConnectTarget,
+  fingerprintKey,
+  machineFingerprint,
+  machineIdSchema,
+  parseConnectFragment,
+} from '@orch/shared'
 import { useSyncExternalStore } from 'react'
 
 // The access keys this browser holds, from the connect links opened in it, kept in
@@ -11,6 +17,8 @@ export interface SavedMachine {
   name: string
   /** The access key from the connect link. */
   key: string
+  /** `machineFingerprint(id)`, which the connect link's `fp` matched. */
+  fingerprint: string
 }
 
 const KEY = 'orch-machines'
@@ -18,7 +26,13 @@ const listeners = new Set<() => void>()
 
 function isSavedMachine(value: unknown): value is SavedMachine {
   const m = value as SavedMachine
-  return typeof m?.id === 'string' && typeof m.name === 'string' && typeof m.key === 'string' && m.id !== ''
+  return (
+    typeof m?.id === 'string' &&
+    typeof m.name === 'string' &&
+    typeof m.key === 'string' &&
+    typeof m.fingerprint === 'string' &&
+    m.id !== ''
+  )
 }
 
 function readRaw(): string | null {
@@ -79,21 +93,32 @@ export interface ConnectWindow {
 }
 
 /**
- * Saves the machine from a connect link's fragment (`#machine=<id>&key=<key>`) in this browser and replaces the URL
- * with the machine's page, so the key leaves the address bar and history. It sends nothing to the account: a machine
- * joins the account's list only by redeeming an enrollment key. Returns the machine id, or null when the fragment
- * isn't a complete connect link. An incomplete one that still carries a `key` is removed from the URL, unsaved.
+ * True when the link's `fp` is the fingerprint of its machine id, which must be a real one. The host printed the
+ * link, so a match vouches for the id without the server.
+ */
+function fingerprintMatches({ machineId, fingerprint }: ConnectTarget): boolean {
+  if (!machineIdSchema.safeParse(machineId).success) return false
+  return fingerprintKey(fingerprint) === fingerprintKey(machineFingerprint(machineId))
+}
+
+/**
+ * Saves the machine from a connect link's fragment (`#machine=<id>&key=<key>&fp=<fingerprint>`) in this browser and
+ * replaces the URL with the machine's page, so the key leaves the address bar and history. It sends nothing to the
+ * account: a machine joins the account's list only by redeeming an enrollment key. Returns the machine id, or null
+ * when the fragment isn't a complete connect link or its `fp` isn't its machine's fingerprint. Such a link that still
+ * carries a `key` is removed from the URL, unsaved.
  */
 export function acceptConnectLink(win: ConnectWindow = window): string | null {
   const target = parseConnectFragment(win.location.hash)
-  if (!target) {
+  if (!target || !fingerprintMatches(target)) {
     if (new URLSearchParams(win.location.hash.slice(1)).has('key')) {
       // Keep the router's state for this entry; only the URL changes.
       win.history.replaceState(win.history.state, '', `${win.location.pathname}${win.location.search}`)
     }
     return null
   }
-  saveMachine({ id: target.machineId, name: defaultMachineName(target.machineId), key: target.key })
+  const { machineId, key } = target
+  saveMachine({ id: machineId, name: defaultMachineName(machineId), key, fingerprint: machineFingerprint(machineId) })
   win.history.replaceState(null, '', machinePath(target.machineId))
   return target.machineId
 }

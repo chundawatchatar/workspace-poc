@@ -13,6 +13,7 @@ const status: RemoteAccessStatus = {
   serverUrlFromEnv: false,
   clientUrlFromEnv: true,
   machineId: 'm-1',
+  machineFingerprint: 'ABCD-EFGH-JKMN-PQRS',
   tunnel: 'off',
   linkedAccount: null,
 }
@@ -108,6 +109,9 @@ describe('RemoteAccessForm', () => {
   test('the switch turns it on, Save sends the edited address, and a new link can be copied', async () => {
     const user = userEvent.setup()
     const { props } = setup({ link: 'https://app.example.com/#machine=m-1&key=k' })
+    // The fingerprint the client asks the owner to compare shows beside the machine id.
+    expect(screen.getByText('m-1')).toBeInTheDocument()
+    expect(screen.getByText('Key ABCD-EFGH-JKMN-PQRS')).toHaveAttribute('title', expect.stringMatching(/fingerprint/))
 
     await user.click(screen.getByRole('switch', { name: 'Remote access' }))
     expect(props.onToggle).toHaveBeenCalledWith(true)

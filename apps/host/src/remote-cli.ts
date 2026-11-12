@@ -7,6 +7,7 @@ import {
   enrollmentKeySchema,
   formatLocalDateTime,
   type LinkedAccount,
+  machineFingerprint,
   type PreviewLinkResponse,
   type RemoteAccessStatus,
   routes,
@@ -292,6 +293,7 @@ function statusFromFiles(deps: RemoteCliDeps): number {
   }
   const saved = settings || null
   const serverUrl = serverFromEnv ?? saved?.serverUrl ?? DEFAULT_SERVER_URL
+  const machineId = readMachineId(deps)
   printStatus(
     {
       serverUrl,
@@ -299,7 +301,8 @@ function statusFromFiles(deps: RemoteCliDeps): number {
       serverUrlFromEnv: serverFromEnv !== undefined,
       enabled: settings === false ? null : Boolean(serverFromEnv) || Boolean(saved?.enabled),
       tunnel: 'host not running',
-      machineId: readMachineId(deps),
+      machineId,
+      machineFingerprint: machineId === null ? null : machineFingerprint(machineId),
       linkedAccount: account,
     },
     deps.out,
@@ -338,6 +341,8 @@ interface StatusView {
   enabled: boolean | null
   tunnel: string
   machineId: string | null
+  /** The fingerprint of `machineId`, which the client shows for the owner to compare. Null exactly when it is. */
+  machineFingerprint: string | null
   /** Undefined when the linked account file could not be read. */
   linkedAccount: LinkedAccount | null | undefined
 }
@@ -347,6 +352,7 @@ function printStatus(view: StatusView, out: (line: string) => void) {
   out(`Server address: ${[printable(view.serverUrl), ...marks].join(' ')}`)
   out(view.enabled === null ? 'Remote access:  setting not readable' : remoteAccessLine(view.enabled, view.tunnel))
   out(`Machine id:     ${view.machineId === null ? 'none yet' : printable(view.machineId)}`)
+  out(`Machine key:    ${view.machineFingerprint === null ? 'none yet' : printable(view.machineFingerprint)}`)
   out(`Account:        ${view.linkedAccount === undefined ? 'not readable' : accountLine(view.linkedAccount)}`)
 }
 

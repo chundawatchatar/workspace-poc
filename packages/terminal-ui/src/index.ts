@@ -1,4 +1,5 @@
 export { HomeView, NotFound, WorkspaceView } from './components/Pages'
+export { callApi, HostApiError } from './lib/api'
 export { deviceKeyFingerprint, deviceSigner } from './lib/deviceProof'
 export { SIDEBAR_BOOT_SCRIPT } from './lib/sidebarWidth'
 export { TerminalUI, type TerminalUIProps } from './TerminalUI'

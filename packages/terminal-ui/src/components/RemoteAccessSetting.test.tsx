@@ -56,6 +56,7 @@ function setup({ linked = false, auditLog = [] as AuditLogEntry[] | null } = {})
     serverUrlFromEnv: false,
     clientUrlFromEnv: false,
     machineId: 'm-1',
+    machineFingerprint: 'ABCD-EFGH-JKMN-PQRS',
     tunnel: 'connected',
     linkedAccount: linked ? linkedAccount : null,
   }

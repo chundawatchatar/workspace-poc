@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { formatConnectFragment } from '@orch/shared'
+import { testMachine } from '../test/machineKey'
 import { acceptConnectLink, type ConnectWindow, forgetMachine, loadMachines } from './machines'
 
 /** A window at `url`, whose `replaceState` moves it like a browser's would. */
@@ -17,31 +18,41 @@ function fakeWindow(url: string) {
   return { win, current }
 }
 
+const [one, two] = [testMachine(), testMachine()]
+const link = (machine: typeof one, key: string, fingerprint = machine.fingerprint) =>
+  `https://app.test/anything${formatConnectFragment({ machineId: machine.id, key, fingerprint })}`
+
 describe('connect links', () => {
-  test('a valid fragment saves the machine, writes nothing else to storage, and leaves the URL', () => {
-    const first = fakeWindow(
-      `https://app.test/anything${formatConnectFragment({ machineId: 'abcdef123456', key: 'k1' })}`,
-    )
-    expect(acceptConnectLink(first.win)).toBe('abcdef123456')
-    expect(first.current.href).toBe('https://app.test/m/abcdef123456')
-    expect(first.current.href).not.toContain('#')
-    expect(loadMachines()).toEqual([{ id: 'abcdef123456', name: 'Machine abcdef12', key: 'k1' }])
-    // Only the machine's own entry: nothing is recorded for the account.
+  test('a link whose fp matches its id saves the machine, writes nothing else to storage, and leaves the URL', () => {
+    const first = fakeWindow(link(one, 'k1'))
+    expect(acceptConnectLink(first.win)).toBe(one.id)
+    expect(first.current.href).toBe(`https://app.test/m/${one.id}`)
+    const saved = { id: one.id, name: `Machine ${one.id.slice(0, 8)}`, fingerprint: one.fingerprint }
+    expect(loadMachines()).toEqual([{ ...saved, key: 'k1' }])
+    // Only the machine's own entry: nothing is recorded for the account, and no machine key.
     expect(Object.keys(localStorage)).toEqual(['orch-machines'])
 
-    const again = fakeWindow(`https://app.test/${formatConnectFragment({ machineId: 'abcdef123456', key: 'k2' })}`)
-    acceptConnectLink(again.win)
-    expect(loadMachines()).toEqual([{ id: 'abcdef123456', name: 'Machine abcdef12', key: 'k2' }])
+    // The fingerprint is compared as typed fingerprints are: case and dashes don't matter.
+    acceptConnectLink(fakeWindow(link(one, 'k2', one.fingerprint.toLowerCase().replaceAll('-', ''))).win)
+    expect(loadMachines()).toEqual([{ ...saved, key: 'k2' }])
   })
 
-  test('a fragment with a missing or empty field is not saved, but any key in it leaves the URL', () => {
+  test("a link with a missing field, or an fp that isn't its id's, is not saved, but its key leaves the URL", () => {
     const cases = { '#machine=m1': '#machine=m1', '#other=1': '#other=1', '': '' }
     for (const [hash, after] of Object.entries(cases)) {
       const { win, current } = fakeWindow(`https://app.test/page?q=1${hash}`)
       expect(acceptConnectLink(win)).toBeNull()
       expect(current.hash).toBe(after)
     }
-    for (const hash of ['#key=k1', '#machine=&key=k1', '#machine=m1&key=']) {
+    const refused = [
+      '#key=k1',
+      '#machine=&key=k1&fp=x',
+      `#machine=${one.id}&key=`,
+      `#machine=${one.id}&key=k1`,
+      `#machine=${one.id}&key=k1&fp=${two.fingerprint}`,
+      `#machine=short&key=k1&fp=${one.fingerprint}`,
+    ]
+    for (const hash of refused) {
       const { win, current } = fakeWindow(`https://app.test/page?q=1${hash}`)
       expect(acceptConnectLink(win)).toBeNull()
       expect(current.href).toBe('https://app.test/page?q=1')
@@ -50,10 +61,10 @@ describe('connect links', () => {
   })
 
   test('forget removes the machine and its key', () => {
-    acceptConnectLink(fakeWindow('https://app.test/#machine=m1&key=k1').win)
-    acceptConnectLink(fakeWindow('https://app.test/#machine=m2&key=k2').win)
-    forgetMachine('m1')
-    expect(loadMachines().map((m) => m.id)).toEqual(['m2'])
+    acceptConnectLink(fakeWindow(link(one, 'k1')).win)
+    acceptConnectLink(fakeWindow(link(two, 'k2')).win)
+    forgetMachine(one.id)
+    expect(loadMachines().map((m) => m.id)).toEqual([two.id])
     expect(localStorage.getItem('orch-machines')).not.toContain('k1')
   })
 })

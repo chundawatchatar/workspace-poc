@@ -49,6 +49,13 @@ export {
 } from './fs'
 export { type GitInfo, gitStatusQuery, gitStatusResponse } from './git'
 export {
+  type MachineKeyResponse,
+  machineFingerprint,
+  machineKeyMatches,
+  machineKeyResponse,
+  machinePublicKey,
+} from './machineKey'
+export {
   RELAY_SOCKET_PROTOCOL,
   RELAY_TICKET_HEADER,
   RELAY_TICKET_PROTOCOL_PREFIX,

@@ -19,8 +19,26 @@ export interface DeviceKey {
 }
 
 const DATABASE = 'orch-device'
+/** Version 1 had only `keys`; version 2 added `machine-keys`, the machine keys this browser pinned. */
+const VERSION = 2
 const STORE = 'keys'
+/** Every store in the database: the device key pair, and the pinned machine keys (`machineKeys.ts`). */
+export const DEVICE_DATABASE_STORES = [STORE, 'machine-keys'] as const
 const KEY = 'device'
+
+/** The parts of an `IDBDatabase` an upgrade touches. */
+export interface UpgradingDatabase {
+  objectStoreNames: { contains(name: string): boolean }
+  createObjectStore(name: string): unknown
+}
+
+/**
+ * Creates whichever stores `db` is missing, so an upgrade from any earlier version keeps what is already there:
+ * a profile's device key stays in `keys` when `machine-keys` is added.
+ */
+export function upgradeDeviceDatabase(db: UpgradingDatabase) {
+  for (const name of DEVICE_DATABASE_STORES) if (!db.objectStoreNames.contains(name)) db.createObjectStore(name)
+}
 
 function settle<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -29,12 +47,17 @@ function settle<T>(request: IDBRequest<T>): Promise<T> {
   })
 }
 
-async function withStore<T>(mode: IDBTransactionMode, use: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
-  const open = indexedDB.open(DATABASE, 1)
-  open.onupgradeneeded = () => open.result.createObjectStore(STORE)
+/** Runs one request on `store` of the `orch-device` database, opening it (and upgrading it) for that request only. */
+export async function withDeviceStore<T>(
+  store: (typeof DEVICE_DATABASE_STORES)[number],
+  mode: IDBTransactionMode,
+  use: (store: IDBObjectStore) => IDBRequest<T>,
+): Promise<T> {
+  const open = indexedDB.open(DATABASE, VERSION)
+  open.onupgradeneeded = () => upgradeDeviceDatabase(open.result)
   const db = await settle(open)
   try {
-    return await settle(use(db.transaction(STORE, mode).objectStore(STORE)))
+    return await settle(use(db.transaction(store, mode).objectStore(store)))
   } finally {
     db.close()
   }
@@ -45,9 +68,10 @@ async function withStore<T>(mode: IDBTransactionMode, use: (store: IDBObjectStor
  * is stored as itself, so a non-extractable private key stays one.
  */
 export const indexedDbKeyStore: DeviceKeyStore = {
-  get: async () => ((await withStore('readonly', (store) => store.get(KEY))) as CryptoKeyPair | undefined) ?? null,
+  get: async () =>
+    ((await withDeviceStore(STORE, 'readonly', (store) => store.get(KEY))) as CryptoKeyPair | undefined) ?? null,
   add: async (pair) => {
-    await withStore('readwrite', (store) => store.add(pair, KEY))
+    await withDeviceStore(STORE, 'readwrite', (store) => store.add(pair, KEY))
   },
 }
 

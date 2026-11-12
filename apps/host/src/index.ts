@@ -78,6 +78,7 @@ const { app, sockets } = createApp({
   sessions,
   info,
   daemonStartedAt: () => daemon.shared.startedAt,
+  machinePublicKey: () => remoteAccess.machinePublicKey(),
   access: () => remoteAccess.current(),
   remoteAccess,
   agentTracking,
