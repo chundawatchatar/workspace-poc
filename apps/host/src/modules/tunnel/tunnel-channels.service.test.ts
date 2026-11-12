@@ -79,7 +79,7 @@ const authorize: Authorize = (credentials) => {
   if (device?.proof !== 'p-good') return null
   if (key === 'good') return { kind: 'key', keyId: 'k1', name: 'default', deviceId: 'd1' }
   if (key === 'other') return { kind: 'key', keyId: 'k2', name: 'second', deviceId: 'd1' }
-  return { kind: 'account', accountId: 'u1', deviceId: 'd1' }
+  return { kind: 'account', accountId: 'u1', deviceId: 'd1', ticketExp: 0 }
 }
 
 /**
@@ -168,7 +168,9 @@ describe('TunnelChannels', () => {
     const { channels, frames, opened, of } = setup()
     channels.receive({ type: 'ws.open', channel: 1, path: '/ws/events', headers: withTicket('t-good') })
     channels.receive({ type: 'ws.data', channel: 1, data: accountAuth() })
-    expect(opened.map((run) => run.principal)).toEqual([{ kind: 'account', accountId: 'u1', deviceId: 'd1' }])
+    expect(opened.map((run) => run.principal)).toEqual([
+      { kind: 'account', accountId: 'u1', deviceId: 'd1', ticketExp: 0 },
+    ])
     const device = { proof: 'p-good', method: 'WS', path: '/ws/events', bodySha256: bodySha256() }
     expect(asked).toEqual([{ key: null, ticket: 't-good', device, once: true }])
     // The subprotocols carried the ticket, so the handler never sees them.
@@ -273,7 +275,7 @@ describe('TunnelChannels', () => {
 
     expect(channels.list()).toEqual([
       { principal: { kind: 'key', keyId: 'k1', name: 'default', deviceId: 'd1' }, openedAt: 1000 },
-      { principal: { kind: 'account', accountId: 'u1', deviceId: 'd1' }, openedAt: 3000 },
+      { principal: { kind: 'account', accountId: 'u1', deviceId: 'd1', ticketExp: 0 }, openedAt: 3000 },
     ])
     channels.close()
     expect(channels.list()).toEqual([])

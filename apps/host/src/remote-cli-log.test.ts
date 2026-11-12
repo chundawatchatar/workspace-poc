@@ -87,7 +87,7 @@ function recordActivity(file: string) {
   audit.record({
     kind: 'opened',
     session: 's2',
-    principal: { kind: 'account', accountId: 'acct-1', deviceId: bob?.id ?? '' },
+    principal: { kind: 'account', accountId: 'acct-1', deviceId: bob?.id ?? '', ticketExp: 0 },
   })
   clock += MINUTE
   audit.record({

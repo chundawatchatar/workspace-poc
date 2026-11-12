@@ -23,6 +23,7 @@ import { type AppDeps, createApp } from './app'
 import { tunnelEnv } from './lib/principal'
 import { AccessKeyRepository } from './modules/access/access.repository'
 import { AccessKeys } from './modules/access/access.service'
+import { E2eSessions } from './modules/e2e/e2e.service'
 import { EventHub } from './modules/events/events.service'
 import type { LayoutRepository } from './modules/layout/layout.repository'
 import { AuditLogRepository } from './modules/remote-access/audit-log.repository'
@@ -101,6 +102,8 @@ export let dir: string
 export let keys: AccessKeys
 export let key: string
 export let remoteAccess: RemoteAccessService
+/** The end-to-end sessions the harness's host keeps, as `index.ts` builds them. */
+export let e2eSessions: E2eSessions
 export let settingsFile: string
 /** The remote access audit log the harness's service writes. */
 export const auditFile = () => join(dir, 'remote-audit.jsonl')
@@ -177,11 +180,13 @@ async function setUp() {
     settingsFile,
     JSON.stringify({ enabled: true, serverUrl: `ws://127.0.0.1:${server.port}`, clientUrl: 'https://orch.example' }),
   )
+  e2eSessions = new E2eSessions({ machineKey: () => remoteAccess.signingKey() })
   remoteAccess = new RemoteAccessService({
     repository: new RemoteAccessRepository(settingsFile),
     linkedAccounts: new LinkedAccountRepository(join(dir, 'linked-account.json')),
     devices: new DevicesRepository(join(dir, 'devices.json')),
     audit: new AuditLogService(new AuditLogRepository(auditFile())),
+    e2eSessions,
     machineKeyFile,
     keysFile,
     handle: async (request, principal) => app.fetch(request, tunnelEnv(principal)),
@@ -200,6 +205,7 @@ async function setUp() {
     machinePublicKey: () => remoteAccess.machinePublicKey(),
     access: () => remoteAccess.current(),
     remoteAccess,
+    e2eSessions,
   } as unknown as AppDeps)
   tunnelApp = app
   local = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: app.fetch, websocket })

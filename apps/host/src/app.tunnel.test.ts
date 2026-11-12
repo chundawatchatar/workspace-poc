@@ -14,10 +14,12 @@ import {
   machineFingerprint,
   machineIdFromPublicKey,
   machineKeyResponse,
+  openE2eSessionResponse,
   type RotateAccessResponse,
   remoteAccessStatus,
   routes,
   serverFrame,
+  startBrowserHandshake,
   wsPayloadBytes,
 } from '@orch/shared'
 import {
@@ -25,7 +27,9 @@ import {
   clients,
   conns,
   dataOn,
+  device,
   dir,
+  e2eSessions,
   hub,
   key,
   keyHeaders,
@@ -353,5 +357,73 @@ describe('tunneled sockets', () => {
     expect(remoteAccessStatus.parse(await off.json())).toMatchObject({ enabled: false, tunnel: 'off', clientUrl: null })
     expect(clients[0]?.status).toBe('off')
     expect(JSON.parse(readFileSync(settingsFile, 'utf8'))).toMatchObject({ enabled: false })
+  })
+})
+
+describe('tunneled end-to-end handshake', () => {
+  test('an approved device opens a session the host keeps, and every other caller or hello opens none', async () => {
+    const conn = await welcomed()
+    const { path, method } = routes.e2e.open
+    const stranger = await testDevice()
+    const encoder = new TextEncoder()
+    const browser = await startBrowserHandshake({ machineId, device: device.signer })
+    const theirs = await startBrowserHandshake({ machineId, device: stranger.signer })
+    const forged = {
+      ...browser.hello,
+      signature: browser.hello.signature.replace(/^./, (c) => (c === 'A' ? 'B' : 'A')),
+    }
+    const ask = async (id: number, body: string, headers?: [string, string][]) =>
+      send(conn, {
+        type: 'http.request',
+        id,
+        method,
+        path,
+        headers: [['content-type', 'application/json'], ...(headers ?? (await keyHeaders(key, method, path, body)))],
+        body: encoder.encode(body),
+      })
+    const strangerHeaders = async (body: string): Promise<[string, string][]> => [
+      [ACCESS_KEY_HEADER, key],
+      [DEVICE_PROOF_HEADER, await stranger.proof({ machineId, method, path, body })],
+    ]
+    const json = (value: unknown) => JSON.stringify(value)
+    await ask(1, json(browser.hello))
+    await ask(2, json(theirs.hello), await strangerHeaders(json(theirs.hello)))
+    await ask(3, json(browser.hello), [])
+    // Signed by the stranger's key but sent with the approved device's proof.
+    await ask(4, json(theirs.hello))
+    await ask(5, json({ ...browser.hello, v: 'one' }))
+    await ask(6, json(forged))
+    const ids = [1, 2, 3, 4, 5, 6]
+    const response = (id: number) => conn.frames.find((f) => f.type === 'http.response' && f.id === id)
+    const body = (id: number) =>
+      Buffer.concat(conn.frames.flatMap((f) => (f.type === 'http.body' && f.id === id ? [f.data] : []))).toString()
+    await until(() => ids.every((id) => conn.frames.some((f) => f.type === 'http.end' && f.id === id)))
+
+    expect(ids.map(response)).toMatchObject([
+      { status: 200 },
+      { status: 403 },
+      { status: 401 },
+      { status: 403 },
+      { status: 400 },
+      { status: 400 },
+    ])
+    expect(JSON.parse(body(2))).toMatchObject({ code: DEVICE_NOT_APPROVED_CODE })
+    const opened = openE2eSessionResponse.parse(JSON.parse(body(1)))
+    const session = await browser.finish(opened.hello, machineKey.publicKey)
+    const kept = e2eSessions.get(opened.sessionId)
+    expect(kept?.principal).toMatchObject({ kind: 'key', deviceId: device.id })
+    const sealed = await session.seal(encoder.encode('ls'))
+    expect(new TextDecoder().decode(await kept?.session.open(sealed))).toBe('ls')
+    expect(await kept?.session.seal(encoder.encode('ok')).then((reply) => session.open(reply))).toEqual(
+      encoder.encode('ok'),
+    )
+
+    // Locally there is no device to bind a session to.
+    const near = await fetch(`http://127.0.0.1:${local.port}${path}`, {
+      method,
+      headers: { 'content-type': 'application/json' },
+      body: json((await startBrowserHandshake({ machineId, device: device.signer })).hello),
+    })
+    expect(near.status).toBe(403)
   })
 })

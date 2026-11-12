@@ -80,7 +80,7 @@ export class TunnelAccess {
     if (!verified) return refuse('proof_refused')
     if (once && !this.spentTickets.spend(payload, now)) return refuse('ticket_reused', verified, 'account')
     if (!this.isApproved(verified)) return refuse('device_not_approved', verified, 'account')
-    return { kind: 'account', accountId: payload.sub, deviceId: verified.deviceId }
+    return { kind: 'account', accountId: payload.sub, deviceId: verified.deviceId, ticketExp: payload.exp }
   }
 
   /** The device a proof for this request comes from, spending its nonce, or null when it doesn't verify or was used. */

@@ -1,11 +1,13 @@
 /**
  * Who a tunneled request or channel was authorized as: the access key it
  * presented, or the account this machine is linked to, as the server said,
- * either one through `deviceId`, a browser approved on this machine.
+ * either one through `deviceId`, a browser approved on this machine. An
+ * account's `ticketExp` is the `exp` of the relay ticket that admitted it, in
+ * epoch seconds, so what it opens can end with that ticket.
  */
 export type Principal =
   | { kind: 'key'; keyId: string; name: string; deviceId: string }
-  | { kind: 'account'; accountId: string; deviceId: string }
+  | { kind: 'account'; accountId: string; deviceId: string; ticketExp: number }
 
 // A symbol, so no header or env a caller controls can claim to be tunneled.
 // Local requests get Bun's server as their env, which never has it.

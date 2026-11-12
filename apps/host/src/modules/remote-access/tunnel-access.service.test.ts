@@ -42,7 +42,8 @@ describe('RemoteAccessService.authorize', () => {
     const machineId = service.status().machineId ?? ''
     const device = await testDevice()
     const health = { machineId, method: 'GET', path: '/api/health' }
-    const ticket = ticketFor()
+    const ticketExp = Math.floor(Date.now() / 1000) + 60
+    const ticket = ticketFor({ exp: ticketExp })
 
     // An unknown device with a valid ticket waits for approval, listed once by the fingerprint its browser shows.
     expect(authorize({ key: null, ticket, device: await device.presented(health) })).toBe(DEVICE_NOT_APPROVED)
@@ -62,7 +63,8 @@ describe('RemoteAccessService.authorize', () => {
     expect(service.approveDevice(fingerprint.toLowerCase()).approved).toEqual([
       { id: device.id, fingerprint, approvedAt: expect.any(String) },
     ])
-    const asAccount: Principal = { kind: 'account', accountId, deviceId: device.id }
+    // The principal carries the ticket's `exp`, so what it opens can end with the ticket.
+    const asAccount: Principal = { kind: 'account', accountId, deviceId: device.id, ticketExp }
     const proof = await device.presented(health)
     expect(authorize({ key: null, ticket, device: proof })).toEqual(asAccount)
     // A used proof, no proof, a proof for another request, and a valid proof with a bad ticket are all refused.
@@ -148,8 +150,8 @@ describe('RemoteAccessService.authorize', () => {
     expect(service.removeDevice(revoked.id).approved.map((d) => d.id)).toEqual([kept.id])
     expect(tunnel.closed.map((c) => c.reason)).toEqual(['device revoked'])
     const [closed] = tunnel.closed
-    expect(closed?.revoked({ kind: 'account', accountId, deviceId: revoked.id })).toBe(true)
-    expect(closed?.revoked({ kind: 'account', accountId, deviceId: kept.id })).toBe(false)
+    expect(closed?.revoked({ kind: 'account', accountId, deviceId: revoked.id, ticketExp: 0 })).toBe(true)
+    expect(closed?.revoked({ kind: 'account', accountId, deviceId: kept.id, ticketExp: 0 })).toBe(false)
     // Sockets the revoked device opened with a key close too, and other devices' key sockets stay.
     expect(closed?.revoked({ kind: 'key', keyId: 'k1', name: 'default', deviceId: revoked.id })).toBe(true)
     expect(closed?.revoked({ kind: 'key', keyId: 'k1', name: 'default', deviceId: kept.id })).toBe(false)
@@ -177,9 +179,9 @@ describe('RemoteAccessService.authorize', () => {
       authorize({ key: null, ticket: ticketFor(), device: await device.presented(health) })
     }
     service.approveDevice(fingerprintOf(approved.id))
-    const viaTicket: Principal = { kind: 'account', accountId, deviceId: approved.id }
+    const viaTicket: Principal = { kind: 'account', accountId, deviceId: approved.id, ticketExp: 0 }
     const viaKey: Principal = { kind: 'key', keyId: 'k1', name: 'default', deviceId: approved.id }
-    const otherAccount: Principal = { kind: 'account', accountId: 'acct-bob-2', deviceId: approved.id }
+    const otherAccount: Principal = { kind: 'account', accountId: 'acct-bob-2', deviceId: approved.id, ticketExp: 0 }
     const persisted = () => ({
       linked: readFileSync(linkedFile(), 'utf8'),
       devices: readFileSync(devicesFile(), 'utf8'),

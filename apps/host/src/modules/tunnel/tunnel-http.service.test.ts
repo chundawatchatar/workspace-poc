@@ -96,7 +96,7 @@ describe('TunnelHttp', () => {
       if (key === null ? ticket !== 't-good' : key !== 'good') return null
       if (device?.proof === 'p-new') return DEVICE_NOT_APPROVED
       if (device?.proof !== 'p-good') return null
-      return key ? principal : { kind: 'account', accountId: 'u1', deviceId: 'd1' }
+      return key ? principal : { kind: 'account', accountId: 'u1', deviceId: 'd1', ticketExp: 0 }
     }
     const handled: Principal[] = []
     const handledHeaders: Headers[] = []
@@ -151,7 +151,7 @@ describe('TunnelHttp', () => {
     const ids = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     await until(() => ids.every((id) => ended(frames, id)))
 
-    expect(handled).toEqual([{ kind: 'account', accountId: 'u1', deviceId: 'd1' }, principal])
+    expect(handled).toEqual([{ kind: 'account', accountId: 'u1', deviceId: 'd1', ticketExp: 0 }, principal])
     // The key, ticket and proof have done their job, so the handler never sees them.
     for (const headers of handledHeaders) {
       expect([ACCESS_KEY_HEADER, RELAY_TICKET_HEADER, DEVICE_PROOF_HEADER].some((name) => headers.has(name))).toBe(

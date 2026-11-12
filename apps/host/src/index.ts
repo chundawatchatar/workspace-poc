@@ -10,6 +10,7 @@ import { tunnelEnv } from './lib/principal'
 import { accessKeysPath } from './modules/access/access.repository'
 import { AgentTrackingRepository, agentTrackingPath } from './modules/agent-tracking/agent-tracking.repository'
 import { AgentTrackingService } from './modules/agent-tracking/agent-tracking.service'
+import { E2eSessions } from './modules/e2e/e2e.service'
 import { EventHub } from './modules/events/events.service'
 import { dataFile, LayoutRepository } from './modules/layout/layout.repository'
 import { AuditLogRepository, auditLogPath } from './modules/remote-access/audit-log.repository'
@@ -59,12 +60,16 @@ const inspector = setInterval(() => {
     })
 }, 2000)
 
+// In memory only. It reads the machine key at each open, and remote access closes its sessions with its sockets.
+const e2eSessions: E2eSessions = new E2eSessions({ machineKey: () => remoteAccess.signingKey() })
+
 // The service reads `app` and `sockets` only once a tunnel carries traffic, after `createApp` has returned.
 const remoteAccess = new RemoteAccessService({
   repository: new RemoteAccessRepository(remoteAccessPath(hostRoot)),
   linkedAccounts: new LinkedAccountRepository(linkedAccountPath(hostRoot)),
   devices: new DevicesRepository(devicesPath(hostRoot)),
   audit: new AuditLogService(new AuditLogRepository(auditLogPath(hostRoot))),
+  e2eSessions,
   machineKeyFile: machineKeyFile(hostRoot),
   keysFile: accessKeysPath(hostRoot),
   env: { SERVER_URL: optionalEnv('SERVER_URL'), CLIENT_URL: optionalEnv('CLIENT_URL') },
@@ -82,6 +87,7 @@ const { app, sockets } = createApp({
   access: () => remoteAccess.current(),
   remoteAccess,
   agentTracking,
+  e2eSessions,
 })
 // The host controls this machine's shells, so it listens on loopback only; remote access goes through the relay.
 const hostname = requiredEnv('HOST_HOST')

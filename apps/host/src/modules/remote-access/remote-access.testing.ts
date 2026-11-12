@@ -6,6 +6,7 @@ import type { Endpoint, TunnelState } from '@orch/shared'
 import { type AppDeps, createApp } from '../../app'
 import type { Principal } from '../../lib/principal'
 import { AccessKeyRepository } from '../access/access.repository'
+import { E2eSessions } from '../e2e/e2e.service'
 import type { EnrollAnswer, EnrollRequest, TunnelClientOptions } from '../tunnel/tunnel.service'
 import type { OpenChannel } from '../tunnel/tunnel-channels.service'
 import { AuditLogRepository } from './audit-log.repository'
@@ -76,6 +77,8 @@ export let tunnels: FakeTunnel[]
 export let logs: string[]
 let spies: Mock<(...args: unknown[]) => void>[]
 export let service: RemoteAccessService
+/** The end-to-end sessions the service closes, signed with its machine key. */
+export let e2eSessions: E2eSessions
 
 export const settingsFile = () => join(dir, 'remote-access.json')
 export const keysFile = () => join(dir, 'access-keys.json')
@@ -104,11 +107,13 @@ export function useRemoteAccessHarness() {
 /** Starts a service on the temp dir, with `saved` written first and `env` as the environment. */
 export function setup(saved?: RemoteAccessSettings | string, env: RemoteAccessEnv = {}) {
   if (saved !== undefined) writeFileSync(settingsFile(), typeof saved === 'string' ? saved : JSON.stringify(saved))
+  e2eSessions = new E2eSessions({ machineKey: () => service.signingKey() })
   service = new RemoteAccessService({
     repository: new RemoteAccessRepository(settingsFile()),
     linkedAccounts: new LinkedAccountRepository(linkedFile()),
     devices: new DevicesRepository(devicesFile()),
     audit: new AuditLogService(new AuditLogRepository(join(dir, 'remote-audit.jsonl'))),
+    e2eSessions,
     machineKeyFile: machineKeyFile(),
     keysFile: keysFile(),
     env,
