@@ -2,7 +2,13 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { LinkBody, PreviewLinkBody, RemoteAccessStatus, UpdateRemoteAccessBody } from '@orch/shared'
+import {
+  type LinkBody,
+  machineFingerprint,
+  type PreviewLinkBody,
+  type RemoteAccessStatus,
+  type UpdateRemoteAccessBody,
+} from '@orch/shared'
 import { accessKeysPath } from './modules/access/access.repository'
 import { fingerprintOf } from './modules/remote-access/device-proof.service'
 import { DevicesRepository, devicesPath } from './modules/remote-access/devices.repository'
@@ -41,7 +47,8 @@ class FakeRemoteAccess extends NoRemoteSessions {
     clientUrl: 'https://app.example.com',
     serverUrlFromEnv: false,
     clientUrlFromEnv: false,
-    machineId: 'm1',
+    machineId: machineKey.machineId,
+    machineFingerprint: machineFingerprint(machineKey.machineId),
     tunnel: 'connected',
     linkedAccount: null,
   }
@@ -174,7 +181,8 @@ describe('host:remote with the host running', () => {
     expect(status.code).toBe(0)
     expect(status.text).toContain(`${DEFAULT_SERVER_URL} (default)`)
     expect(status.text).toContain('on, tunnel connected')
-    expect(status.text).toContain('Machine id:     m1')
+    expect(status.text).toContain(`Machine id:     ${machineKey.machineId}`)
+    expect(status.text).toContain(`Machine key:    ${machineFingerprint(machineKey.machineId)}\n`)
     expect(status.text).toContain('Ada (a***@example.com)')
 
     expect((await run(url, ['off'])).text).toContain('off, tunnel off')
@@ -371,7 +379,8 @@ describe('host:remote with the host stopped', () => {
     expect(empty.code).toBe(0)
     expect(empty.text).toContain('ws://127.0.0.1:4600 (from SERVER_URL)')
     expect(empty.text).toContain('host not running')
-    expect(empty.text).toContain('none yet')
+    expect(empty.text).toContain('Machine id:     none yet')
+    expect(empty.text).toContain('Machine key:    none yet')
     expect(empty.text).toContain('not linked')
     expect(existsSync(machineKeyFile(dir))).toBe(false)
     expect(existsSync(accessKeysPath(dir))).toBe(false)
@@ -383,6 +392,7 @@ describe('host:remote with the host stopped', () => {
     expect(saved.text).toContain('Server address: wss://host\n')
     expect(saved.text).toContain('on, tunnel host not running')
     expect(saved.text).toContain(machineKey.machineId)
+    expect(saved.text).toContain(`Machine key:    ${machineFingerprint(machineKey.machineId)}\n`)
     expect(saved.text).toContain('Ada (a***@example.com)')
   })
 

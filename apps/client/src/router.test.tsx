@@ -10,9 +10,12 @@ import { CheckInbox } from './components/auth/CheckInbox'
 import { signInWithEmail, signOut } from './lib/auth'
 import { deviceKeyStores, indexedDbKeyStore, loadDeviceKey } from './lib/deviceKey'
 import { acceptEmailLinkToken, type EmailLinkPage, takeEmailLinkToken } from './lib/emailLink'
+import { indexedDbMachineKeyStore, machineKeyStores } from './lib/machineKeys'
 import { saveMachine } from './lib/machines'
 import { authSession, authUser } from './test/betterAuth'
 import { memoryKeyStore } from './test/deviceKeyStore'
+import { testMachine } from './test/machineKey'
+import { memoryMachineKeyStore } from './test/machineKeyStore'
 import { server } from './test/msw'
 
 // Vite turns `?url` imports into the asset's URL; Bun would hand the root route the stylesheet's module instead.
@@ -20,6 +23,8 @@ mock.module('./styles.css?url', () => ({ default: '/styles.css' }))
 const { getRouter } = await import('./router')
 
 const user = { id: 'u1', email: 'u1@example.com', name: 'U' }
+/** A machine saved from a connect link, and one the account lists, whose key this browser already confirmed. */
+const [saved, account] = [testMachine(), testMachine()]
 
 /** Whether the fake server holds a session for the page's cookie. */
 let signedIn = true
@@ -27,12 +32,17 @@ let signedIn = true
 // Every test here reads the session, and most read the machine list, so these answer by default.
 afterEach(() => {
   deviceKeyStores.default = indexedDbKeyStore
+  machineKeyStores.default = indexedDbMachineKeyStore
 })
 
 beforeEach(() => {
   signedIn = true
   deviceKeyStores.default = memoryKeyStore().store
-  saveMachine({ id: 'saved-machine', name: 'Laptop', key: 'k1' })
+  const pinnedAt = '2026-11-01T12:00:00.000Z'
+  machineKeyStores.default = memoryMachineKeyStore({
+    [account.id]: { publicKey: account.publicKey, pinnedAt, source: 'confirmed' },
+  }).store
+  saveMachine({ id: saved.id, name: 'Laptop', key: 'k1', fingerprint: saved.fingerprint })
   server.use(
     http.get('*/api/auth/get-session', () =>
       HttpResponse.json(signedIn ? { user: authUser(user), session: authSession('s1', user.id) } : null),
@@ -46,6 +56,11 @@ beforeEach(() => {
       return HttpResponse.json({ success: true })
     }),
     http.get('*/api/machines', () => HttpResponse.json({ machines: [] })),
+    // Each machine answers its own key, which the page checks before it opens any socket.
+    http.get(`*/m/:machineId${routes.system.machineKey.path}`, ({ params }) => {
+      const machine = [saved, account].find((m) => m.id === params.machineId)
+      return machine ? HttpResponse.json({ publicKey: machine.publicKey }) : new HttpResponse(null, { status: 404 })
+    }),
   )
 })
 
@@ -94,7 +109,7 @@ async function land(path: string) {
 describe('client routes', () => {
   test('unknown paths show not found, under a machine inside its page', async () => {
     const connected = quietMachine()
-    await show('/m/saved-machine/w/ws1/unknown')
+    await show(`/m/${saved.id}/w/ws1/unknown`)
     expect(await screen.findByText('Page not found.')).toBeInTheDocument()
     expect(screen.getByText('Laptop')).toBeInTheDocument()
     await connected
@@ -112,7 +127,7 @@ describe('client routes', () => {
     cleanup()
 
     const connected = quietMachine()
-    await show('/m/saved-machine/w/ws1')
+    await show(`/m/${saved.id}/w/ws1`)
     expect((await screen.findAllByText('Connecting to the host…')).length).toBeGreaterThan(0)
     expect(screen.queryByText('Page not found.')).not.toBeInTheDocument()
     await connected
@@ -121,7 +136,7 @@ describe('client routes', () => {
   test('a machine saved from a connect link sends its key with a device proof, and an unapproved browser sees its fingerprint', async () => {
     const firstMessages: string[] = []
     server.use(
-      ws.link(`*/m/saved-machine${routes.sockets.events.path}`).addEventListener('connection', ({ client }) =>
+      ws.link(`*/m/${saved.id}${routes.sockets.events.path}`).addEventListener('connection', ({ client }) =>
         client.addEventListener(
           'message',
           (event) => {
@@ -133,7 +148,7 @@ describe('client routes', () => {
       ),
     )
     const { fingerprint } = await loadDeviceKey(deviceKeyStores.default)
-    await show('/m/saved-machine')
+    await show(`/m/${saved.id}`)
     await waitFor(() => expect(firstMessages.length).toBeGreaterThan(0))
     expect(JSON.parse(firstMessages[0] ?? '')).toEqual({ type: 'auth', key: 'k1', device: expect.any(String) })
     expect((await screen.findAllByText(fingerprint)).length).toBeGreaterThan(0)
@@ -142,7 +157,7 @@ describe('client routes', () => {
   test('a machine with no key here opens through the account when listed, and is not linked otherwise', async () => {
     const at = '2026-10-30T12:00:00.000Z'
     const listed = {
-      machineId: 'account-machine',
+      machineId: account.id,
       name: 'Desktop',
       createdAt: at,
       lastOpenedAt: at,
@@ -159,18 +174,18 @@ describe('client routes', () => {
         return HttpResponse.json({ ticket: 'fake.relay.ticket', expiresAt })
       }),
       ws
-        .link(`*/m/account-machine${routes.sockets.events.path}`)
+        .link(`*/m/${account.id}${routes.sockets.events.path}`)
         .addEventListener('connection', ({ client }) =>
           client.addEventListener('message', (event) => firstMessages.push(String(event.data)), { once: true }),
         ),
     )
-    await show('/m/account-machine')
+    await show(`/m/${account.id}`)
     expect((await screen.findAllByText('Desktop')).length).toBeGreaterThan(0)
     await waitFor(() => expect(firstMessages).toHaveLength(1))
     // The first message asks to be judged by the account's ticket and carries this browser's device proof.
     expect(JSON.parse(firstMessages[0] ?? '')).toEqual({ type: 'auth', account: true, device: expect.any(String) })
     // The events socket asked for its own ticket for this machine before it opened.
-    expect(ticketsFor[0]).toBe('account-machine')
+    expect(ticketsFor[0]).toBe(account.id)
     cleanup()
 
     await show('/m/other-machine')
@@ -220,14 +235,16 @@ describe('session guard', () => {
 
   test('signing in lands on the redirect when it is safe, and home otherwise', async () => {
     signedIn = false
-    const router = await show('/auth/sign-in?redirect=%2Fm%2Fsaved-machine')
+    const router = await show(`/auth/sign-in?redirect=%2Fm%2F${saved.id}`)
     expect(router.state.location.pathname).toBe('/auth/sign-in')
     const connected = quietMachine()
     await act(async () => {
       expect(await signInWithEmail(router.options.context.queryClient, user.email, 'pw-old')).toBeNull()
     })
     // The sign-in hands the cache to the new user, which reruns the guards.
-    await waitFor(() => expect(router.state.location.pathname).toBe('/m/saved-machine'))
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/m/${saved.id}`))
+    // The page checks the machine's key before it mounts the machine and connects.
+    expect((await screen.findAllByText('Connecting to the host…')).length).toBeGreaterThan(0)
     await connected
 
     for (const unsafe of ['https://evil.example', '//evil.example', '/\\evil.example', '/auth/sign-up']) {
@@ -246,7 +263,7 @@ describe('session guard', () => {
     )
 
     signedIn = true
-    expect((await land('/auth/sign-up?redirect=%2Fm%2Fsaved-machine')).pathname).toBe('/m/saved-machine')
+    expect((await land(`/auth/sign-up?redirect=%2Fm%2F${saved.id}`)).pathname).toBe(`/m/${saved.id}`)
     expect((await land('/auth/sign-up?redirect=https%3A%2F%2Fevil.example')).href).toBe('/')
   })
 

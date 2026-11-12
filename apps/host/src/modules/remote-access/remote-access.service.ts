@@ -5,6 +5,7 @@ import {
   CLOSE_SESSION_ENDED,
   type DevicesResponse,
   type LinkBody,
+  machineFingerprint,
   type PreviewLinkBody,
   type PreviewLinkResponse,
   type RemoteAccessStatus,
@@ -202,6 +203,7 @@ export class RemoteAccessService {
 
   /** The setting in use and where the tunnel stands. It never holds the machine's private key, an access key or a hash. */
   status(): RemoteAccessStatus {
+    const machineId = this.machineId()
     return {
       enabled: this.tunnel !== null,
       serverUrl: this.serverUrl(),
@@ -209,7 +211,8 @@ export class RemoteAccessService {
       clientUrl: this.env.CLIENT_URL ?? this.saved?.clientUrl ?? null,
       serverUrlFromEnv: this.env.SERVER_URL !== undefined,
       clientUrlFromEnv: this.env.CLIENT_URL !== undefined,
-      machineId: this.machineId(),
+      machineId,
+      machineFingerprint: machineId === null ? null : machineFingerprint(machineId),
       tunnel: this.tunnel?.status ?? 'off',
       linkedAccount: this.linked && {
         name: this.linked.name,
@@ -487,8 +490,21 @@ export class RemoteAccessService {
     return this.keys
   }
 
+  /**
+   * The machine's public key, which browsers pin, reading an existing machine key without creating one. Null until
+   * a key exists. The private key never leaves the `MachineKey`.
+   */
+  machinePublicKey(): string | null {
+    return this.existingMachineKey()?.publicKey ?? null
+  }
+
   /** The machine id, reading an existing machine key without creating one. Null until a key exists. */
   private machineId(): string | null {
+    return this.existingMachineKey()?.machineId ?? null
+  }
+
+  /** The machine key, loaded from an existing file but never created. Null until a key exists or when it can't be read. */
+  private existingMachineKey(): MachineKey | null {
     if (!this.machineKey && existsSync(this.options.machineKeyFile)) {
       try {
         this.machineKey = loadOrCreateMachineKey(this.options.machineKeyFile)
@@ -496,7 +512,7 @@ export class RemoteAccessService {
         return null
       }
     }
-    return this.machineKey?.machineId ?? null
+    return this.machineKey
   }
 
   /**

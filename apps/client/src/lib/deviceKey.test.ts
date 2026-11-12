@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { memoryKeyStore } from '../test/deviceKeyStore'
-import { loadDeviceKey } from './deviceKey'
+import { loadDeviceKey, upgradeDeviceDatabase } from './deviceKey'
 
 describe('loadDeviceKey', () => {
   test('makes one non-extractable key per profile and answers the same public key on every load', async () => {
@@ -20,5 +20,21 @@ describe('loadDeviceKey', () => {
     const { store } = memoryKeyStore(other)
     const key = await loadDeviceKey(store)
     expect(key.signer.publicJwk).toEqual(await crypto.subtle.exportKey('jwk', other.publicKey))
+  })
+})
+
+describe('the device database', () => {
+  test('an upgrade adds only the stores it is missing, so a version 1 profile keeps its device key', () => {
+    const fake = (existing: string[]) => {
+      const created: string[] = []
+      upgradeDeviceDatabase({
+        objectStoreNames: { contains: (name) => existing.includes(name) },
+        createObjectStore: (name) => created.push(name),
+      })
+      return created
+    }
+    expect(fake([])).toEqual(['keys', 'machine-keys'])
+    expect(fake(['keys'])).toEqual(['machine-keys'])
+    expect(fake(['keys', 'machine-keys'])).toEqual([])
   })
 })

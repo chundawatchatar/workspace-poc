@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
-import { formatConnectFragment, type RotateAccessResponse } from '@orch/shared'
+import { formatConnectFragment, machineFingerprint, type RotateAccessResponse } from '@orch/shared'
 import type { Principal } from '../../lib/principal'
 import type { AccessKey, AccessKeyRepository } from './access.repository'
 
@@ -17,9 +17,13 @@ function sha256(value: string): Buffer {
   return createHash('sha256').update(value).digest()
 }
 
-/** The connect link for `key`: `<clientUrl>/#machine=<id>&key=<key>`. */
+/**
+ * The connect link for `key`: `<clientUrl>/#machine=<id>&key=<key>&fp=<fingerprint>`, where the fingerprint is
+ * `machineFingerprint(id)`, so the browser checks the id against what this host printed rather than the server.
+ */
 export function connectLink(clientUrl: string, machineId: string, key: string): string {
-  return `${clientUrl.replace(/\/+$/, '')}/${formatConnectFragment({ machineId, key })}`
+  const fragment = formatConnectFragment({ machineId, key, fingerprint: machineFingerprint(machineId) })
+  return `${clientUrl.replace(/\/+$/, '')}/${fragment}`
 }
 
 /** A `CLIENT_URL` value as a client URL, or null unless it is an `http:` or `https:` URL without credentials. */

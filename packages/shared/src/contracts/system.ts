@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { defineContract } from './contract'
+import { machineKeyResponse } from './machineKey'
 
 export const healthResponse = z.object({ ok: z.boolean() })
 
@@ -25,5 +26,13 @@ export const systemContract = defineContract({
     description: 'Reports how long the terminal daemon has been up and how many terminals are live.',
     input: z.object({}),
     output: daemonResponse,
+  },
+  machineKey: {
+    method: 'GET',
+    path: '/api/machine-key',
+    description:
+      "Answers the machine's Ed25519 public key, never its private key, which a browser checks against the machine id and pins.",
+    input: z.object({}),
+    output: machineKeyResponse,
   },
 })

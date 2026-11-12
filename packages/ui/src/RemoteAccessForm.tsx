@@ -93,6 +93,14 @@ export function RemoteAccessForm(props: Props) {
                 {status.machineId}
               </span>
             )}
+            {status?.machineFingerprint && (
+              <span
+                className="shrink-0 font-mono text-[11px] text-dim"
+                title="Machine key fingerprint. The client asks you to type it before it opens this machine through your account."
+              >
+                Machine key {status.machineFingerprint}
+              </span>
+            )}
           </div>
           <button
             type="button"

@@ -263,7 +263,8 @@ export async function machineIdFromPublicKey(publicKey: string): Promise<string>
   return toBase64url(new Uint8Array(digest))
 }
 
-function fromBase64url(value: string): Uint8Array<ArrayBuffer> {
+/** Decodes unpadded base64url. Throws for a string that isn't base64url. Not re-exported from the index. */
+export function fromBase64url(value: string): Uint8Array<ArrayBuffer> {
   const base64 = value.replace(/-/g, '+').replace(/_/g, '/')
   const binary = atob(base64 + '='.repeat((4 - (base64.length % 4)) % 4))
   return Uint8Array.from(binary, (char) => char.charCodeAt(0))

@@ -197,6 +197,7 @@ async function setUp() {
     layout,
     sessions: stub.sessions,
     info,
+    machinePublicKey: () => remoteAccess.machinePublicKey(),
     access: () => remoteAccess.current(),
     remoteAccess,
   } as unknown as AppDeps)

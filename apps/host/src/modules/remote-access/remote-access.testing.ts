@@ -121,7 +121,11 @@ export function setup(saved?: RemoteAccessSettings | string, env: RemoteAccessEn
     },
   })
   service.start()
-  const { app } = createApp({ access: () => service.current(), remoteAccess: service } as unknown as AppDeps)
+  const { app } = createApp({
+    access: () => service.current(),
+    machinePublicKey: () => service.machinePublicKey(),
+    remoteAccess: service,
+  } as unknown as AppDeps)
   return app
 }
 

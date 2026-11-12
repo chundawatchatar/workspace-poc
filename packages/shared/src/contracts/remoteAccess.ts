@@ -33,6 +33,8 @@ export const remoteAccessStatus = z.object({
   clientUrlFromEnv: z.boolean(),
   /** The id the server knows this machine by. Null until a machine key exists. */
   machineId: z.string().nullable(),
+  /** `machineFingerprint(machineId)`, which the owner compares with the one the client shows. Null exactly when `machineId` is. */
+  machineFingerprint: z.string().nullable(),
   tunnel: tunnelState,
   /** The account this machine is linked to. Null means none. */
   linkedAccount: linkedAccount.nullable(),

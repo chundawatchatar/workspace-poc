@@ -17,6 +17,7 @@ const status: RemoteAccessStatus = {
   serverUrlFromEnv: false,
   clientUrlFromEnv: false,
   machineId: 'm1',
+  machineFingerprint: 'ABCD-EFGH-JKMN-PQRS',
   tunnel: 'connected',
   linkedAccount: null,
 }

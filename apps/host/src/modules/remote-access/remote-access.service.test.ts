@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { type RotateAccessResponse, routes } from '@orch/shared'
+import { machineFingerprint, type RotateAccessResponse, routes } from '@orch/shared'
 import { fingerprintOf } from './device-proof.service'
 import { DEFAULT_SERVER_URL, hostMachineName, linkClientUrl } from './remote-access.service'
 import {
@@ -33,7 +33,10 @@ describe('RemoteAccessService', () => {
     expect(tunnels.map((t) => t.options.url)).toEqual(['ws://127.0.0.1:4600/tunnel'])
     expect(tunnels[0]?.status).toBe('connecting')
     expect(storedKeys().map((k) => k.name)).toEqual(['default'])
-    expect(logs.some((line) => line.includes('Connect link: http://127.0.0.1:4600/#machine='))).toBe(true)
+    const { machineId } = service.status()
+    const printed = `Connect link: http://127.0.0.1:4600/#machine=${machineId}&key=`
+    const link = logs.find((line) => line.includes(printed))
+    expect(link).toEndWith(`&fp=${machineFingerprint(String(machineId))}`)
     expect(service.status()).toMatchObject({ enabled: true, serverUrlFromEnv: false, tunnel: 'connecting' })
   })
 
@@ -60,17 +63,21 @@ describe('RemoteAccessService', () => {
     expect(linkClientUrl({}, null)).toBe('https://orch.example.com')
   })
 
-  test('a missing or invalid setting file leaves remote access off, and an invalid one is logged and kept', () => {
-    setup()
+  test('a missing or invalid setting file leaves remote access off, and an invalid one is logged and kept', async () => {
+    const app = setup()
     expect(tunnels).toHaveLength(0)
     expect(service.status()).toMatchObject({
       enabled: false,
       serverUrl: DEFAULT_SERVER_URL,
       serverUrlIsDefault: true,
       machineId: null,
+      machineFingerprint: null,
       tunnel: 'off',
       linkedAccount: null,
     })
+    // With no machine key yet, the key route answers 404 and never creates one.
+    expect((await app.request(routes.system.machineKey.path)).status).toBe(404)
+    expect(existsSync(machineKeyFile())).toBe(false)
     service.shutdown()
 
     const hashLike = 'h'.repeat(43)
@@ -147,7 +154,9 @@ describe('RemoteAccessService', () => {
     service.update({ enabled: true, serverUrl: 'ws://127.0.0.1:4600', clientUrl: null })
     const revoked = storedKeys().map((k) => k.id)
     const derived = (await (await rotate()).json()) as RotateAccessResponse
-    expect(derived.link).toBe(`http://127.0.0.1:4600/#machine=${derived.machineId}&key=${derived.key}`)
+    expect(derived.link).toBe(
+      `http://127.0.0.1:4600/#machine=${derived.machineId}&key=${derived.key}&fp=${machineFingerprint(derived.machineId)}`,
+    )
     const [closed] = tunnels[0]?.closed ?? []
     expect(closed?.reason).toBe('key rotated')
     expect(revoked.every((keyId) => closed?.revoked({ kind: 'key', keyId, name: 'default', deviceId: 'd1' }))).toBe(
@@ -158,7 +167,9 @@ describe('RemoteAccessService', () => {
 
     service.update({ enabled: true, serverUrl: 'ws://127.0.0.1:4600', clientUrl: 'https://orch.example' })
     const saved = (await (await rotate()).json()) as RotateAccessResponse
-    expect(saved.link).toBe(`https://orch.example/#machine=${saved.machineId}&key=${saved.key}`)
+    expect(saved.link).toBe(
+      `https://orch.example/#machine=${saved.machineId}&key=${saved.key}&fp=${machineFingerprint(saved.machineId)}`,
+    )
   })
 
   test('the default address is used when none is set, and only it counts as the default', () => {
