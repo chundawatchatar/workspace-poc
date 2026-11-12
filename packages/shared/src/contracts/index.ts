@@ -39,6 +39,23 @@ export {
   fingerprintKey,
 } from './deviceProof'
 export {
+  answerBrowserHandshake,
+  type BrowserHandshake,
+  E2E_VERSION,
+  type E2eBrowserHello,
+  type E2eDeviceSigner,
+  E2eError,
+  type E2eErrorReason,
+  type E2eJwk,
+  type E2eMachineHello,
+  type E2eMachineSigner,
+  type E2eSession,
+  e2eBrowserHello,
+  e2eMachineHello,
+  type MachineHandshake,
+  startBrowserHandshake,
+} from './e2e'
+export {
   type DirListing,
   listDirsQuery,
   listDirsResponse,
