@@ -34,6 +34,13 @@ const MACHINE_EPHEMERAL = {
   y: '6F7wmZGHzf9ERgIYgXm9RlM_lIuWsQtIEo6yUMPj8tQ',
   d: 'CkO8h0k-pMQIGjhjwGAUSD06IhXvjtuLHBrQIAU08gM',
 }
+const DEVICE_KEY = {
+  kty: 'EC',
+  crv: 'P-256',
+  x: 'E7V6IOxeLrmyiNjgECMX4p3nUNZTY9kRHKEqRjR9EtI',
+  y: 'ZdDIQQJlz3EoN8wqR6-zQAO0sj3ECvBzI7rARQwV8-Q',
+  d: 'mAa0oS_OMLB2GlaalpbMLseJXjuhxi33t7wYvYQS7Cw',
+}
 const MACHINE_KEY = {
   kty: 'OKP',
   crv: 'Ed25519',
@@ -53,8 +60,17 @@ function machine(jwk?: typeof MACHINE_KEY) {
   return { id, signer: { publicKey, sign: async (data: Uint8Array) => new Uint8Array(sign(null, data, privateKey)) } }
 }
 
-/** A fresh device key, non-extractable, signing as the browser's `DeviceSigner` does. */
-async function device() {
+/** A device key signing as the browser's `DeviceSigner` does: fresh and non-extractable, or the fixed one. */
+async function device(fixed?: typeof DEVICE_KEY) {
+  if (fixed) {
+    const privateKey = createPrivateKey({ key: fixed, format: 'jwk' })
+    const { kty, crv, x, y } = fixed
+    return {
+      publicJwk: { kty, crv, x, y },
+      sign: async (data: Uint8Array) =>
+        new Uint8Array(sign('sha256', data, { key: privateKey, dsaEncoding: 'ieee-p1363' })),
+    }
+  }
   const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify'])
   return {
     publicJwk: await crypto.subtle.exportKey('jwk', pair.publicKey),
@@ -108,7 +124,7 @@ describe('e2e handshake and sessions', () => {
   test('fixed ephemeral keys seal to the bytes node:crypto computes', async () => {
     const m = machine(MACHINE_KEY)
     const browser = await startBrowserHandshakeWith(
-      { machineId: m.id, device: await device() },
+      { machineId: m.id, device: await device(DEVICE_KEY) },
       { ephemeral: BROWSER_EPHEMERAL },
     )
     const answer = await answerBrowserHandshakeWith(
@@ -122,7 +138,8 @@ describe('e2e handshake and sessions', () => {
     const ecdh = createECDH('prime256v1')
     ecdh.setPrivateKey(Buffer.from(BROWSER_EPHEMERAL.d, 'base64url'))
     const shared = ecdh.computeSecret(raw(MACHINE_EPHEMERAL))
-    const browserTranscript = `orch-e2e-browser\n1\n${m.id}\n${b64(raw(BROWSER_EPHEMERAL))}`
+    const deviceKey = JSON.stringify({ crv: 'P-256', kty: 'EC', x: DEVICE_KEY.x, y: DEVICE_KEY.y })
+    const browserTranscript = `orch-e2e-browser\n1\n${m.id}\n${deviceKey}\n${b64(raw(BROWSER_EPHEMERAL))}`
     const machineTranscript = `orch-e2e-machine\n1\n${m.id}\n${b64(sha256(browserTranscript))}\n${b64(raw(MACHINE_EPHEMERAL))}`
     expect(browser.hello.ephemeral).toBe(b64(raw(BROWSER_EPHEMERAL)))
     expect(answer.reply.ephemeral).toBe(b64(raw(MACHINE_EPHEMERAL)))
@@ -157,34 +174,68 @@ describe('e2e handshake and sessions', () => {
     const signer = await device()
     const start = () => startBrowserHandshake({ machineId: m.id, device: signer })
     const answer = (hello: unknown, by = m) => answerBrowserHandshake({ machineId: m.id, machine: by.signer, hello })
-    const browser = await start()
+    const finishWith = async (reply: (hello: unknown) => Promise<unknown>, key = m.signer.publicKey) => {
+      const browser = await start()
+      return rejection(browser.finish(await reply(browser.hello), key))
+    }
+    const { hello } = await start()
 
     const otherDevice = await startBrowserHandshake({ machineId: m.id, device: await device() })
-    expect(await rejection(answer({ ...browser.hello, device: otherDevice.hello.device }))).toBe('bad signature')
+    expect(await rejection(answer({ ...hello, device: otherDevice.hello.device }))).toBe('bad signature')
     const elsewhere = await startBrowserHandshake({ machineId: other.id, device: signer })
     expect(await rejection(answer(elsewhere.hello))).toBe('bad signature')
 
     // Signed by another key, a key that isn't this machine's, and an answer to another hello.
-    const byOther = await answer(browser.hello, other)
-    expect(await rejection(browser.finish(byOther.reply, m.signer.publicKey))).toBe('bad signature')
-    expect(await rejection(browser.finish(byOther.reply, other.signer.publicKey))).toBe('bad signature')
-    const second = await start()
-    const toSecond = await answer(second.hello)
-    expect(await rejection(browser.finish(toSecond.reply, m.signer.publicKey))).toBe('bad signature')
+    const byOther = async (h: unknown) => (await answer(h, other)).reply
+    expect(await finishWith(byOther)).toBe('bad signature')
+    expect(await finishWith(byOther, other.signer.publicKey)).toBe('bad signature')
+    expect(await finishWith(async () => (await answer((await start()).hello)).reply)).toBe('bad signature')
+
+    // Someone with their own device key re-signs the victim's ephemeral key. The
+    // machine accepts it as that device, but the victim refuses the answer.
+    const attacker = await device()
+    const attackerHello = async (victim: unknown) => {
+      const { ephemeral } = victim as { ephemeral: string }
+      const { kty, crv, x, y } = attacker.publicJwk
+      const transcript = `orch-e2e-browser\n1\n${m.id}\n${JSON.stringify({ crv, kty, x, y })}\n${ephemeral}`
+      const signature = b64(await attacker.sign(encode(transcript)))
+      return { v: 1, device: { kty, crv, x, y }, ephemeral, signature }
+    }
+    const resigned = async (victim: unknown) => {
+      const accepted = await answer(await attackerHello(victim))
+      expect(accepted.device.x).toBe(attacker.publicJwk.x ?? '')
+      return accepted.reply
+    }
+    expect(await finishWith(resigned)).toBe('bad signature')
 
     const offCurve = b64(Uint8Array.of(4, ...new Uint8Array(64).fill(1)))
-    expect(await rejection(answer({ ...browser.hello, ephemeral: offCurve }))).toBe('bad message')
-    expect(await rejection(answer({ ...browser.hello, extra: 1 }))).toBe('bad message')
-    expect(await rejection(answer({ ...browser.hello, signature: 'AAAA' }))).toBe('bad message')
-    expect(await rejection(answer({ ...browser.hello, v: 2 }))).toBe('version')
+    expect(await rejection(answer({ ...hello, ephemeral: offCurve }))).toBe('bad message')
+    expect(await rejection(answer({ ...hello, extra: 1 }))).toBe('bad message')
+    expect(await rejection(answer({ ...hello, signature: 'AAAA' }))).toBe('bad message')
+    expect(await rejection(answer({ ...hello, v: 2 }))).toBe('version')
     expect(await rejection(answer('hello'))).toBe('bad message')
-    const reply = (await answer(browser.hello)).reply
-    expect(await rejection(browser.finish({ ...reply, v: 2 }, m.signer.publicKey))).toBe('version')
-    expect(await rejection(browser.finish({ ...reply, ephemeral: offCurve }, m.signer.publicKey))).toBe('bad message')
+    const genuine = async (h: unknown) => (await answer(h)).reply as Record<string, unknown>
+    expect(await finishWith(async (h) => ({ ...(await genuine(h)), v: 2 }))).toBe('version')
+    expect(await finishWith(async (h) => ({ ...(await genuine(h)), ephemeral: offCurve }))).toBe('bad message')
+  })
 
-    // The genuine reply still completes the handshake after all of that.
-    const session = await browser.finish(reply, m.signer.publicKey)
-    expect(await session.seal(encode('ok'))).toBeInstanceOf(Uint8Array)
+  test('finish is single use, whether the first call failed or succeeded', async () => {
+    const m = machine()
+    const signer = await device()
+    const failedFirst = await startBrowserHandshake({ machineId: m.id, device: signer })
+    const reply = (await answerBrowserHandshake({ machineId: m.id, machine: m.signer, hello: failedFirst.hello })).reply
+    expect(await rejection(failedFirst.finish({ ...reply, v: 2 }, m.signer.publicKey))).toBe('version')
+    expect(await rejection(failedFirst.finish(reply, m.signer.publicKey))).toBe('bad message')
+
+    const browser = await startBrowserHandshake({ machineId: m.id, device: signer })
+    const answer = await answerBrowserHandshake({ machineId: m.id, machine: m.signer, hello: browser.hello })
+    const [session, again] = await Promise.allSettled([
+      browser.finish(answer.reply, m.signer.publicKey),
+      browser.finish(answer.reply, m.signer.publicKey),
+    ])
+    expect(session.status).toBe('fulfilled')
+    expect(again.status === 'rejected' && again.reason).toEqual(new E2eError('bad message'))
+    expect(await rejection(browser.finish(answer.reply, m.signer.publicKey))).toBe('bad message')
   })
 
   test('open refuses tampered, replayed and reordered messages, then opens the genuine next one', async () => {

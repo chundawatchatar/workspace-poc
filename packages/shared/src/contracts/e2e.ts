@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { type DeviceJwk, deviceJwk } from './deviceProof'
+import { canonicalDeviceJwk, type DeviceJwk, deviceJwk } from './deviceProof'
 import { machineKeyMatches } from './machineKey'
 import { fromBase64url } from './tunnel'
 
@@ -90,7 +90,11 @@ export interface E2eSession {
 /** What `startBrowserHandshake` gives back: the hello to send and a step that checks the machine's answer. */
 export interface BrowserHandshake {
   hello: E2eBrowserHello
-  /** Resolves to the session once `reply` checks out against `machinePublicKey` and the machine id, else rejects. */
+  /**
+   * Resolves to the session once `reply` checks out against `machinePublicKey`
+   * and the machine id, else rejects. Single use: every later call rejects,
+   * whatever the first one gave.
+   */
   finish(reply: unknown, machinePublicKey: string): Promise<E2eSession>
 }
 
@@ -143,23 +147,31 @@ export async function startBrowserHandshakeWith(
   const { kty, crv, x, y } = device.publicJwk
   const devicePublic = parseMessage(deviceJwk, { kty, crv, x, y })
   const own = await ephemeralPair(hooks)
-  const browserTranscript = browserSignedMessage(machineId, own.publicKey)
+  const browserTranscript = browserSignedMessage(machineId, devicePublic, own.publicKey)
   const hello: E2eBrowserHello = {
     v: E2E_VERSION,
     device: devicePublic,
     ephemeral: own.publicKey,
     signature: toBase64url(await device.sign(browserTranscript)),
   }
+  let finished = false
   return {
     hello,
     finish: async (reply, machinePublicKey) => {
+      // Single use, set before the first await: two sessions from one
+      // handshake would share keys and counters, so AES-GCM would reuse IVs.
+      if (finished) throw new E2eError('bad message')
+      finished = true
       const answer = parseMessage(e2eMachineHello, reply)
       const peer = await importEphemeral(answer.ephemeral)
       if (!(await machineKeyMatches(machinePublicKey, machineId))) throw new E2eError('bad signature')
       const machineTranscript = machineSignedMessage(machineId, await sha256(browserTranscript), answer.ephemeral)
-      const verifyKey = await crypto.subtle.importKey('raw', fromBase64url(machinePublicKey), 'Ed25519', false, [
-        'verify',
-      ])
+      let verifyKey: CryptoKey
+      try {
+        verifyKey = await crypto.subtle.importKey('raw', fromBase64url(machinePublicKey), 'Ed25519', false, ['verify'])
+      } catch {
+        throw new E2eError('bad signature')
+      }
       const valid = await crypto.subtle.verify('Ed25519', verifyKey, fromBase64url(answer.signature), machineTranscript)
       if (!valid) throw new E2eError('bad signature')
       const keys = await deriveKeys(own.privateKey, peer, browserTranscript, machineTranscript)
@@ -188,7 +200,7 @@ export async function answerBrowserHandshakeWith(
 ): Promise<MachineHandshake> {
   const browser = parseMessage(e2eBrowserHello, hello)
   const peer = await importEphemeral(browser.ephemeral)
-  const browserTranscript = browserSignedMessage(machineId, browser.ephemeral)
+  const browserTranscript = browserSignedMessage(machineId, browser.device, browser.ephemeral)
   let verifyKey: CryptoKey
   try {
     verifyKey = await crypto.subtle.importKey('jwk', browser.device, { name: 'ECDSA', namedCurve: 'P-256' }, false, [
@@ -218,9 +230,14 @@ export async function answerBrowserHandshakeWith(
   }
 }
 
-/** The bytes the browser signs: its context, the version, the machine id and its ephemeral key, one per line. */
-function browserSignedMessage(machineId: string, ephemeral: string): Uint8Array<ArrayBuffer> {
-  return encoder.encode(`${BROWSER_CONTEXT}\n${E2E_VERSION}\n${machineId}\n${ephemeral}`)
+/**
+ * The bytes the browser signs: its context, the version, the machine id, its
+ * device key (`canonicalDeviceJwk`) and its ephemeral key, one per line. The
+ * device key is in it so a hello re-signed under another device key yields a
+ * transcript, and so a machine answer, that the real browser refuses.
+ */
+function browserSignedMessage(machineId: string, device: DeviceJwk, ephemeral: string): Uint8Array<ArrayBuffer> {
+  return encoder.encode(`${BROWSER_CONTEXT}\n${E2E_VERSION}\n${machineId}\n${canonicalDeviceJwk(device)}\n${ephemeral}`)
 }
 
 /**
