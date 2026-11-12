@@ -485,10 +485,24 @@ terminals. An idle socket costs one TCP connection and a small ping, and one sma
   `machineIdFromPublicKey(publicKey)`, the SHA-256 of the raw key. A bad signature, a nonce from another socket or a
   `hello` in another shape gets 1008 with a generic reason; another version gets `CLOSE_UNSUPPORTED_VERSION`. The
   server keeps only the public key, on the `MachineConnection` in memory, and neither side logs the nonce, the
-  signature or the key. Since the id names the key, a later browser can pin the key against the id without trusting
-  the server. Open risk: the signed message does not name the server, so a server the machine dials could relay
+  signature or the key. Since the id names the key, a browser pins the key against the id without trusting the
+  server (next point). Open risk: the signed message does not name the server, so a server the machine dials could relay
   another server's challenge and use the answer to pose as the machine there (the raw-secret `hello` it replaced
   handed the secret over outright). A host that gets no challenge drops the socket with "no challenge from server".
+- **The browser pins the machine key.** Before `<TerminalUI>` mounts, `MachineKeyCheck` (`apps/client`) fetches
+  `routes.system.machineKey` (`GET /api/machine-key`, `{ publicKey }`, served from the loaded `MachineKey` and 404
+  when none exists, never creating one) through the page's own transport, so it is authorized like every machine
+  route. It checks `machineKeyMatches(publicKey, machineId)`, then the pin in the `machine-keys` store of the
+  `orch-device` IndexedDB database (`src/lib/machineKeys.ts`, `{ publicKey, pinnedAt, source }`), never in
+  `localStorage`, a query key, a URL or a log. The id itself is vouched for out of band: by a connect link's `fp`
+  (`machineFingerprint(id)`, which the host printed; `acceptConnectLink` refuses a link without a matching one), so
+  its first key is pinned at once (`source: 'link'`), or, through the account, by the owner typing the fingerprint
+  the machine shows locally (`source: 'confirmed'`). A server that lists an id for a key of its own fails that
+  comparison. A key that doesn't hash to the id, or differs from the pin, stops the page with a warning and no Retry,
+  so no terminal socket opens and nothing reconnects. The check runs once per page open, not when sockets reconnect.
+  Open risk until the e2e handshake: the machine signs nothing for the browser with this key yet, so a compromised
+  relay can pass the real public key through and still read or inject traffic. This step only makes sure the browser
+  holds the right key for that handshake to check.
 - **Heartbeats from both sides.** The server pings and drops a silent machine (job 005). The host also needs its own
   timeout: after sleep or a network switch a TCP connection can look open while it's dead, and only the host's side
   notices. Ping every 20–25 seconds, because many proxies and NATs drop idle connections after 30–60 seconds.

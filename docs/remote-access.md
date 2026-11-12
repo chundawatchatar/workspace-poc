@@ -87,12 +87,35 @@ The first time remote access is on, the host creates an access key and prints
 the connect link once, in the host's log (the terminal running `bun run dev`):
 
 ```text
-<client>/#machine=<id>&key=<key>
+<client>/#machine=<id>&key=<key>&fp=<fingerprint>
 ```
 
 Open it in a browser. The client saves the machine and opens it. The link holds
 the secret key: treat it like a password, and don't paste it into issues or
 chat.
+
+`fp` is the machine key's fingerprint, such as `ABCD-EFGH-JKMN-PQRS`: the first
+10 bytes of the machine id (the SHA-256 of the machine's public key) in the same
+groups as a device fingerprint. The host printed it, so the browser can trust
+the id without the server: it refuses a link whose `fp` isn't its id's, or that
+has none, and removes it from the address bar unsaved. A link made before
+fingerprints were added stops working; make a new one (section 4). The same
+fingerprint shows beside the machine id in the "Remote access…" dialog
+(`Key ABCD-…`) and on the `Machine key:` line of `bun run host:remote status`.
+
+Before the page opens any terminal, the browser asks the machine for its public
+key (`GET /api/machine-key`, through the relay with the same key or ticket and
+device proof as every other request) and checks that it hashes to the machine
+id. The first time, it pins that key in IndexedDB beside its device key; every
+later open checks the key against the pin.
+
+If the page says **"The machine key doesn't match"**, the key it got isn't the
+one this browser trusts for that machine: something between them, such as a
+compromised server, may be posing as it. The page stops there, with no Retry,
+and opens no terminal socket. Check the fingerprint with
+`bun run host:remote status` on the machine and don't open it from that browser
+until you know why. A relinked machine with a new key has a new id, so it gets a
+new pin rather than this warning.
 
 The `<client>` part is picked in this order:
 
@@ -151,7 +174,14 @@ button. The user id and the public keys stay on the machine: the dialog and the
 status never show them. A linked machine must unlink before it links again.
 
 Once linked, any browser signed in to that account opens the machine from the
-client's home page, with no connect link. The browser asks the server for a
+client's home page, with no connect link. The first time a browser opens it this
+way, nothing printed by the host vouches for the machine id the server listed,
+so once the machine answers its key the page shows the key's fingerprint and
+asks you to type the one the machine shows: Machine key in its "Remote access…"
+dialog, or `bun run host:remote status`. Confirm stays disabled until the typed
+fingerprint matches (dashes, spaces and case don't matter), so a stray click
+can't pin a key; "It doesn't match" pins nothing and shows the warning above.
+After that the browser checks the key against its pin and doesn't ask again. The browser asks the server for a
 relay ticket: a short-lived Ed25519 signature saying "this account may open
 this machine for 60 seconds", issued only for a machine in the account's list.
 It sends the ticket in the `x-orch-relay-ticket` header on requests and as a
@@ -254,7 +284,7 @@ On a machine where you don't open the host page (over SSH, a headless box, a
 setup script), `bun run host:remote` does what the dialog does:
 
 ```bash
-bun run host:remote status             # server address, remote access, machine id, linked account
+bun run host:remote status             # server address, remote access, machine id and key, linked account
 bun run host:remote server wss://host  # set the server address
 bun run host:remote on                 # or off
 bun run host:remote link <key>         # add --yes to skip the question
