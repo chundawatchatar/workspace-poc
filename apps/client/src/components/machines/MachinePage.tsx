@@ -17,6 +17,7 @@ import { machinePath, type SavedMachine, useMachines } from '../../lib/machines'
 import { AccountMenu } from '../account/AccountMenu'
 import { Centered, linkClass } from '../Centered'
 import { MachineKeyCheck } from './MachineKeyCheck'
+import { VerifiedMachine, type VerifiedTransportOptions } from './VerifiedMachine'
 
 /** The cloud server: `VITE_SERVER_URL` from the build, or the origin the client is served from. */
 function serverUrl(): string {
@@ -160,7 +161,7 @@ function unapprovedHint(fingerprint: string): ReactNode {
 
 /**
  * A machine's transport, its key checked against this browser's pin before `<TerminalUI>` mounts, so a machine whose
- * key doesn't match never gets a terminal socket. A connect link vouched for the id, so its first key is pinned at
+ * key doesn't match never gets a terminal socket. `<TerminalUI>` then gets a transport bound to that pinned key. A connect link vouched for the id, so its first key is pinned at
  * once; the account's list didn't, so the owner confirms the fingerprint first.
  */
 function OpenMachine({ machine }: { machine: OpenedMachine }) {
@@ -169,16 +170,19 @@ function OpenMachine({ machine }: { machine: OpenedMachine }) {
 
   // One transport per machine and key, so moving between workspaces keeps the connection. Without a key, the
   // account opens the machine with relay tickets; either way every request carries this browser's device proof.
-  const transport = useMemo(
-    () =>
+  // This one only fetches the key to check: it can't open an end-to-end session before the key is known.
+  const createTransport = useCallback(
+    (e2e?: VerifiedTransportOptions) =>
       createRemoteTransport({
         serverUrl: serverUrl(),
         machineId: id,
         device: signer,
         ...(key ? { accessKey: key } : { relayTicket: () => relayTicketFor(id) }),
+        ...e2e,
       }),
     [id, key, signer],
   )
+  const transport = useMemo(() => createTransport(), [createTransport])
   const deniedHint: ReactNode = key ? keyDeniedHint : accountDeniedHint
   const unapproved = useMemo(() => unapprovedHint(fingerprint), [fingerprint])
   return (
@@ -189,7 +193,13 @@ function OpenMachine({ machine }: { machine: OpenedMachine }) {
       unapprovedHint={unapproved}
       deniedHint={deniedHint}
     >
-      <MachineTerminalUI machine={machine} transport={transport} deniedHint={deniedHint} unapproved={unapproved} />
+      {(publicKey) => (
+        <VerifiedMachine publicKey={publicKey} createTransport={createTransport}>
+          {(verified) => (
+            <MachineTerminalUI machine={machine} transport={verified} deniedHint={deniedHint} unapproved={unapproved} />
+          )}
+        </VerifiedMachine>
+      )}
     </MachineKeyCheck>
   )
 }
