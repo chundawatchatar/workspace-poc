@@ -497,7 +497,7 @@ terminals. An idle socket costs one TCP connection and a small ping, and one sma
   `localStorage`, a query key, a URL or a log. The id itself is vouched for out of band: by a connect link's `fp`
   (`machineFingerprint(id)`, which the host printed; `acceptConnectLink` refuses a link without a matching one), so
   its first key is pinned at once (`source: 'link'`), or, through the account, by the owner typing the fingerprint
-  the machine shows locally (`source: 'confirmed'`). A server that lists an id for a key of its own fails that
+  the machine shows locally, which the page never displays itself (`source: 'confirmed'`). A server that lists an id for a key of its own fails that
   comparison. A key that doesn't hash to the id, or differs from the pin, stops the page with a warning and no Retry,
   so no terminal socket opens and nothing reconnects. The check runs once per page open, not when sockets reconnect.
   Open risk until the e2e handshake: the machine signs nothing for the browser with this key yet, so a compromised

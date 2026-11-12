@@ -101,7 +101,7 @@ the id without the server: it refuses a link whose `fp` isn't its id's, or that
 has none, and removes it from the address bar unsaved. A link made before
 fingerprints were added stops working; make a new one (section 4). The same
 fingerprint shows beside the machine id in the "Remote access…" dialog
-(`Key ABCD-…`) and on the `Machine key:` line of `bun run host:remote status`.
+(`Machine key ABCD-…`) and on the `Machine key:` line of `bun run host:remote status`.
 
 Before the page opens any terminal, the browser asks the machine for its public
 key (`GET /api/machine-key`, through the relay with the same key or ticket and
@@ -176,9 +176,10 @@ status never show them. A linked machine must unlink before it links again.
 Once linked, any browser signed in to that account opens the machine from the
 client's home page, with no connect link. The first time a browser opens it this
 way, nothing printed by the host vouches for the machine id the server listed,
-so once the machine answers its key the page shows the key's fingerprint and
-asks you to type the one the machine shows: Machine key in its "Remote access…"
-dialog, or `bun run host:remote status`. Confirm stays disabled until the typed
+so once the machine answers its key the page asks you to type the fingerprint
+the machine shows: Machine key in its "Remote access…" dialog, or
+`bun run host:remote status`. The page doesn't show the fingerprint itself, so
+it can only come from the machine. Confirm stays disabled until the typed
 fingerprint matches (dashes, spaces and case don't matter), so a stray click
 can't pin a key; "It doesn't match" pins nothing and shows the warning above.
 After that the browser checks the key against its pin and doesn't ask again. The browser asks the server for a
