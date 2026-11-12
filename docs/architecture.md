@@ -443,6 +443,18 @@ encryption (REM-2) comes later, by adding a sealed frame type: its payload is an
 browser and the host, with keys from a handshake the server passes along but can't read. Only the browser and the
 host change; the server keeps routing the same way.
 
+The crypto for it is in `packages/shared/src/contracts/e2e.ts` (WebCrypto only, so the browser and the host share it),
+not wired into the transport or the host yet. The browser sends a fresh P-256 ephemeral key signed with its device key
+over `orch-e2e-browser`, the version and the machine id. The machine answers with its own ephemeral key, signed with its
+Ed25519 machine key over `orch-e2e-machine`, the version, the machine id and the SHA-256 of the browser's signed bytes,
+so the answer fits only that hello; the browser checks the machine key against the id before trusting the signature.
+ECDH over the two ephemeral keys and HKDF-SHA-256 (salted with both signed transcripts) give one non-extractable
+AES-256-GCM key per direction. A sealed message is an 8-byte big-endian counter followed by the ciphertext and tag;
+the IV is four zero bytes and the counter, and the AAD binds the direction, the counter and the caller's own data.
+Each direction counts from 0 and accepts only the next counter, which suits an ordered transport, and stops after
+`2^32 - 1` messages rather than wrapping. Approving the device stays the caller's check, with the verified device key
+the machine's side returns.
+
 Accounts (sign-in, sessions, emails and the account's machine list) are described in [accounts](accounts.md).
 
 That only stays easy if every remote access job keeps these rules:
