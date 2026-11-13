@@ -30,7 +30,7 @@ function binary(header: unknown, payload = new Uint8Array(), headerLength?: numb
 describe('tunnel frames', () => {
   test('every frame round-trips through its direction union, as text unless it carries bytes', () => {
     const machine: TunnelFrame[] = [
-      { type: 'hello', version: 2, publicKey, signature },
+      { type: 'hello', version: 3, publicKey, signature },
       {
         type: 'http.response',
         id: 1,
@@ -53,6 +53,7 @@ describe('tunnel frames', () => {
       { type: 'welcome', machineId: 'm-1' },
       { type: 'http.request', id: 3, method: 'GET', path: '/api/git/status?cwd=%2Ftmp', headers: [] },
       { type: 'http.request', id: 4, method: 'POST', path: '/api/fs/dirs', headers: [['x', 'y']], body: allBytes },
+      { type: 'http.sealed', id: 5, data: allBytes },
       { type: 'ws.open', channel: 1, path: '/ws/term/abc?cols=80', headers: [] },
       {
         type: 'enroll.previewed',

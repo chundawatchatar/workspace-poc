@@ -8,7 +8,7 @@ import { machineNameSchema } from './serverMachines'
 // HTTP requests and WebSockets over it as these frames. This file runs in the
 // host, the server and the browser, so it uses only web-standard APIs.
 
-export const TUNNEL_PROTOCOL_VERSION = 2
+export const TUNNEL_PROTOCOL_VERSION = 3
 
 /** The server path machines open their tunnel socket on. Its messages are tunnel frames, not JSON client messages. */
 export const TUNNEL_PATH = '/tunnel'
@@ -70,6 +70,14 @@ export const httpRequestFrame = z.object({
   headers,
   body: bytes.optional(),
 })
+
+/**
+ * A browser HTTP request sealed end to end: `data` is the envelope the browser
+ * posted (`e2eHttp.ts`), relayed unread. The machine answers it with
+ * `http.response`, `http.body` and `http.end` like any request, its sealed
+ * records inside the body.
+ */
+export const httpSealedFrame = z.object({ type: z.literal('http.sealed'), id, data: bytes })
 
 /** The head of the response to the request with the same `id`. */
 export const httpResponseFrame = z.object({
@@ -215,6 +223,7 @@ export const serverFrame = z.discriminatedUnion('type', [
   challengeFrame,
   welcomeFrame,
   httpRequestFrame,
+  httpSealedFrame,
   wsOpenFrame,
   wsDataFrame,
   wsCloseFrame,
@@ -234,6 +243,7 @@ export type TunnelFrame = MachineFrame | ServerFrame
 /** The field that holds the raw bytes, for each frame type that can carry them. */
 const byteField: Partial<Record<TunnelFrame['type'], string>> = {
   'http.request': 'body',
+  'http.sealed': 'data',
   'http.body': 'data',
   'ws.data': 'data',
 }

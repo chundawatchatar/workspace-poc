@@ -82,9 +82,25 @@ export interface E2eMachineSigner {
  * must pass alike, bound to the message but not sent with it. The caller
  * closes the channel when `open` rejects.
  */
-export interface E2eSession {
+export interface E2eChannel {
   seal(plaintext: Uint8Array, aad?: Uint8Array): Promise<Uint8Array>
   open(sealed: Uint8Array, aad?: Uint8Array): Promise<Uint8Array>
+}
+
+/** The highest channel number `E2eSession.channel` takes. */
+export const MAX_E2E_CHANNEL = 2 ** 32 - 1
+
+/**
+ * An end-to-end session: a channel of its own, plus `channel(n)`, an
+ * independent sub-channel for channel number `n` (1 to `MAX_E2E_CHANNEL`), so
+ * messages that may arrive in any order (one HTTP request each) never share a
+ * counter. Its keys come from the same HKDF base with `n` in the info, and it
+ * counts from 0 in each direction. Each `n` can be taken once per session, on
+ * either side: a second call rejects with `E2eError`, so a key and IV pair is
+ * never used twice and a replayed channel can't be opened again.
+ */
+export interface E2eSession extends E2eChannel {
+  channel(n: number): Promise<E2eChannel>
 }
 
 /** What `startBrowserHandshake` gives back: the hello to send and a step that checks the machine's answer. */
@@ -175,7 +191,7 @@ export async function startBrowserHandshakeWith(
       const valid = await crypto.subtle.verify('Ed25519', verifyKey, fromBase64url(answer.signature), machineTranscript)
       if (!valid) throw new E2eError('bad signature')
       const keys = await deriveKeys(own.privateKey, peer, browserTranscript, machineTranscript)
-      return createSession(keys.browserToMachine, BROWSER_TO_MACHINE, keys.machineToBrowser, MACHINE_TO_BROWSER, hooks)
+      return createSession(keys, 'browser', hooks)
     },
   }
 }
@@ -225,7 +241,7 @@ export async function answerBrowserHandshakeWith(
   const keys = await deriveKeys(own.privateKey, peer, browserTranscript, machineTranscript)
   return {
     reply,
-    session: createSession(keys.machineToBrowser, MACHINE_TO_BROWSER, keys.browserToMachine, BROWSER_TO_MACHINE, hooks),
+    session: createSession(keys, 'machine', hooks),
     device: browser.device,
   }
 }
@@ -294,7 +310,7 @@ async function deriveKeys(
   peerPublic: CryptoKey,
   browserTranscript: Uint8Array,
   machineTranscript: Uint8Array,
-): Promise<{ browserToMachine: CryptoKey; machineToBrowser: CryptoKey }> {
+): Promise<DirectionKeys> {
   const shared = await crypto.subtle.deriveBits({ name: 'ECDH', public: peerPublic }, ownPrivate, 256)
   const base = await crypto.subtle.importKey('raw', shared, 'HKDF', false, ['deriveKey'])
   const salt = await sha256(concat(browserTranscript, encoder.encode('\n'), machineTranscript))
@@ -306,17 +322,59 @@ async function deriveKeys(
       false,
       ['encrypt', 'decrypt'],
     )
-  return { browserToMachine: await derive(BROWSER_TO_MACHINE), machineToBrowser: await derive(MACHINE_TO_BROWSER) }
+  return {
+    derive,
+    browserToMachine: await derive(BROWSER_TO_MACHINE),
+    machineToBrowser: await derive(MACHINE_TO_BROWSER),
+  }
 }
 
-/** A session that seals with `sealKey` under `sealLabel` and opens with `openKey` under `openLabel`. */
-function createSession(
+/** The session's two direction keys, and `derive`, which makes another key from the same HKDF base for a label. */
+interface DirectionKeys {
+  derive(label: string): Promise<CryptoKey>
+  browserToMachine: CryptoKey
+  machineToBrowser: CryptoKey
+}
+
+/** A direction's label on channel `n`, its HKDF info and AAD label. Unlike a session label, it ends in ` channel <n>`. */
+function channelLabel(label: string, n: number): string {
+  return `${label} channel ${n}`
+}
+
+/** `side`'s session: it seals in its own direction and opens in the peer's, and keeps which channels it has taken. */
+function createSession(keys: DirectionKeys, side: 'browser' | 'machine', hooks: E2eTestHooks): E2eSession {
+  const [sealLabel, openLabel] =
+    side === 'browser' ? [BROWSER_TO_MACHINE, MACHINE_TO_BROWSER] : [MACHINE_TO_BROWSER, BROWSER_TO_MACHINE]
+  const [sealKey, openKey] =
+    side === 'browser' ? [keys.browserToMachine, keys.machineToBrowser] : [keys.machineToBrowser, keys.browserToMachine]
+  const taken = new Set<number>()
+  return {
+    ...createChannel(sealKey, sealLabel, openKey, openLabel, hooks),
+    channel: async (n) => {
+      if (!Number.isInteger(n) || n < 1 || n > MAX_E2E_CHANNEL) throw new E2eError('bad message')
+      // Taken before the first await, so two concurrent calls for one `n` never both get its keys.
+      if (taken.has(n)) throw new E2eError('replayed or out of order')
+      taken.add(n)
+      const [channelSeal, channelOpen] = [channelLabel(sealLabel, n), channelLabel(openLabel, n)]
+      return createChannel(
+        await keys.derive(channelSeal),
+        channelSeal,
+        await keys.derive(channelOpen),
+        channelOpen,
+        hooks,
+      )
+    },
+  }
+}
+
+/** A channel that seals with `sealKey` under `sealLabel` and opens with `openKey` under `openLabel`. */
+function createChannel(
   sealKey: CryptoKey,
   sealLabel: string,
   openKey: CryptoKey,
   openLabel: string,
   hooks: E2eTestHooks,
-): E2eSession {
+): E2eChannel {
   const maxMessages = hooks.maxMessages ?? MAX_MESSAGES
   let nextSeal = 0
   let nextOpen = 0
