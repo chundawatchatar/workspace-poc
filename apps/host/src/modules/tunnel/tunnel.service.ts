@@ -21,7 +21,7 @@ import type { Principal } from '../../lib/principal'
 import type { RecordAudit } from '../remote-access/audit-log.service'
 import type { MachineKey } from './tunnel.repository'
 import { AUTH_TIMEOUT_MS, type OpenChannel, type OpenSocket, TunnelChannels } from './tunnel-channels.service'
-import { type Authorize, type TunnelHandler, TunnelHttp } from './tunnel-http.service'
+import { type Authorize, type SealedSessionLookup, type TunnelHandler, TunnelHttp } from './tunnel-http.service'
 import { TunnelOutbox } from './tunnel-outbox.service'
 
 const LOOPBACK_HOSTS = ['127.0.0.1', '[::1]', 'localhost']
@@ -123,6 +123,8 @@ export interface TunnelClientOptions {
   authorize: Authorize
   /** Answers each tunneled request. */
   handle: TunnelHandler
+  /** Finds the end-to-end session a sealed request names. Without it, every sealed request gets the unsealed 409. */
+  e2eSession?: SealedSessionLookup
   /** Opens each tunneled WebSocket, or refuses it. */
   openSocket: OpenSocket
   /** The id this host expects the server to give it. A different one in `welcome` logs a warning. */
@@ -275,6 +277,7 @@ export class TunnelClient {
         (frame) => this.send(conn, frame),
         () => outbox.room(),
         this.options.record,
+        this.options.e2eSession,
       ),
       channels: new TunnelChannels(this.options.openSocket, this.options.authorize, (frame) => this.send(conn, frame), {
         authTimeoutMs: this.timings.authTimeoutMs,
@@ -322,6 +325,9 @@ export class TunnelClient {
         return
       case 'http.request':
         if (conn.welcomed) conn.http.request(frame)
+        return
+      case 'http.sealed':
+        if (conn.welcomed) conn.http.sealed(frame)
         return
       case 'ws.open':
       case 'ws.data':
