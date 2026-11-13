@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { ServerFrame } from '@orch/shared'
+import { MAX_TUNNEL_FRAME_BYTES, type ServerFrame } from '@orch/shared'
 import { type MachineConnection, MachineRegistry } from '../tunnel/tunnel.service'
 import { forwardedPath, HttpForwarder } from './forward.service'
 
@@ -114,5 +114,36 @@ describe('HttpForwarder', () => {
     expect((await pending).status).toBe(502)
     expect(forwarder.size).toBe(0)
     expect(sent.m1).toHaveLength(1)
+  })
+
+  test('sends a sealed envelope as one http.sealed with its bytes and nothing else, and answers like any request', async () => {
+    const { forwarder, sent, m1 } = setup(40)
+    const envelope = Uint8Array.from({ length: 300 }, (_, i) => i % 256)
+    const post = (body: Uint8Array<ArrayBuffer>, machineId = 'm1') =>
+      forwarder.forwardSealed(
+        machineId,
+        new Request(`http://server/m/${machineId}/e2e`, {
+          method: 'POST',
+          headers: { 'x-orch-access-key': 'k', cookie: 'c=1' },
+          body,
+        }),
+      )
+
+    const pending = post(envelope)
+    await Bun.sleep(0)
+    expect(sent.m1).toHaveLength(1)
+    const frame = sent.m1?.[0]
+    expect(frame && Object.keys(frame).sort()).toEqual(['data', 'id', 'type'])
+    expect(frame?.type === 'http.sealed' && [frame.id, [...frame.data]]).toEqual([1, [...envelope]])
+    forwarder.handleFrame(m1, { type: 'http.response', id: 1, status: 200, headers: [['x-n', '1']] })
+    forwarder.handleFrame(m1, { type: 'http.body', id: 1, data: encoder.encode('sealed') })
+    forwarder.handleFrame(m1, { type: 'http.end', id: 1 })
+    const response = await pending
+    expect([response.status, response.headers.get('x-n'), await response.text()]).toEqual([200, '1', 'sealed'])
+
+    expect((await post(new Uint8Array(MAX_TUNNEL_FRAME_BYTES + 1))).status).toBe(413)
+    expect((await post(envelope, 'offline')).status).toBe(502)
+    expect((await post(envelope)).status).toBe(504)
+    expect(forwarder.size).toBe(0)
   })
 })

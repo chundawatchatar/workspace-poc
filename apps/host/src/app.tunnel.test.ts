@@ -51,7 +51,7 @@ import {
 } from './app.tunnel.testing'
 import { tunnelEnv } from './lib/principal'
 import { testDevice } from './modules/remote-access/device-proof.testing'
-import { helloVerifies } from './modules/tunnel/tunnel.testing'
+import { helloVerifies, openSealedReply, sealedEnvelope } from './modules/tunnel/tunnel.testing'
 import { TunnelHttp } from './modules/tunnel/tunnel-http.service'
 
 // The host's sockets end to end, on the harness in `app.tunnel.testing.ts`.
@@ -425,5 +425,52 @@ describe('tunneled end-to-end handshake', () => {
       body: json((await startBrowserHandshake({ machineId, device: device.signer })).hello),
     })
     expect(near.status).toBe(403)
+  })
+
+  test('a sealed request on a live session is served like a plain one, and a replay or a closed session is refused', async () => {
+    const conn = await welcomed()
+    const { path, method } = routes.e2e.open
+    const browser = await startBrowserHandshake({ machineId, device: device.signer })
+    const hello = JSON.stringify(browser.hello)
+    send(conn, {
+      type: 'http.request',
+      id: 1,
+      method,
+      path,
+      headers: [['content-type', 'application/json'], ...(await keyHeaders(key, method, path, hello))],
+      body: new TextEncoder().encode(hello),
+    })
+    const of = (id: number) => conn.frames.filter((f) => 'id' in f && f.id === id)
+    const ended = (id: number) => until(() => of(id).some((f) => f.type === 'http.end'))
+    const payloads = (id: number) => of(id).flatMap((f) => (f.type === 'http.body' ? [f.data] : []))
+    await ended(1)
+    const opened = openE2eSessionResponse.parse(JSON.parse(Buffer.concat(payloads(1)).toString()))
+    const session = await browser.finish(opened.hello, machineKey.publicKey)
+
+    const health = routes.system.health.path
+    const request = { method: 'GET', path: health, headers: await keyHeaders(key, 'GET', health) }
+    const { channel, data } = await sealedEnvelope(session, opened.sessionId, 1, request)
+    send(conn, { type: 'http.sealed', id: 2, data })
+    await ended(2)
+    const reply = await openSealedReply(channel, payloads(2))
+    const direct = await fetch(`http://127.0.0.1:${local.port}${health}`)
+    expect([reply.status, JSON.parse(reply.body), reply.end]).toEqual([
+      direct.status,
+      await direct.json(),
+      { kind: 'end' },
+    ])
+    expect(Buffer.concat(payloads(2)).toString()).not.toContain('"ok"')
+
+    send(conn, { type: 'http.sealed', id: 3, data })
+    await ended(3)
+    expect(of(3).find((f) => f.type === 'http.response')).toMatchObject({ status: 400 })
+    e2eSessions.closeAll()
+    const after = await sealedEnvelope(session, opened.sessionId, 2, {
+      ...request,
+      headers: await keyHeaders(key, 'GET', health),
+    })
+    send(conn, { type: 'http.sealed', id: 4, data: after.data })
+    await ended(4)
+    expect(of(4).find((f) => f.type === 'http.response')).toMatchObject({ status: 409 })
   })
 })

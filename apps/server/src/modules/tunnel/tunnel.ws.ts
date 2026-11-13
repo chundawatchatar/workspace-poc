@@ -95,11 +95,11 @@ export function createTunnelSocket({
       }
 
       const welcome = (ws: WSContext, publicKey: string, machineId: string) => {
-        // `http.request` goes in the bulk lane, so a large upload never holds back terminal traffic.
+        // HTTP requests go in the bulk lane, so a large upload never holds back terminal traffic.
         const lanes = new FrameScheduler<ServerFrame>({
           write: (data) => ws.send(data),
           bufferedAmount: () => bunSocket(ws).getBufferedAmount(),
-          lane: (frame) => (frame.type === 'http.request' ? 'bulk' : 'interactive'),
+          lane: (frame) => (frame.type === 'http.request' || frame.type === 'http.sealed' ? 'bulk' : 'interactive'),
         })
         scheduler = lanes
         const live: MachineConnection = {

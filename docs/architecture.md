@@ -285,8 +285,9 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
     capped and expires. What remains is an owner who copies a fingerprint they don't recognise from the pending list
     and types it in: that still approves the server's device. Pending rows keep their fingerprints so the owner can
     tell browsers apart and dismiss strangers.
-  - Until traffic is sealed (REM-2: the handshake is in, sealing is not), a compromised server can read, and inject
-    into, a session an approved browser opens. It just can't open one by itself.
+  - Until WebSocket traffic is sealed (REM-2: the handshake and sealed HTTP are in, sealed sockets are not), a
+    compromised server can read, and inject into, the sockets an approved browser opens. It just can't open one by
+    itself. HTTP requests through a pinned machine are sealed (see "Remote access" below).
   - Access keys from connect links still pass through the server, in a header or the first socket message, so a
     compromised server can capture one. A captured key alone no longer opens the machine through the tunnel, since
     it needs a fresh proof from an approved device, but with a key the server can still push its own device into
@@ -477,13 +478,46 @@ and a key's `RELAY_TICKET_TTL_SECONDS` after it opens, so both renew alike: the 
 before expiry, the same margin as tickets. A device holds at most 8 live sessions (tabs share a device), and a ninth
 drops its oldest. Every path in `RemoteAccessService` that closes sockets closes the matching sessions through one
 helper, `closeAccess`: revoking a device, ending its session, unlinking, the server's `session.ended` and key rotation;
-turning remote access off or stopping the tunnel closes them all. Expiry closes no open socket. No request or frame is
-sealed yet, and unsealed traffic is still accepted; the next jobs seal HTTP, then WebSocket traffic, with these
-sessions. A session id, an ephemeral key, a signature or a derived key is never logged, saved or put in an error
+turning remote access off or stopping the tunnel closes them all. Expiry closes no open socket. A session id, an ephemeral key, a signature or a derived key is never logged, saved or put in an error
 message, a URL or a query key. Open point: the key bootstrap (`routes.system.machineKey`) stays unsealed and outside
 the handshake, since the browser needs the key before it can check one, so `MachineKeyCheck` uses a transport without
 `machinePublicKey`. The job that refuses unsealed traffic must exempt that route or fold it into the handshake. Whether
 a handshake belongs in the remote audit log is also left open.
+
+HTTP is sealed with these sessions. `E2eSession.channel(n)` gives an independent sub-channel for each number from 1
+to `2^32 - 1`: its two keys come from the same HKDF base with ` channel <n>` added to each direction's label in the
+info (and in the AAD), and it counts from 0 in each direction. Each side takes a number once, so a key and IV pair
+is never reused and a replayed envelope can't be opened again. Concurrent requests can reach the host in any order,
+which the session's own next-counter-only rule can't take, so every request gets its own channel, from a per-session
+counter in the browser that starts at 1 (the WebSocket job should take its numbers from the same counter). With
+`machinePublicKey`, `createRemoteTransport` seals every request after the handshake (`contracts/e2eHttp.ts`): the
+inner request `{ method, path, headers, body? }`, with the key or ticket and a fresh device proof in its headers,
+is sealed on the next channel and posted as one envelope (the raw 16-byte session id, the channel as a big-endian
+u32, the sealed record) to the server's `MACHINE_SEALED_ROUTE` (`POST /m/<id>/e2e`, `machineSealedPath`, not in the
+`routes` registry). The outer request carries no credential header. The server reads the body (413 over
+`MAX_TUNNEL_FRAME_BYTES`) and sends it unread as `http.sealed { id, data }` (`HttpForwarder.forwardSealed`), with the
+same pending, timeout, abort and `auth.failed` handling as `http.request`. The host (`TunnelHttp.sealed`) parses the
+envelope, looks the session up with `E2eSessions.get` (its own records and expiry only, so a swapped id or a
+browser's stale `expiresAt` can only make a request fail), opens the channel and the request, then authorizes the
+inner request exactly as an `http.request`, with a fresh proof every time, and refuses it with 403 unless its
+principal is the one that opened the session (same kind, device, and key or account). A live session admits
+nothing by itself. The response goes back on the same channel as sealed records, a head, one per body chunk (64 KiB
+at most, each waiting for the tunnel's room) and an end record that may carry an error, each one length-prefixed
+(u32) in the body of an unsealed `http.response` 200 (`application/octet-stream`), so streamed responses still
+stream. A refused key, ticket or proof still sends `auth.failed` outside the seal, then a sealed 401; an unapproved
+device gets a sealed 403 `device_not_approved`. A session the host doesn't have gets an unsealed 409
+`e2e_session_unknown`, after which the browser drops its session and opens a new one on the next call, without
+retrying this one, since a compromised server could fake that answer after the host served the request. A
+malformed envelope, a channel already taken or a record that doesn't open gets an unsealed 400. The browser builds
+the page's `Response` from the opened head (a head that doesn't open rejects with `E2eError`); its body errors and
+never ends cleanly when a record fails to open or comes out of order, the end record carries an error, or the stream
+stops before the end record, so a truncated or reordered relay is never taken for a whole response. The handshake
+itself and `routes.system.machineKey` stay unsealed, and so do WebSockets; unsealed requests are still accepted.
+No session id, channel key, record, inner path, header or body is logged, saved, or put into an error message, a
+URL or a query key. Risks that remain: sizes, timing and which device connects stay visible to the server; the
+handshake still carries its key or ticket and proof in clear headers; WebSocket traffic is still unsealed; and a
+compromised server can spend a session's channel numbers with junk envelopes, which only makes the browser's
+requests on those numbers fail.
 
 Accounts (sign-in, sessions, emails and the account's machine list) are described in [accounts](accounts.md).
 
@@ -491,8 +525,8 @@ That only stays easy if every remote access job keeps these rules:
 
 - **The server routes on the envelope, never the contents.** It may read the machine id, the frame type, the request
   or channel id, and frame sizes. It never reads, rewrites or decides anything from the method, path, headers, body or
-  response status. The only responses it makes up itself are 403 (an `Origin` it does not allow), 429 (a rate
-  limit), 502 (machine offline) and 504 (timeout), plus its own answers to CORS preflights, which never reach the
+  response status. The only responses it makes up itself are 403 (an `Origin` it does not allow), 413 (a request
+  larger than one tunnel frame), 429 (a rate limit), 502 (machine offline) and 504 (timeout), plus its own answers to CORS preflights, which never reach the
   machine. Origin checks, CORS and rate limits read only the outer request: its `Origin` and `Host` headers, the
   socket address and the machine id in the URL. Dropping the machine's `Access-Control-*` headers is a filter on
   header names, like the hop-by-hop list. So is dropping `Cookie` from every relayed request and socket upgrade, and
@@ -506,7 +540,8 @@ That only stays easy if every remote access job keeps these rules:
 - **One choke point in the browser.** All remote traffic goes through the remote `HostTransport` (rule 4), so the
   browser side of encryption goes in one place.
 - **The protocol is versioned.** The `hello` frame already carries a version. Adding sealed frames means a new version,
-  and a server that doesn't know it rejects the connection clearly instead of misreading frames.
+  and a server that doesn't know it rejects the connection clearly instead of misreading frames. `http.sealed` raised
+  `TUNNEL_PROTOCOL_VERSION` to 3, so a version 2 machine or server is closed with `CLOSE_UNSUPPORTED_VERSION`.
 - **`apps/client`'s build stays static.** It is a TanStack Start app in SPA mode: the build prerenders only the root
   shell into `index.html` next to its assets, and no server bundle runs at request time. It gets no configuration
   injected by the server, so it can later be served from an origin the server doesn't control. A server that serves the app could also serve modified JavaScript, which
@@ -543,9 +578,9 @@ terminals. An idle socket costs one TCP connection and a small ping, and one sma
   comparison. A key that doesn't hash to the id, or differs from the pin, stops the page with a warning and no Retry,
   so no terminal socket opens and nothing reconnects. The check runs once per page open, not when sockets reconnect.
   The machine now signs for the browser with this key: `<TerminalUI>` gets a transport that opens an end-to-end session
-  first, and an answer that doesn't verify against the pin stops the page the same way. Open risk until the sealing
-  jobs: traffic is still not sealed with that session, so a compromised relay that passes the handshake through can
-  still read or inject the requests and frames that follow it.
+  first, and an answer that doesn't verify against the pin stops the page the same way. Its HTTP requests are then sealed
+  with that session. Open risk until the WebSocket sealing job: socket frames are still not sealed, so a compromised
+  relay that passes the handshake through can still read or inject them.
 - **Heartbeats from both sides.** The server pings and drops a silent machine (job 005). The host also needs its own
   timeout: after sleep or a network switch a TCP connection can look open while it's dead, and only the host's side
   notices. Ping every 20–25 seconds, because many proxies and NATs drop idle connections after 30–60 seconds.

@@ -35,6 +35,17 @@ export const MACHINE_API_ROUTE = `/m/:machineId${API_PREFIX}/*`
 /** The server route pattern for a machine's WebSockets, `/m/:machineId/ws/*`, in Hono syntax. */
 export const MACHINE_WS_ROUTE = `/m/:machineId${WS_PREFIX}/*`
 
+/**
+ * The server route a browser posts sealed HTTP envelopes to, `/m/:machineId/e2e`, in Hono syntax. It is the
+ * server's envelope path, not a machine route, so it is not in the `routes` registry.
+ */
+export const MACHINE_SEALED_ROUTE = '/m/:machineId/e2e'
+
+/** The path of a machine's sealed route, `/m/<machineId>/e2e`. */
+export function machineSealedPath(machineId: string): string {
+  return `${machinePathPrefix(machineId)}/e2e`
+}
+
 /** The close code a browser socket gets when its machine has no live tunnel, or the tunnel drops. */
 export const CLOSE_MACHINE_OFFLINE = 4502
 

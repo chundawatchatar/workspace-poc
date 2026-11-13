@@ -67,7 +67,7 @@ export interface RemoteAccessServiceOptions {
   /** Where tunneled sockets and refusals are recorded, for the owner to read. */
   audit: AuditLogService
   /** The end-to-end sessions browsers opened, closed together with the sockets of the same access. */
-  e2eSessions: Pick<E2eSessions, 'closeWhere' | 'closeAll'>
+  e2eSessions: Pick<E2eSessions, 'closeWhere' | 'closeAll' | 'get'>
   /** The machine key file, created the first time remote access is needed. */
   machineKeyFile: string
   /** The access keys file. */
@@ -444,6 +444,7 @@ export class RemoteAccessService {
       expectedMachineId: machineKey.machineId,
       authorize: (credentials, refused) => this.authorize(credentials, refused),
       handle: (request, principal) => this.options.handle(request, principal),
+      e2eSession: (sessionId) => this.options.e2eSessions.get(sessionId),
       openSocket: (path, headers, conn, principal) => this.options.openSocket(path, headers, conn, principal),
       onSessionEnded: (accountId) => this.sessionEnded(accountId),
       record: (event) => this.options.audit.record(event),

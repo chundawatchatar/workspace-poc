@@ -164,6 +164,15 @@ describe('e2e handshake and sessions', () => {
       expected('orch-e2e machine->browser', 0, plaintext, new Uint8Array()),
     )
 
+    // Channel 1's keys come from the same base with the channel in the info, and it counts from 0 again.
+    const [browserChannel, machineChannel] = [await session.channel(1), await answer.session.channel(1)]
+    expect(await browserChannel.seal(plaintext, aad)).toEqual(
+      expected('orch-e2e browser->machine channel 1', 0, plaintext, aad),
+    )
+    expect(await machineChannel.seal(plaintext)).toEqual(
+      expected('orch-e2e machine->browser channel 1', 0, plaintext, new Uint8Array()),
+    )
+
     const source = readFileSync(join(import.meta.dir, 'e2e.ts'), 'utf8')
     expect(source).not.toMatch(/from '(node:|bun)|require\(/)
   })
@@ -261,6 +270,33 @@ describe('e2e handshake and sessions', () => {
     expect(await host.open(m0, aad)).toEqual(encode('first'))
     expect(await rejection(host.open(m0, aad))).toBe('replayed or out of order')
     expect(await host.open(m1, aad)).toEqual(encode('second'))
+  })
+
+  test('a channel opens only on the peer channel of the same number, and each number is taken once per side', async () => {
+    const { browser, machine: host } = await handshake()
+    const [b1, b2, h1, h2] = await Promise.all([
+      browser.channel(1),
+      browser.channel(2),
+      host.channel(1),
+      host.channel(2),
+    ])
+    const request = await b1.seal(encode('GET /api/health'))
+
+    expect(await rejection(h2.open(request))).toBe('bad message')
+    expect(await rejection(host.open(request))).toBe('bad message')
+    expect(await h1.open(request)).toEqual(encode('GET /api/health'))
+    expect(await b1.open(await h1.seal(encode('200')))).toEqual(encode('200'))
+    // The session's own counter and the other channel are untouched.
+    expect(await host.open(await browser.seal(encode('own')))).toEqual(encode('own'))
+    expect(await h2.open(await b2.seal(encode('two')))).toEqual(encode('two'))
+
+    for (const side of [browser, host]) {
+      expect(await rejection(side.channel(1))).toBe('replayed or out of order')
+      const [again, other] = await Promise.allSettled([side.channel(9), side.channel(9)])
+      expect([again.status, other.status].sort()).toEqual(['fulfilled', 'rejected'])
+      for (const n of [0, -1, 1.5, 2 ** 32]) expect(await rejection(side.channel(n))).toBe('bad message')
+    }
+    expect(await host.channel(2 ** 32 - 1)).toBeDefined()
   })
 
   test('seal refuses once the counter is used up, without wrapping', async () => {

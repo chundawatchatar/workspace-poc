@@ -7,6 +7,7 @@ import {
   MAX_TUNNEL_FRAME_BYTES,
   type MachineFrame,
   machinePathPrefix,
+  machineSealedPath,
   RELAY_TICKET_HEADER,
   type ServerFrame,
   serverFrame,
@@ -29,17 +30,19 @@ const encoder = new TextEncoder()
 
 let registry: MachineRegistry
 let forwarder: HttpForwarder
+let limiter: ConnectionLimiter
 let server: Server<unknown>
 let machines: Machine[]
 
 beforeEach(() => {
   registry = new MachineRegistry()
   forwarder = new HttpForwarder({ registry, requestTimeoutMs: 1000 })
+  limiter = new ConnectionLimiter()
   const app = createApp({
     registry,
     forwarder,
     bridge: new ChannelBridge({ registry }),
-    limiter: new ConnectionLimiter(),
+    limiter,
     pingIntervalMs: 30,
     heartbeatTimeoutMs: 120,
   })
@@ -56,6 +59,7 @@ afterEach(async () => {
 interface Machine {
   ws: WebSocket
   requests: Extract<ServerFrame, { type: 'http.request' }>[]
+  sealed: Extract<ServerFrame, { type: 'http.sealed' }>[]
   send(frame: MachineFrame): void
 }
 
@@ -64,11 +68,12 @@ async function machine(key: TestMachineKey, { pong = true } = {}): Promise<Machi
   ws.binaryType = 'arraybuffer'
   answerChallenge(ws, key)
   let welcomed = false
-  const m: Machine = { ws, requests: [], send: (frame) => ws.send(encodeFrame(frame)) }
+  const m: Machine = { ws, requests: [], sealed: [], send: (frame) => ws.send(encodeFrame(frame)) }
   ws.addEventListener('message', (event) => {
     const frame = decodeFrame(serverFrame, event.data)
     if (frame?.type === 'welcome') welcomed = true
     if (frame?.type === 'http.request') m.requests.push(frame)
+    if (frame?.type === 'http.sealed') m.sealed.push(frame)
     if (pong && frame?.type === 'ping') m.send({ type: 'pong', nonce: frame.nonce })
   })
   machines.push(m)
@@ -215,5 +220,60 @@ describe('forward routes', () => {
     expect((await fetch(url('/api'))).status).toBe(404)
     expect((await fetch(`http://127.0.0.1:${server.port}/api/system/health`)).status).toBe(404)
     expect(m.requests).toHaveLength(0)
+  })
+
+  test('relay a sealed envelope unread and stream its answer back filtered, charging a refused one once', async () => {
+    const badKey = spyOn(limiter, 'badKey')
+    const m = await machine(keyA)
+    const envelope = Uint8Array.from({ length: 64 }, (_, i) => 255 - i)
+    const post = () =>
+      fetch(`http://127.0.0.1:${server.port}${machineSealedPath(idA)}`, {
+        method: 'POST',
+        headers: {
+          [ACCESS_KEY_HEADER]: 'secret-key',
+          Cookie: 'session=abc',
+          'content-type': 'application/octet-stream',
+        },
+        body: envelope,
+      })
+
+    const pending = post()
+    await until(() => m.sealed.length === 1)
+    expect(m.sealed[0]).toEqual({ type: 'http.sealed', id: 1, data: expect.any(Uint8Array) })
+    expect([...(m.sealed[0]?.data ?? [])]).toEqual([...envelope])
+    expect(m.requests).toHaveLength(0)
+    m.send({ type: 'auth.failed', id: 1 })
+    m.send({ type: 'auth.failed', id: 1 })
+    m.send({
+      type: 'http.response',
+      id: 1,
+      status: 200,
+      headers: [
+        ['content-type', 'application/octet-stream'],
+        ['set-cookie', 'a=1'],
+        ['access-control-allow-origin', '*'],
+      ],
+    })
+    m.send({ type: 'http.body', id: 1, data: encoder.encode('rec1') })
+    m.send({ type: 'http.body', id: 1, data: encoder.encode('rec2') })
+    m.send({ type: 'http.end', id: 1 })
+    const response = await pending
+    expect(response.status).toBe(200)
+    expect(response.headers.getSetCookie()).toEqual([])
+    expect(response.headers.get('access-control-allow-origin')).toBeNull()
+    expect(response.headers.get('content-security-policy')).toBe(SANDBOX_CSP)
+    expect(await response.text()).toBe('rec1rec2')
+    expect(badKey.mock.calls).toEqual([['127.0.0.1']])
+
+    expect((await fetch(`http://127.0.0.1:${server.port}${machineSealedPath(idA)}`)).status).toBe(404)
+    const tooBig = await fetch(`http://127.0.0.1:${server.port}${machineSealedPath(idA)}`, {
+      method: 'POST',
+      body: new Uint8Array(MAX_TUNNEL_FRAME_BYTES + 1),
+    })
+    expect(tooBig.status).toBe(413)
+    m.ws.close()
+    await until(() => registry.size === 0)
+    expect((await post()).status).toBe(502)
+    expect(m.sealed).toHaveLength(1)
   })
 })

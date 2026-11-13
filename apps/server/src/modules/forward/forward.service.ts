@@ -28,6 +28,9 @@ function isDroppedResponseHeader(name: string): boolean {
   )
 }
 
+/** The frames that open a request, plain or sealed. */
+type RequestFrame = Extract<ServerFrame, { type: 'http.request' | 'http.sealed' }>
+
 /** What the forwarder needs from the server. */
 export interface HttpForwarderDeps {
   registry: MachineRegistry
@@ -66,8 +69,8 @@ export function forwardedPath(url: string): string | null {
 }
 
 /**
- * Relays browser HTTP requests to machines over their tunnels and streams the
- * answers back. It routes on the frame envelope only (connection, request id,
+ * Relays browser HTTP requests, plain or sealed, to machines over their
+ * tunnels and streams the answers back. It routes on the frame envelope only (connection, request id,
  * sizes) and never looks at the method, path, headers, body or status.
  */
 export class HttpForwarder {
@@ -101,9 +104,8 @@ export class HttpForwarder {
     if (!conn) return offline()
     if (request.signal.aborted) return badGateway()
 
-    const state = this.stateOf(conn)
-    const id = state.nextId++
-    const frame: ServerFrame = {
+    const id = this.stateOf(conn).nextId++
+    const frame: RequestFrame = {
       type: 'http.request',
       id,
       method: request.method,
@@ -112,7 +114,36 @@ export class HttpForwarder {
       ...(body && body.byteLength > 0 ? { body } : {}),
     }
     if (frameBytes(frame) > MAX_TUNNEL_FRAME_BYTES) return tooLarge()
+    return this.dispatch(conn, frame, request.signal, clientIp)
+  }
 
+  /**
+   * Sends a sealed envelope, the request's whole body, to the machine as
+   * `http.sealed`, and answers like `forward`: 502, 504 and 413 alike. It reads
+   * no request header and never looks inside the envelope.
+   */
+  async forwardSealed(machineId: string, request: Request, clientIp = ''): Promise<Response> {
+    if (!this.live(machineId)) return offline()
+    const data = request.body ? await readCapped(request.body, MAX_TUNNEL_FRAME_BYTES) : new Uint8Array()
+    if (data === null) return tooLarge()
+    const conn = this.live(machineId)
+    if (!conn) return offline()
+    if (request.signal.aborted) return badGateway()
+
+    const frame: RequestFrame = { type: 'http.sealed', id: this.stateOf(conn).nextId++, data }
+    if (frameBytes(frame) > MAX_TUNNEL_FRAME_BYTES) return tooLarge()
+    return this.dispatch(conn, frame, request.signal, clientIp)
+  }
+
+  /** Sends `frame` and resolves with the response its `id` gets, as `handleFrame` builds it. */
+  private dispatch(
+    conn: MachineConnection,
+    frame: RequestFrame,
+    signal: AbortSignal,
+    clientIp: string,
+  ): Promise<Response> {
+    const state = this.stateOf(conn)
+    const { id } = frame
     return new Promise<Response>((resolve) => {
       let settled = false
       const onAbort = () => this.finish(conn, id, 'aborted')
@@ -127,12 +158,12 @@ export class HttpForwarder {
           entry.resolve(new Response('Gateway Timeout', { status: 504 }))
         }, this.requestTimeoutMs),
         body: undefined,
-        detach: () => request.signal.removeEventListener('abort', onAbort),
+        detach: () => signal.removeEventListener('abort', onAbort),
         clientIp,
         authFailed: false,
       }
       state.pending.set(id, entry)
-      request.signal.addEventListener('abort', onAbort, { once: true })
+      signal.addEventListener('abort', onAbort, { once: true })
       conn.send(frame)
     })
   }
