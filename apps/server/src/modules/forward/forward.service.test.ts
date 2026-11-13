@@ -119,7 +119,7 @@ describe('HttpForwarder', () => {
   test('sends a sealed envelope as one http.sealed with its bytes and nothing else, and answers like any request', async () => {
     const { forwarder, sent, m1 } = setup(40)
     const envelope = Uint8Array.from({ length: 300 }, (_, i) => i % 256)
-    const post = (body: BodyInit, machineId = 'm1') =>
+    const post = (body: Uint8Array<ArrayBuffer>, machineId = 'm1') =>
       forwarder.forwardSealed(
         machineId,
         new Request(`http://server/m/${machineId}/e2e`, {
