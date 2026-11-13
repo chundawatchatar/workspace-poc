@@ -46,6 +46,23 @@ export function machineSealedPath(machineId: string): string {
   return `${machinePathPrefix(machineId)}/e2e`
 }
 
+/**
+ * The server route a browser opens sealed sockets on, `/m/:machineId/e2e/ws`, in Hono syntax. Like
+ * `MACHINE_SEALED_ROUTE`, it is the server's envelope path, not a machine route.
+ */
+export const MACHINE_SEALED_SOCKET_ROUTE = '/m/:machineId/e2e/ws'
+
+/** The path of a machine's sealed socket route, `/m/<machineId>/e2e/ws`. */
+export function machineSealedSocketPath(machineId: string): string {
+  return `${machineSealedPath(machineId)}/ws`
+}
+
+/**
+ * The close code a sealed socket gets when the machine doesn't have the end-to-end session it names (unknown,
+ * expired or closed). The browser drops its session, so the page's reconnect opens a new one.
+ */
+export const CLOSE_E2E_SESSION_UNKNOWN = 4409
+
 /** The close code a browser socket gets when its machine has no live tunnel, or the tunnel drops. */
 export const CLOSE_MACHINE_OFFLINE = 4502
 

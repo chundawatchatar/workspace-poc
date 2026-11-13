@@ -55,6 +55,7 @@ describe('tunnel frames', () => {
       { type: 'http.request', id: 4, method: 'POST', path: '/api/fs/dirs', headers: [['x', 'y']], body: allBytes },
       { type: 'http.sealed', id: 5, data: allBytes },
       { type: 'ws.open', channel: 1, path: '/ws/term/abc?cols=80', headers: [] },
+      { type: 'ws.sealed', channel: 2, data: allBytes },
       {
         type: 'enroll.previewed',
         id: 5,
@@ -92,6 +93,16 @@ describe('tunnel frames', () => {
     }
     check([...machine, ...both], machineFrame)
     check([...server, ...both], serverFrame)
+  })
+
+  test('the protocol is at version 4, and ws.sealed goes as a binary frame whose data decodes byte-equal', () => {
+    expect(TUNNEL_PROTOCOL_VERSION).toBe(4)
+    const encoded = encodeFrame({ type: 'ws.sealed', channel: 9, data: allBytes })
+    expect(encoded).toBeInstanceOf(Uint8Array)
+    const decoded = decodeFrame(serverFrame, encoded)
+    expect(decoded?.type === 'ws.sealed' && [...decoded.data]).toEqual([...allBytes])
+    // Only the server sends it.
+    expect(decodeFrame(machineFrame, encoded)).toBeNull()
   })
 
   test('byte payloads stay raw bytes, and text ws.data stays a string', () => {

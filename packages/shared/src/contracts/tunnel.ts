@@ -8,7 +8,7 @@ import { machineNameSchema } from './serverMachines'
 // HTTP requests and WebSockets over it as these frames. This file runs in the
 // host, the server and the browser, so it uses only web-standard APIs.
 
-export const TUNNEL_PROTOCOL_VERSION = 3
+export const TUNNEL_PROTOCOL_VERSION = 4
 
 /** The server path machines open their tunnel socket on. Its messages are tunnel frames, not JSON client messages. */
 export const TUNNEL_PATH = '/tunnel'
@@ -100,6 +100,14 @@ export const wsOpenFrame = z.object({
   path: z.string().startsWith(`${WS_PREFIX}/`),
   headers,
 })
+
+/**
+ * A browser WebSocket sealed end to end opening on `channel`: `data` is the
+ * envelope the browser sent as its first message (`e2eSocket.ts`), relayed
+ * unread. The channel then carries `ws.data`, `ws.ack`, `ws.close` and
+ * `auth.failed` like any other, every `ws.data` payload a sealed record.
+ */
+export const wsSealedFrame = z.object({ type: z.literal('ws.sealed'), channel: id, data: bytes })
 
 /** One WebSocket message: a string is a text message and a `Uint8Array` a binary one. */
 export const wsDataFrame = z.object({ type: z.literal('ws.data'), channel: id, data: z.union([z.string(), bytes]) })
@@ -225,6 +233,7 @@ export const serverFrame = z.discriminatedUnion('type', [
   httpRequestFrame,
   httpSealedFrame,
   wsOpenFrame,
+  wsSealedFrame,
   wsDataFrame,
   wsCloseFrame,
   wsAckFrame,
@@ -245,6 +254,7 @@ const byteField: Partial<Record<TunnelFrame['type'], string>> = {
   'http.request': 'body',
   'http.sealed': 'data',
   'http.body': 'data',
+  'ws.sealed': 'data',
   'ws.data': 'data',
 }
 
