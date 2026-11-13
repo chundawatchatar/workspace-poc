@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
 import { PRODUCT_NAME, PRODUCT_TAGLINE } from '@orch/brand'
-import { routes } from '@orch/shared'
+import { type E2eSocketOpen, machineSealedSocketPath, routes } from '@orch/shared'
 import { QueryClientProvider, useQueryClient } from '@tanstack/react-query'
 import { createMemoryHistory, RouterProvider } from '@tanstack/react-router'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
@@ -93,9 +93,9 @@ function appRouter(path: string) {
  * Accepts the machine page's event socket and never answers, so the page stays connecting. Resolves once the socket
  * connects, which waits for the device key and proof, so a test can end without leaving one to open after it.
  */
-function quietMachine(): Promise<void> {
+function quietMachine(machineId: string): Promise<void> {
   const { promise, resolve } = Promise.withResolvers<void>()
-  server.use(ws.link(`*/m/:machineId${routes.sockets.events.path}`).addEventListener('connection', () => resolve()))
+  server.use(ws.link(`*${machineSealedSocketPath(machineId)}`).addEventListener('connection', () => resolve()))
   return promise
 }
 
@@ -115,7 +115,7 @@ async function land(path: string) {
 
 describe('client routes', () => {
   test('unknown paths show not found, under a machine inside its page', async () => {
-    const connected = quietMachine()
+    const connected = quietMachine(saved.id)
     await show(`/m/${saved.id}/w/ws1/unknown`)
     expect(await screen.findByText('Page not found.')).toBeInTheDocument()
     expect(screen.getByText('Laptop')).toBeInTheDocument()
@@ -133,7 +133,7 @@ describe('client routes', () => {
     expect(screen.queryByText('Page not found.')).not.toBeInTheDocument()
     cleanup()
 
-    const connected = quietMachine()
+    const connected = quietMachine(saved.id)
     await show(`/m/${saved.id}/w/ws1`)
     expect((await screen.findAllByText('Connecting to the host…')).length).toBeGreaterThan(0)
     expect(screen.queryByText('Page not found.')).not.toBeInTheDocument()
@@ -141,13 +141,13 @@ describe('client routes', () => {
   })
 
   test('a machine saved from a connect link sends its key with a device proof, and an unapproved browser sees its fingerprint', async () => {
-    const firstMessages: string[] = []
+    const opens: E2eSocketOpen[] = []
     server.use(
-      ws.link(`*/m/${saved.id}${routes.sockets.events.path}`).addEventListener('connection', ({ client }) =>
+      ws.link(`*${machineSealedSocketPath(saved.id)}`).addEventListener('connection', ({ client }) =>
         client.addEventListener(
           'message',
-          (event) => {
-            firstMessages.push(String(event.data))
+          async (event) => {
+            opens.push(await saved.openSocket(event.data))
             client.close(4403, 'device not approved')
           },
           { once: true },
@@ -156,8 +156,12 @@ describe('client routes', () => {
     )
     const { fingerprint } = await loadDeviceKey(deviceKeyStores.default)
     await show(`/m/${saved.id}`)
-    await waitFor(() => expect(firstMessages.length).toBeGreaterThan(0))
-    expect(JSON.parse(firstMessages[0] ?? '')).toEqual({ type: 'auth', key: 'k1', device: expect.any(String) })
+    await waitFor(() => expect(opens.length).toBeGreaterThan(0))
+    // The socket opens sealed: its first message is an envelope holding the path and the auth message.
+    expect(opens[0]).toEqual({
+      path: routes.sockets.events.path,
+      auth: { type: 'auth', key: 'k1', device: expect.any(String) },
+    })
     expect((await screen.findAllByText(fingerprint)).length).toBeGreaterThan(0)
   })
 
@@ -171,7 +175,7 @@ describe('client routes', () => {
       online: true,
       remoteOff: false,
     }
-    const firstMessages: string[] = []
+    const opens: E2eSocketOpen[] = []
     const ticketsFor: string[] = []
     const expiresAt = new Date(Date.now() + 60_000).toISOString()
     server.use(
@@ -180,17 +184,21 @@ describe('client routes', () => {
         ticketsFor.push(String(params.machineId))
         return HttpResponse.json({ ticket: 'fake.relay.ticket', expiresAt })
       }),
-      ws
-        .link(`*/m/${account.id}${routes.sockets.events.path}`)
-        .addEventListener('connection', ({ client }) =>
-          client.addEventListener('message', (event) => firstMessages.push(String(event.data)), { once: true }),
-        ),
+      ws.link(`*${machineSealedSocketPath(account.id)}`).addEventListener('connection', ({ client }) =>
+        client.addEventListener('message', async (event) => opens.push(await account.openSocket(event.data)), {
+          once: true,
+        }),
+      ),
     )
     await show(`/m/${account.id}`)
     expect((await screen.findAllByText('Desktop')).length).toBeGreaterThan(0)
-    await waitFor(() => expect(firstMessages).toHaveLength(1))
-    // The first message asks to be judged by the account's ticket and carries this browser's device proof.
-    expect(JSON.parse(firstMessages[0] ?? '')).toEqual({ type: 'auth', account: true, device: expect.any(String) })
+    await waitFor(() => expect(opens).toHaveLength(1))
+    // The sealed open asks to be judged by the account's ticket, which it carries, with this browser's device proof.
+    expect(opens[0]).toEqual({
+      path: routes.sockets.events.path,
+      auth: { type: 'auth', account: true, device: expect.any(String) },
+      ticket: 'fake.relay.ticket',
+    })
     // The events socket asked for its own ticket for this machine before it opened.
     expect(ticketsFor[0]).toBe(account.id)
     cleanup()
@@ -244,7 +252,7 @@ describe('session guard', () => {
     signedIn = false
     const router = await show(`/auth/sign-in?redirect=%2Fm%2F${saved.id}`)
     expect(router.state.location.pathname).toBe('/auth/sign-in')
-    const connected = quietMachine()
+    const connected = quietMachine(saved.id)
     await act(async () => {
       expect(await signInWithEmail(router.options.context.queryClient, user.email, 'pw-old')).toBeNull()
     })

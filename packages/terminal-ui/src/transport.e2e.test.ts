@@ -1,183 +1,24 @@
 import { afterEach, describe, expect, setSystemTime, test } from 'bun:test'
 import {
   ACCESS_KEY_HEADER,
-  answerBrowserHandshake,
   CLOSE_ACCESS_DENIED,
   CLOSE_DEVICE_NOT_APPROVED,
   DEVICE_NOT_APPROVED_CODE,
   DEVICE_PROOF_HEADER,
-  decodeEnvelope,
-  decodeRequestRecord,
   E2E_SESSION_UNKNOWN_CODE,
   E2eError,
-  type E2eHttpRequest,
-  type E2eHttpResponseRecord,
-  type E2eMachineSigner,
-  type E2eSession,
-  encodeResponseRecord,
-  frameRecord,
-  machineIdFromPublicKey,
   RELAY_TICKET_HEADER,
-  routes,
-  startBrowserHandshake,
 } from '@orch/shared'
-import { type DeviceSigner, deviceSigner } from './lib/deviceProof'
-import { createRemoteTransport } from './transport'
+import { e2eMachine, HANDSHAKE, outcome, payloadOf, servers } from '../test/e2eMachine'
 
 // The remote transport with a pinned machine key: the end-to-end handshake, then every request sealed on its own
-// channel, against a fake machine behind the relay that plays the host's side.
+// channel, against a fake machine behind the relay that plays the host's side. Sealed sockets are in
+// `transport.e2e-socket.test.ts`.
 
-const servers: Bun.Server<unknown>[] = []
 afterEach(() => {
   for (const server of servers.splice(0)) server.stop(true)
   setSystemTime()
 })
-
-/** A fresh WebCrypto device key, as a browser keeps one. */
-async function testSigner(): Promise<DeviceSigner> {
-  return deviceSigner(
-    await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify']),
-  )
-}
-
-/** The payload of a device proof. */
-const payloadOf = (proof: string) => JSON.parse(Buffer.from(proof.split('.')[1] ?? '', 'base64url').toString())
-
-/** A fresh Ed25519 machine key, signing as the host's `MachineKey` does, and the machine id it hashes to. */
-async function testMachine(): Promise<E2eMachineSigner & { machineId: string }> {
-  const pair = (await crypto.subtle.generateKey('Ed25519', false, ['sign', 'verify'])) as CryptoKeyPair
-  const raw = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey))
-  const publicKey = Buffer.from(raw).toString('base64url')
-  const sign = async (data: Uint8Array<ArrayBuffer>) =>
-    new Uint8Array(await crypto.subtle.sign('Ed25519', pair.privateKey, data))
-  return { publicKey, sign, machineId: await machineIdFromPublicKey(publicKey) }
-}
-
-/** How the fake machine answers a handshake: with a session, a refusal, or a reply that must not verify. */
-type HandshakeAnswer =
-  | { kind: 'session'; ttlMs: number }
-  | { kind: 'refuse'; status: number; body?: unknown }
-  | { kind: 'other key' | 'other hello' | 'bad shape' }
-
-/** How the relay mangles a sealed reply on its way back, if at all. */
-type Tamper = 'bad head' | 'bad body' | 'reorder' | 'truncate' | 'end error' | null
-
-/** What the fake machine saw of one sealed request: the outer request as the relay got it, and what was inside. */
-interface SealedSeen {
-  headers: Headers
-  raw: Uint8Array
-  sessionId: string
-  channel: number
-  inner: E2eHttpRequest
-}
-
-/**
- * A machine behind the relay that answers `routes.e2e.open` as `answer` says, opens sealed requests on their channel
- * and answers them sealed, and records every request and socket in the order they arrive, as
- * `POST /api/e2e/sessions`, `GET /api/health` or `WS /ws/events`. A sealed request's handler answers `ok`, or the
- * chunks in `state.chunks`, after `state.delayMs[path]`; `state.outer` answers the envelope unsealed instead.
- */
-async function e2eMachine() {
-  const machine = await testMachine()
-  const impostor = await testMachine()
-  const seen: string[] = []
-  const sealed: SealedSeen[] = []
-  const sessions = new Map<string, E2eSession>()
-  const state = {
-    answer: { kind: 'session', ttlMs: 60_000 } as HandshakeAnswer,
-    outer: null as { status: number; body: unknown } | null,
-    tamper: null as Tamper,
-    chunks: ['ok'],
-    delayMs: {} as Record<string, number>,
-  }
-  const prefix = `/m/${machine.machineId}`
-  const reply = async (hello: unknown) => {
-    const { answer } = state
-    if (answer.kind === 'refuse') return Response.json(answer.body ?? { error: 'no' }, { status: answer.status })
-    if (answer.kind === 'bad shape') return Response.json({ sessionId: 'x' })
-    const signer = answer.kind === 'other key' ? { ...machine, sign: impostor.sign } : machine
-    const answered =
-      answer.kind === 'other hello'
-        ? (await startBrowserHandshake({ machineId: machine.machineId, device: await testSigner() })).hello
-        : hello
-    const handshake = await answerBrowserHandshake({ machineId: machine.machineId, machine: signer, hello: answered })
-    const ttlMs = answer.kind === 'session' ? answer.ttlMs : 60_000
-    const expiresAt = new Date(Date.now() + ttlMs).toISOString()
-    const sessionId = Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString('base64url')
-    sessions.set(sessionId, handshake.session)
-    return Response.json({ sessionId, hello: handshake.reply, expiresAt })
-  }
-  const answerSealed = async (req: Request) => {
-    const raw = new Uint8Array(await req.arrayBuffer())
-    if (state.outer) return Response.json(state.outer.body, { status: state.outer.status })
-    const envelope = decodeEnvelope(raw)
-    const session = sessions.get(envelope.sessionId)
-    if (!session) return Response.json({ code: E2E_SESSION_UNKNOWN_CODE }, { status: 409 })
-    const channel = await session.channel(envelope.channel)
-    const inner = decodeRequestRecord(await channel.open(envelope.sealed))
-    sealed.push({ headers: req.headers, raw, sessionId: envelope.sessionId, channel: envelope.channel, inner })
-    seen.push(`${inner.method} ${inner.path}`)
-    await Bun.sleep(state.delayMs[inner.path] ?? 0)
-    const records: E2eHttpResponseRecord[] = [
-      { kind: 'head', head: { status: 200, headers: [['x-inner', inner.path]] } },
-      ...state.chunks.map((chunk) => ({ kind: 'body' as const, data: new TextEncoder().encode(chunk) })),
-      state.tamper === 'end error' ? { kind: 'end', error: 'failed' } : { kind: 'end' },
-    ]
-    const out: Uint8Array[] = []
-    for (const record of records) out.push(await channel.seal(encodeResponseRecord(record)))
-    const flip = (index: number) => {
-      const copy = new Uint8Array(out[index] ?? [])
-      copy[copy.length - 1] = (copy[copy.length - 1] ?? 0) ^ 1
-      out[index] = copy
-    }
-    if (state.tamper === 'bad head') flip(0)
-    if (state.tamper === 'bad body') flip(1)
-    if (state.tamper === 'reorder') out.splice(1, 2, out[2] as Uint8Array, out[1] as Uint8Array)
-    if (state.tamper === 'truncate') out.pop()
-    return new Response(Buffer.concat(out.map(frameRecord)), {
-      headers: { 'content-type': 'application/octet-stream' },
-    })
-  }
-  const server = Bun.serve({
-    port: 0,
-    hostname: 'localhost',
-    async fetch(req, srv) {
-      const path = new URL(req.url).pathname.slice(prefix.length)
-      if (srv.upgrade(req)) {
-        seen.push(`WS ${path}`)
-        return
-      }
-      if (path === '/e2e' && req.method === 'POST') return answerSealed(req)
-      seen.push(`${req.method} ${path}`)
-      if (path === routes.e2e.open.path) return reply(await req.json())
-      return new Response('ok')
-    },
-    websocket: { message() {} },
-  })
-  servers.push(server)
-  const transport = async (options: { onMachineUnverified?: () => void } = {}) =>
-    createRemoteTransport({
-      serverUrl: `http://localhost:${server.port}`,
-      machineId: machine.machineId,
-      accessKey: 'k',
-      device: await testSigner(),
-      machinePublicKey: machine.publicKey,
-      ...options,
-    })
-  return { seen, sealed, state, transport }
-}
-
-/** The close code `socket` ends with, or `'open'` once it opens. */
-const outcome = (socket: WebSocket) =>
-  new Promise<number | 'open'>((resolve) => {
-    socket.onopen = () => {
-      resolve('open')
-      socket.close()
-    }
-    socket.onclose = (event) => resolve(event.code)
-  })
-
-const HANDSHAKE = `POST ${routes.e2e.open.path}`
 
 describe('the remote transport with a pinned machine key', () => {
   test('one shared handshake comes before the first request and socket, and a new one before the session expires', async () => {
