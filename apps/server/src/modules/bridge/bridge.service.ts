@@ -2,6 +2,7 @@ import {
   CLOSE_MACHINE_OFFLINE,
   MAX_TUNNEL_FRAME_BYTES,
   type MachineFrame,
+  type ServerFrame,
   WS_CHANNEL_WINDOW_BYTES,
   wsPayloadBytes,
 } from '@orch/shared'
@@ -109,6 +110,27 @@ export class ChannelBridge {
     socket: BrowserSocket,
     clientIp = '',
   ): BrowserChannel | null {
+    return this.attach(machineId, socket, clientIp, (channel) => ({ type: 'ws.open', channel, path, headers }))
+  }
+
+  /**
+   * Opens a channel for a sealed browser socket and sends its first message,
+   * the envelope, unread as one `ws.sealed`. Otherwise it is `open`: the same
+   * offline and channel-limit checks, and the same channel afterwards.
+   */
+  openSealed(machineId: string, envelope: Uint8Array, socket: BrowserSocket, clientIp = ''): BrowserChannel | null {
+    // The binding may hand over a view into the socket message, and the frame may wait in the scheduler.
+    const data = envelope.slice()
+    return this.attach(machineId, socket, clientIp, (channel) => ({ type: 'ws.sealed', channel, data }))
+  }
+
+  /** Registers a channel for `socket` and sends the frame `opening` builds for its id. */
+  private attach(
+    machineId: string,
+    socket: BrowserSocket,
+    clientIp: string,
+    opening: (channel: number) => ServerFrame,
+  ): BrowserChannel | null {
     const conn = this.registry.get(machineId)
     if (!conn || this.closed.has(conn)) {
       socket.close(CLOSE_MACHINE_OFFLINE, 'machine offline')
@@ -132,7 +154,7 @@ export class ChannelBridge {
       authFailed: false,
     }
     state.channels.set(channel.id, channel)
-    conn.send({ type: 'ws.open', channel: channel.id, path, headers })
+    conn.send(opening(channel.id))
     return {
       message: (data) => this.fromBrowser(conn, channel, data),
       closed: (code, reason) => this.browserClosed(conn, channel, code, reason),

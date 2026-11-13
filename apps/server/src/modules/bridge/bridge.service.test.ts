@@ -174,4 +174,36 @@ describe('ChannelBridge', () => {
     // The closed tunnel stays in the registry until its close event, but takes no new channels.
     expect(open().channel).toBeNull()
   })
+
+  test('a sealed socket opens with one ws.sealed carrying its envelope unread, then works like any channel', () => {
+    const { bridge, sent, m1 } = setup(1)
+    const browser = socket()
+    const envelope = Uint8Array.from({ length: 64 }, (_, i) => i)
+    const channel = bridge.openSealed('m1', envelope, browser, '10.0.0.7')
+    envelope.fill(0)
+    expect(sent.m1).toEqual([{ type: 'ws.sealed', channel: 1, data: Uint8Array.from({ length: 64 }, (_, i) => i) }])
+
+    channel?.message(new Uint8Array(100))
+    bridge.handleFrame(m1, { type: 'ws.data', channel: 1, data: Uint8Array.of(1, 2, 3) })
+    bridge.handleFrame(m1, { type: 'ws.ack', channel: 1, bytes: 100 })
+    expect(browser.received).toEqual([Uint8Array.of(1, 2, 3)])
+    expect(sent.m1?.slice(1)).toEqual([
+      { type: 'ws.data', channel: 1, data: new Uint8Array(100) },
+      { type: 'ws.ack', channel: 1, bytes: 3 },
+    ])
+    // The machine's report charges the browser that opened the channel, once.
+    expect([bridge.authFailed(m1, 1), bridge.authFailed(m1, 1)]).toEqual(['10.0.0.7', undefined])
+
+    // The same offline and channel-limit checks as a plain socket.
+    const full = socket()
+    expect(bridge.openSealed('m1', envelope, full)).toBeNull()
+    expect(full.closes).toEqual([[1013, 'too many channels']])
+    const offline = socket()
+    expect(bridge.openSealed('nobody', envelope, offline)).toBeNull()
+    expect(offline.closes).toEqual([[CLOSE_MACHINE_OFFLINE, 'machine offline']])
+
+    bridge.handleFrame(m1, { type: 'ws.close', channel: 1, code: 4409, reason: 'e2e session unknown' })
+    expect(browser.closes).toEqual([[4409, 'e2e session unknown']])
+    expect(sent.m1).toHaveLength(3)
+  })
 })
