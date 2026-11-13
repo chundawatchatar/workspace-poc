@@ -246,7 +246,8 @@ export class TunnelChannels {
     if (this.channels.has(id)) return
     const sealed = new SealedChannel()
     const channel = this.register(id, { path: '', headers: [], ticket: null, sealed })
-    sealed.inbound = this.admitSealed(channel, sealed, data)
+    // A failure past the open (an `authorize` that throws) closes the channel rather than stalling its queue.
+    sealed.inbound = this.admitSealed(channel, sealed, data).catch(() => this.fail(channel, CLOSE_INTERNAL_ERROR))
   }
 
   private async admitSealed(channel: Channel, sealed: SealedChannel, data: Uint8Array) {
