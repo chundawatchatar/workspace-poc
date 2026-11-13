@@ -285,9 +285,10 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
     capped and expires. What remains is an owner who copies a fingerprint they don't recognise from the pending list
     and types it in: that still approves the server's device. Pending rows keep their fingerprints so the owner can
     tell browsers apart and dismiss strangers.
-  - Until WebSocket traffic is sealed (REM-2: the handshake and sealed HTTP are in, sealed sockets are not), a
-    compromised server can read, and inject into, the sockets an approved browser opens. It just can't open one by
-    itself. HTTP requests through a pinned machine are sealed (see "Remote access" below).
+  - Until unsealed traffic is refused (REM-2: the handshake, sealed HTTP and sealed sockets are in), a compromised
+    server can read, and inject into, what a browser without a pinned machine key sends in the clear. It just can't
+    open a socket or send a request by itself. Requests and sockets through a pinned machine are sealed (see "Remote
+    access" below), so it can neither read nor inject into those.
   - Access keys from connect links still pass through the server, in a header or the first socket message, so a
     compromised server can capture one. A captured key alone no longer opens the machine through the tunnel, since
     it needs a fresh proof from an approved device, but with a key the server can still push its own device into
@@ -489,7 +490,7 @@ to `2^32 - 1`: its two keys come from the same HKDF base with ` channel <n>` add
 info (and in the AAD), and it counts from 0 in each direction. Each side takes a number once, so a key and IV pair
 is never reused and a replayed envelope can't be opened again. Concurrent requests can reach the host in any order,
 which the session's own next-counter-only rule can't take, so every request gets its own channel, from a per-session
-counter in the browser that starts at 1 (the WebSocket job should take its numbers from the same counter). With
+counter in the browser that starts at 1, which sealed sockets share. With
 `machinePublicKey`, `createRemoteTransport` seals every request after the handshake (`contracts/e2eHttp.ts`): the
 inner request `{ method, path, headers, body? }`, with the key or ticket and a fresh device proof in its headers,
 is sealed on the next channel and posted as one envelope (the raw 16-byte session id, the channel as a big-endian
@@ -512,12 +513,47 @@ malformed envelope, a channel already taken or a record that doesn't open gets a
 the page's `Response` from the opened head (a head that doesn't open rejects with `E2eError`); its body errors and
 never ends cleanly when a record fails to open or comes out of order, the end record carries an error, or the stream
 stops before the end record, so a truncated or reordered relay is never taken for a whole response. The handshake
-itself and `routes.system.machineKey` stay unsealed, and so do WebSockets; unsealed requests are still accepted.
+itself and `routes.system.machineKey` stay unsealed; unsealed requests and sockets are still accepted.
 No session id, channel key, record, inner path, header or body is logged, saved, or put into an error message, a
 URL or a query key. Risks that remain: sizes, timing and which device connects stay visible to the server; the
-handshake still carries its key or ticket and proof in clear headers; WebSocket traffic is still unsealed; and a
-compromised server can spend a session's channel numbers with junk envelopes, which only makes the browser's
-requests on those numbers fail.
+handshake still carries its key or ticket and proof in clear headers; and a compromised server can spend a
+session's channel numbers with junk envelopes, which only makes the browser's requests and sockets on those numbers
+fail.
+
+WebSockets are sealed with the same sessions (`contracts/e2eSocket.ts`). With `machinePublicKey`, the transport's
+`openSocket` takes the session's next channel from the same counter as requests, before any await, and builds the
+open record `{ path, auth, ticket? }`: the socket path, the `socketAuthMessage` with the key or `account: true` and a
+fresh `'WS'` proof, and for an account a fresh relay ticket, which no longer goes in a subprotocol. It opens a real
+socket on the server's `MACHINE_SEALED_SOCKET_ROUTE` (`/m/<id>/e2e/ws`, `machineSealedSocketPath`, not in the
+`routes` registry) with no subprotocols, and sends the envelope (the same session id, channel and sealed record as a
+request) as its first message. The page gets a socket-shaped wrapper (`lib/sealedSocket.ts`) that reports `open` only
+once the envelope is sent, seals each message in send order and opens each incoming record in arrival order, as text
+or as binary (`ArrayBuffer` or `Blob`, following `binaryType`), so the page sees exactly the type that was sent. The
+server reads no request header on that route and forwards no header or subprotocol: it waits for one binary first
+message of at most `MAX_E2E_ENVELOPE_BYTES` within 10 seconds, and sends it unread as `ws.sealed { channel, data }`
+(`ChannelBridge.openSealed`, with the same offline and channel-limit checks as `ws.open`, in the same lane). The
+channel then uses `ws.data`, `ws.ack`, `ws.close` and `auth.failed { channel }` unchanged, every `ws.data` payload a
+sealed text or binary record, and flow control counts the sealed bytes. The host (`TunnelChannels`, with
+`tunnel-sealed.service.ts`) registers the channel at once and keeps its `ws.data` until the open finishes; reads the
+envelope and looks the session up; opens the channel and the record; authorizes the record's `auth` exactly as a
+plain socket's auth message, with the record's ticket (spent, so `once`) and the proof for `'WS'` and the inner path;
+refuses any principal but the session's with `CLOSE_ACCESS_DENIED` and no `auth.failed`; and opens the handler with no
+headers. After that each payload is opened in order before the handler sees it, and each message is sealed through a
+per-channel chain, so counters and frames keep their order; `SocketConn.send` stays synchronous and reports the
+sealed size, or -1 when it queues. A session the host doesn't have gets `CLOSE_E2E_SESSION_UNKNOWN` (4409), after
+which the browser drops its session (the page's own reconnect opens a new one, without a retry); a malformed
+envelope, a channel already taken, a record that doesn't open, and a later payload that is text, fails to open or
+comes out of order get 1008. In the browser, text from the relay or a record that doesn't open, comes out of order or
+is of another kind ends the page's socket at once with 1006 and closes the real one, so the page never sees a forged
+or reordered message. Close codes and reasons stay outside the seal, in `ws.close`, since the server must be able to
+close a browser's socket itself (offline, rate limit, too many channels). Every sealed socket is authorized from its
+own credentials and a fresh proof; a live session admits nothing by itself, session expiry closes no open socket, and
+`closeAccess` closes sockets by principal as before. No session id, channel key, record, inner path, auth message,
+ticket, proof or message is logged, saved, or put in an error, a close reason, a URL or a query key. Risks that
+remain: a compromised server can cut a socket short, fake a close code or close it, which is a denial of service only
+(a faked `CLOSE_DEVICE_NOT_APPROVED` shows only the unapproved hint); it can spend channel numbers with junk
+envelopes, as for HTTP; and message sizes and timing stay visible, so keystroke timing in a terminal leaks. Refusing
+unsealed traffic is the next job.
 
 Accounts (sign-in, sessions, emails and the account's machine list) are described in [accounts](accounts.md).
 
@@ -527,7 +563,8 @@ That only stays easy if every remote access job keeps these rules:
   or channel id, and frame sizes. It never reads, rewrites or decides anything from the method, path, headers, body or
   response status. The only responses it makes up itself are 403 (an `Origin` it does not allow), 413 (a request
   larger than one tunnel frame), 429 (a rate limit), 502 (machine offline) and 504 (timeout), plus its own answers to CORS preflights, which never reach the
-  machine. Origin checks, CORS and rate limits read only the outer request: its `Origin` and `Host` headers, the
+  machine, and on a sealed socket a 1008 close when its first message, the envelope, is not binary, too large or
+  missing after 10 seconds. Origin checks, CORS and rate limits read only the outer request: its `Origin` and `Host` headers, the
   socket address and the machine id in the URL. Dropping the machine's `Access-Control-*` headers is a filter on
   header names, like the hop-by-hop list. So is dropping `Cookie` from every relayed request and socket upgrade, and
   `Set-Cookie` from every machine response: machines share the server's origin, where the account session cookie
@@ -541,7 +578,8 @@ That only stays easy if every remote access job keeps these rules:
   browser side of encryption goes in one place.
 - **The protocol is versioned.** The `hello` frame already carries a version. Adding sealed frames means a new version,
   and a server that doesn't know it rejects the connection clearly instead of misreading frames. `http.sealed` raised
-  `TUNNEL_PROTOCOL_VERSION` to 3, so a version 2 machine or server is closed with `CLOSE_UNSUPPORTED_VERSION`.
+  `TUNNEL_PROTOCOL_VERSION` to 3 and `ws.sealed` to 4, so an older machine or server is closed with
+  `CLOSE_UNSUPPORTED_VERSION`.
 - **`apps/client`'s build stays static.** It is a TanStack Start app in SPA mode: the build prerenders only the root
   shell into `index.html` next to its assets, and no server bundle runs at request time. It gets no configuration
   injected by the server, so it can later be served from an origin the server doesn't control. A server that serves the app could also serve modified JavaScript, which
@@ -578,9 +616,8 @@ terminals. An idle socket costs one TCP connection and a small ping, and one sma
   comparison. A key that doesn't hash to the id, or differs from the pin, stops the page with a warning and no Retry,
   so no terminal socket opens and nothing reconnects. The check runs once per page open, not when sockets reconnect.
   The machine now signs for the browser with this key: `<TerminalUI>` gets a transport that opens an end-to-end session
-  first, and an answer that doesn't verify against the pin stops the page the same way. Its HTTP requests are then sealed
-  with that session. Open risk until the WebSocket sealing job: socket frames are still not sealed, so a compromised
-  relay that passes the handshake through can still read or inject them.
+  first, and an answer that doesn't verify against the pin stops the page the same way. Its HTTP requests and sockets are then sealed
+  with that session, so a compromised relay that passes the handshake through can neither read nor inject them.
 - **Heartbeats from both sides.** The server pings and drops a silent machine (job 005). The host also needs its own
   timeout: after sleep or a network switch a TCP connection can look open while it's dead, and only the host's side
   notices. Ping every 20–25 seconds, because many proxies and NATs drop idle connections after 30–60 seconds.
