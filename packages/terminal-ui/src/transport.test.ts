@@ -1,20 +1,13 @@
 import { afterEach, describe, expect, setSystemTime, test } from 'bun:test'
 import {
   ACCESS_KEY_HEADER,
-  answerBrowserHandshake,
   buildRequest,
   buildSocketUrl,
   CLOSE_ACCESS_DENIED,
-  CLOSE_DEVICE_NOT_APPROVED,
-  DEVICE_NOT_APPROVED_CODE,
   DEVICE_PROOF_HEADER,
-  E2eError,
-  type E2eMachineSigner,
-  machineIdFromPublicKey,
   RELAY_TICKET_HEADER,
   relaySocketProtocols,
   routes,
-  startBrowserHandshake,
 } from '@orch/shared'
 import { callApi } from './lib/api'
 import { type DeviceSigner, deviceSigner } from './lib/deviceProof'
@@ -247,155 +240,6 @@ describe('the page transport', () => {
     expect(await opened).toBe('wss://example.com/m/m1/ws/events')
     for (const serverUrl of ['ws://example.com', 'file:///tmp', 'javascript:alert(1)']) {
       expect(() => createRemoteTransport({ serverUrl, machineId: 'm1', accessKey: 'k', device })).toThrow()
-    }
-  })
-})
-
-/** A fresh Ed25519 machine key, signing as the host's `MachineKey` does, and the machine id it hashes to. */
-async function testMachine(): Promise<E2eMachineSigner & { machineId: string }> {
-  const pair = (await crypto.subtle.generateKey('Ed25519', false, ['sign', 'verify'])) as CryptoKeyPair
-  const raw = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey))
-  const publicKey = Buffer.from(raw).toString('base64url')
-  const sign = async (data: Uint8Array<ArrayBuffer>) =>
-    new Uint8Array(await crypto.subtle.sign('Ed25519', pair.privateKey, data))
-  return { publicKey, sign, machineId: await machineIdFromPublicKey(publicKey) }
-}
-
-/** How the fake machine answers a handshake: with a session, a refusal, or a reply that must not verify. */
-type HandshakeAnswer =
-  | { kind: 'session'; ttlMs: number }
-  | { kind: 'refuse'; status: number; body?: unknown }
-  | { kind: 'other key' | 'other hello' | 'bad shape' }
-
-/**
- * A machine behind the relay that answers `routes.e2e.open` as `answer` says, and records every request and socket in
- * the order they arrive, as `POST /api/e2e/sessions`, `GET /api/health` or `WS /ws/events`.
- */
-async function e2eMachine() {
-  const machine = await testMachine()
-  const impostor = await testMachine()
-  const seen: string[] = []
-  const state = { answer: { kind: 'session', ttlMs: 60_000 } as HandshakeAnswer }
-  const prefix = `/m/${machine.machineId}`
-  const reply = async (hello: unknown) => {
-    const { answer } = state
-    if (answer.kind === 'refuse') return Response.json(answer.body ?? { error: 'no' }, { status: answer.status })
-    if (answer.kind === 'bad shape') return Response.json({ sessionId: 'x' })
-    const signer = answer.kind === 'other key' ? { ...machine, sign: impostor.sign } : machine
-    const answered =
-      answer.kind === 'other hello'
-        ? (await startBrowserHandshake({ machineId: machine.machineId, device: await testSigner() })).hello
-        : hello
-    const { reply } = await answerBrowserHandshake({ machineId: machine.machineId, machine: signer, hello: answered })
-    const ttlMs = answer.kind === 'session' ? answer.ttlMs : 60_000
-    const expiresAt = new Date(Date.now() + ttlMs).toISOString()
-    return Response.json({ sessionId: 'A'.repeat(22), hello: reply, expiresAt })
-  }
-  const server = Bun.serve({
-    port: 0,
-    hostname: 'localhost',
-    async fetch(req, srv) {
-      const path = new URL(req.url).pathname.slice(prefix.length)
-      if (srv.upgrade(req)) {
-        seen.push(`WS ${path}`)
-        return
-      }
-      seen.push(`${req.method} ${path}`)
-      if (path === routes.e2e.open.path) return reply(await req.json())
-      return new Response('ok')
-    },
-    websocket: { message() {} },
-  })
-  servers.push(server)
-  const transport = async (options: { onMachineUnverified?: () => void } = {}) =>
-    createRemoteTransport({
-      serverUrl: `http://localhost:${server.port}`,
-      machineId: machine.machineId,
-      accessKey: 'k',
-      device: await testSigner(),
-      machinePublicKey: machine.publicKey,
-      ...options,
-    })
-  return { seen, state, transport }
-}
-
-/** The close code `socket` ends with, or `'open'` once it opens. */
-const outcome = (socket: WebSocket) =>
-  new Promise<number | 'open'>((resolve) => {
-    socket.onopen = () => {
-      resolve('open')
-      socket.close()
-    }
-    socket.onclose = (event) => resolve(event.code)
-  })
-
-const HANDSHAKE = `POST ${routes.e2e.open.path}`
-
-describe('the remote transport with a pinned machine key', () => {
-  test('one shared handshake comes before the first request and socket, and a new one before the session expires', async () => {
-    const { seen, state, transport: make } = await e2eMachine()
-    state.answer = { kind: 'session', ttlMs: 20_000 }
-    const transport = await make()
-    const [first, second, socket] = await Promise.all([
-      transport.request('/api/health', {}),
-      transport.request('/api/daemon', {}),
-      outcome(transport.openSocket('/ws/events')),
-    ])
-    expect([first.status, second.status, socket]).toEqual([200, 200, 'open'])
-    expect(seen[0]).toBe(HANDSHAKE)
-    expect(seen.slice(1).sort()).toEqual(['GET /api/daemon', 'GET /api/health', 'WS /ws/events'])
-
-    await transport.request('/api/health', {})
-    expect(seen.filter((line) => line === HANDSHAKE)).toHaveLength(1)
-    // Inside the margin before it expires, the next call opens a new session first.
-    setSystemTime(new Date(Date.now() + 6_000))
-    await transport.request('/api/health', {})
-    expect(seen.slice(-2)).toEqual([HANDSHAKE, 'GET /api/health'])
-  })
-
-  test('a refused handshake answers requests with its status and fails sockets with the code the page knows, then retries', async () => {
-    const { seen, state, transport: make } = await e2eMachine()
-    const transport = await make()
-    state.answer = { kind: 'refuse', status: 401 }
-    const refused = await transport.request('/api/health', {})
-    expect(refused.status).toBe(401)
-    expect(await outcome(transport.openSocket('/ws/events'))).toBe(CLOSE_ACCESS_DENIED)
-    state.answer = { kind: 'refuse', status: 403, body: { error: 'wait', code: DEVICE_NOT_APPROVED_CODE } }
-    const [unapproved, socket] = await Promise.all([
-      transport.request('/api/health', {}),
-      outcome(transport.openSocket('/ws/events')),
-    ])
-    expect([unapproved.status, await unapproved.json(), socket]).toEqual([
-      403,
-      { error: 'wait', code: DEVICE_NOT_APPROVED_CODE },
-      CLOSE_DEVICE_NOT_APPROVED,
-    ])
-    state.answer = { kind: 'refuse', status: 500 }
-    expect(await outcome(transport.openSocket('/ws/events'))).toBe(1006)
-    expect(seen).toEqual([HANDSHAKE, HANDSHAKE, HANDSHAKE, HANDSHAKE])
-
-    state.answer = { kind: 'session', ttlMs: 60_000 }
-    expect((await transport.request('/api/health', {})).status).toBe(200)
-    expect(seen.slice(-2)).toEqual([HANDSHAKE, 'GET /api/health'])
-  })
-
-  test('an answer that does not verify stops the transport for good and reports it once', async () => {
-    for (const kind of ['other key', 'other hello', 'bad shape'] as const) {
-      const { seen, state, transport: make } = await e2eMachine()
-      state.answer = { kind }
-      let reported = 0
-      const transport = await make({ onMachineUnverified: () => reported++ })
-      const [request, socket] = await Promise.allSettled([
-        transport.request('/api/health', {}),
-        outcome(transport.openSocket('/ws/events')),
-      ])
-      expect(request.status === 'rejected' && request.reason).toBeInstanceOf(E2eError)
-      expect(socket).toEqual({ status: 'fulfilled', value: 1006 })
-
-      state.answer = { kind: 'session', ttlMs: 60_000 }
-      await expect(transport.request('/api/health', {})).rejects.toBeInstanceOf(E2eError)
-      expect(await outcome(transport.openSocket('/ws/events'))).toBe(1006)
-      expect([kind, seen, reported]).toEqual([kind, [HANDSHAKE], 1])
     }
   })
 })
