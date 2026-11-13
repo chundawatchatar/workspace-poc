@@ -164,9 +164,10 @@ describe('tunnel socket', () => {
     await until(() => registry.size === 0)
   })
 
-  test('closes a hello with another protocol version as unsupported, the old version 1 shape included', async () => {
+  test('closes a hello with another protocol version as unsupported, the old version 1 and 2 shapes included', async () => {
     for (const message of [
       JSON.stringify({ type: 'hello', version: 1, proof: `${'A'.repeat(42)}a` }),
+      encodeFrame({ ...keyA.hello('n'), version: 2 }),
       encodeFrame({ ...keyA.hello('n'), version: TUNNEL_PROTOCOL_VERSION + 1 }),
     ]) {
       const machine = await connect()
