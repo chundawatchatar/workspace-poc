@@ -21,6 +21,8 @@ export default defineConfig({
     proxy: {
       '/api': { target },
       '^/m/[^/]+/(api|ws)/': { target, ws: true },
+      // The sealed route that carries a machine's requests end to end.
+      '^/m/[^/]+/e2e$': { target },
     },
   },
   preview: { host, port, strictPort: true },
