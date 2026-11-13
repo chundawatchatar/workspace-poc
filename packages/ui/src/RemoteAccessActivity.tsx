@@ -15,6 +15,7 @@ const REASON_LABEL: Record<AuditRefusalReason, string> = {
   proof_refused: 'Refused: browser proof not valid',
   device_not_approved: 'Refused: browser not approved',
   no_auth: 'Refused: no sign-in sent',
+  unsealed: 'Refused: not end-to-end encrypted',
 }
 
 /**

@@ -15,6 +15,12 @@ import { fromBase64url, MAX_TUNNEL_FRAME_BYTES } from './tunnel'
 /** The code of the unsealed 409 a host answers for a session it doesn't have (unknown, expired or closed). */
 export const E2E_SESSION_UNKNOWN_CODE = 'e2e_session_unknown'
 
+/**
+ * The code of the 403 a host answers through the tunnel for a plain request
+ * other than the handshake and the key bootstrap, which must come sealed.
+ */
+export const E2E_REQUIRED_CODE = 'e2e_required'
+
 /** Header `[name, value]` pairs in order, so repeated headers survive. */
 const headers = z.array(z.tuple([z.string(), z.string()]))
 
