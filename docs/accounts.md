@@ -259,8 +259,9 @@ both on every request and socket; the server only signs tickets.
 - Accepted risks: the server still says who is signed in, so it decides who owns an enrollment key and who gets
   relay tickets, but a leaked `RELAY_SIGNING_KEY` or a compromised server can't open a machine without a browser
   approved on it, nor with a captured access key alone, which still passes through it. It could push its own key
-  into a machine's pending list and hope the owner approves it, and until
-  end-to-end encryption (REM-2) it can read and inject into a session an approved browser opens. A revoked session or a machine unlinked on the server gets no new ticket, but an issued one works for up
+  into a machine's pending list and hope the owner approves it. Sessions are sealed end to end (REM-2) and the host
+  refuses unsealed traffic through the tunnel, so it can't read or inject into one, but it could serve its own page
+  (see `docs/architecture.md`, "Unsealed traffic", for the risks that remain). A revoked session or a machine unlinked on the server gets no new ticket, but an issued one works for up
   to a minute. A session that ends on the server closes the account's sockets on its online machines through a
   `session.ended` frame (section 5), except one ended by the operator script or by expiry; unlinking on the host
   closes them too. A refused ticket sends
@@ -273,8 +274,8 @@ both on every request and socket; the server only signs tickets.
   forgets it and opening it again creates a new one. While it is open the machines list is read every 2 seconds, and
   the first machine that wasn't listed when the key was created is taken to be the one that redeemed it. A machine
   linked this way opens from any browser signed in to the account.
-- The relay still sees access keys in transit, in the header and first socket message it forwards, until end-to-end
-  encryption (REM-2). It never checks or stores them.
+- An access key still crosses the relay in clear only in the handshake and the key bootstrap, the two requests the
+  host serves unsealed; every other request and socket carries it sealed. The relay never checks or stores it.
 - A machine's online state comes from the server's in-memory `MachineRegistry`, the same one the relay uses. A host
   whose owner turns remote access off while it runs sends `remote.off` before closing its tunnel, and the list shows
   it as Remote access off instead of Offline; a host that exits or crashes stays Offline. The registry keeps that mark

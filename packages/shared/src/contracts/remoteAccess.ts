@@ -104,6 +104,7 @@ export const auditRefusalReason = z.enum([
   'proof_refused',
   'device_not_approved',
   'no_auth',
+  'unsealed',
 ])
 export type AuditRefusalReason = z.infer<typeof auditRefusalReason>
 

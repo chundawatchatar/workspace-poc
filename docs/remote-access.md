@@ -258,10 +258,18 @@ or a compromised server can't open a machine without an approved browser. It
 can mint tickets to put its own key in the Devices list, hoping you approve it,
 which is why approval takes a fingerprint typed from your own browser and
 checked by the host, so a click on the list can't approve it. Copying a
-fingerprint you don't recognise from the list and typing it in still would. Until
-end-to-end encryption, a compromised server can read and inject into a session
-an approved browser opens, and capture an access key from a connect link,
-which device approval doesn't cover. A browser whose clock is more than 5
+fingerprint you don't recognise from the list and typing it in still would.
+Requests and sockets are encrypted end to end between your browser and the
+machine, and through the server the machine refuses any that aren't (logged as
+"Refused: not end-to-end encrypted"), except the two that open a session:
+fetching the machine's key and the handshake itself. So a compromised server
+can neither read nor inject into a session. What remains: a compromised server
+could serve its own page, which can't be ruled out for a web app (the open
+sessions list, the activity log and turning remote access off are your cover);
+it still sees timing, sizes and which device connects; it sees the access key or
+ticket and the browser's proof in the clear on those two requests, so it can
+capture an access key from a connect link, though that alone opens nothing
+without an approved browser; and it can cut connections. A browser whose clock is more than 5
 minutes off is refused. Revoking a session or unlinking on the server stops new tickets at
 once, but a ticket already issued works for up to a minute. When a session
 ends on the server (a revoke, a sign-out or a password change), the server

@@ -8,12 +8,15 @@ import {
   type AppState,
   DEVICE_PROOF_HEADER,
   decodeFrame,
+  type E2eSocketMessage,
+  type E2eSocketOpen,
   encodeFrame,
   type HostInfo,
   type MachineFrame,
   machineFrame,
   machineIdFromPublicKey,
   openE2eSessionResponse,
+  RELAY_TICKET_HEADER,
   routes,
   type ServerFrame,
   startBrowserHandshake,
@@ -38,7 +41,16 @@ import { testRelayKey } from './modules/remote-access/relay-ticket.testing'
 import { RemoteAccessRepository } from './modules/remote-access/remote-access.repository'
 import { RemoteAccessService } from './modules/remote-access/remote-access.service'
 import { TunnelClient } from './modules/tunnel/tunnel.service'
-import { createTestMachineKey, helloVerifies, testNonce } from './modules/tunnel/tunnel.testing'
+import {
+  createTestMachineKey,
+  helloVerifies,
+  openMessages,
+  openSealedReply,
+  sealedEnvelope,
+  sealedSocketEnvelope,
+  sealMessage,
+  testNonce,
+} from './modules/tunnel/tunnel.testing'
 
 // Test-only harness for the host's sockets end to end: a real app, remote
 // access service and tunnel client, wired as `index.ts` wires them and turned
@@ -195,7 +207,7 @@ async function setUp() {
     handle: async (request, principal) => app.fetch(request, tunnelEnv(principal)),
     openSocket: (path, headers, conn, principal) => sockets.open(path, headers, conn, principal),
     createTunnel: (options) => {
-      const client = new TunnelClient({ ...options, timings: { baseMs: 10, maxMs: 10, authTimeoutMs: 100 } })
+      const client = new TunnelClient({ ...options, timings: { baseMs: 10, maxMs: 10 } })
       clients.push(client)
       return client
     },
@@ -253,23 +265,31 @@ export async function welcomed(): Promise<Conn> {
 export const dataOn = (conn: Conn, channel: number) =>
   conn.frames.flatMap((f) => (f.type === 'ws.data' && f.channel === channel ? [f.data] : []))
 
-/** The auth message for key `presented` on a socket at `path`, with a fresh proof from the approved `device`. */
-export const auth = async (presented: string, path: string) =>
-  JSON.stringify({ type: 'auth', key: presented, device: await device.socket(machineId, path) })
+/** What a tunneled request or socket presents: an access key, or a relay ticket for the linked account. */
+export type Presented = { key: string } | { ticket: string }
 
-/** The headers of a tunneled request with key `presented`, and a fresh proof from the approved `device`. */
-export async function keyHeaders(
-  presented: string,
+/** A browser that signs device proofs, as `testDevice` makes one. */
+type Device = Awaited<ReturnType<typeof testDevice>>
+
+/** A fresh relay ticket for the linked account on this machine, as the server signs one. */
+export const accountTicket = () => relay.ticket({ sub: ACCOUNT_ID, aud: machineId })
+
+/** The headers of a tunneled request presenting `as`, with a fresh proof from `who`. */
+export async function credentialHeaders(
+  as: Presented,
   method: string,
   path: string,
   body = '',
+  who: Device = device,
 ): Promise<[string, string][]> {
-  const proof = await device.proof({ machineId, method, path, body })
-  return [
-    [ACCESS_KEY_HEADER, presented],
-    [DEVICE_PROOF_HEADER, proof],
-  ]
+  const proof = await who.proof({ machineId, method, path, body })
+  const credential: [string, string] = 'key' in as ? [ACCESS_KEY_HEADER, as.key] : [RELAY_TICKET_HEADER, as.ticket]
+  return [credential, [DEVICE_PROOF_HEADER, proof]]
 }
+
+/** The headers of a tunneled request with key `presented`, and a fresh proof from the approved `device`. */
+export const keyHeaders = (presented: string, method: string, path: string, body = '') =>
+  credentialHeaders({ key: presented }, method, path, body)
 
 /** Opens a local socket and collects its text messages. */
 export async function openLocal(path: string) {
@@ -281,24 +301,105 @@ export async function openLocal(path: string) {
 }
 
 /**
- * Opens an end-to-end session through `conn` as the browser does, with `key` and the approved `device`, as tunneled
- * request `id`. Returns the browser's side and the session id.
+ * Opens an end-to-end session through `conn` as the browser does, presenting
+ * `as` (the harness's `key` by default) from `who` (the approved `device`), as
+ * tunneled request `id`. Returns the browser's side, the session id and
+ * `next()`, which hands out the session's channels in order.
  */
-export async function openE2eSession(conn: Conn, id: number) {
+export async function openE2eSession(conn: Conn, id: number, as: Presented = { key }, who: Device = device) {
   const { path, method } = routes.e2e.open
-  const browser = await startBrowserHandshake({ machineId, device: device.signer })
+  const browser = await startBrowserHandshake({ machineId, device: who.signer })
   const hello = JSON.stringify(browser.hello)
   send(conn, {
     type: 'http.request',
     id,
     method,
     path,
-    headers: [['content-type', 'application/json'], ...(await keyHeaders(key, method, path, hello))],
+    headers: [['content-type', 'application/json'], ...(await credentialHeaders(as, method, path, hello, who))],
     body: new TextEncoder().encode(hello),
   })
   const of = () => conn.frames.filter((f) => 'id' in f && f.id === id)
   await until(() => of().some((f) => f.type === 'http.end'))
   const body = Buffer.concat(of().flatMap((f) => (f.type === 'http.body' ? [f.data] : []))).toString()
   const opened = openE2eSessionResponse.parse(JSON.parse(body))
-  return { session: await browser.finish(opened.hello, machineKey.publicKey), sessionId: opened.sessionId }
+  let channels = 0
+  return {
+    session: await browser.finish(opened.hello, machineKey.publicKey),
+    sessionId: opened.sessionId,
+    next: () => ++channels,
+  }
+}
+
+/** An end-to-end session as the browser holds it. */
+export type BrowserSession = Awaited<ReturnType<typeof openE2eSession>>
+
+/**
+ * Sends `method path` sealed on the next channel of `e2e` as tunneled request
+ * `id`, presenting `as` from `who` beside any other `headers`, and waits for its end. Returns the status
+ * and body the browser reads: the sealed ones, or the unsealed ones for a
+ * refusal the host couldn't seal.
+ */
+export async function sealedRequest(
+  conn: Conn,
+  e2e: BrowserSession,
+  id: number,
+  method: string,
+  path: string,
+  options: { as?: Presented; who?: Device; body?: string; headers?: [string, string][] } = {},
+) {
+  const { as = { key }, who = device, body } = options
+  const headers = [...(options.headers ?? []), ...(await credentialHeaders(as, method, path, body, who))]
+  const { channel, data } = await sealedEnvelope(e2e.session, e2e.sessionId, e2e.next(), {
+    method,
+    path,
+    headers: body === undefined ? headers : [['content-type', 'application/json'], ...headers],
+    ...(body === undefined ? {} : { body }),
+  })
+  send(conn, { type: 'http.sealed', id, data })
+  const of = () => conn.frames.filter((f) => 'id' in f && f.id === id)
+  await until(() => of().some((f) => f.type === 'http.end'))
+  const outer = of().find((f) => f.type === 'http.response')
+  const payloads = of().flatMap((f) => (f.type === 'http.body' ? [f.data] : []))
+  if (outer?.type === 'http.response' && outer.status !== 200) {
+    return { status: outer.status, body: Buffer.concat(payloads).toString() }
+  }
+  const reply = await openSealedReply(channel, payloads)
+  return { status: reply.status, body: reply.body }
+}
+
+/**
+ * Opens a sealed socket at `path` as tunnel channel `channel`, on the next
+ * channel of `e2e`, presenting `as` from `who`. Returns the browser's end:
+ * `send` seals a message onto it, and `messages` opens what the host sent so far.
+ */
+export async function sealedSocket(
+  conn: Conn,
+  e2e: BrowserSession,
+  channel: number,
+  path: string,
+  options: { as?: Presented; who?: Device } = {},
+) {
+  const { as = { key }, who = device } = options
+  const proof = await who.socket(machineId, path)
+  const open: E2eSocketOpen =
+    'key' in as
+      ? { path, auth: { type: 'auth', key: as.key, device: proof } }
+      : { path, auth: { type: 'auth', account: true, device: proof }, ticket: as.ticket }
+  const { channel: e2eChannel, data } = await sealedSocketEnvelope(e2e.session, e2e.sessionId, e2e.next(), open)
+  send(conn, { type: 'ws.sealed', channel, data })
+  const opened: E2eSocketMessage[] = []
+  return {
+    /** Seals `message` onto the channel and sends it; returns its sealed size, as the host acks it. */
+    send: async (message: E2eSocketMessage) => {
+      const data = await sealMessage(e2eChannel, message)
+      send(conn, { type: 'ws.data', channel, data })
+      return data.byteLength
+    },
+    /** Every message the host sent on the channel, opened once each, in order. */
+    messages: async () => {
+      const payloads = dataOn(conn, channel)
+      opened.push(...(await openMessages(e2eChannel, payloads.slice(opened.length))))
+      return opened
+    },
+  }
 }

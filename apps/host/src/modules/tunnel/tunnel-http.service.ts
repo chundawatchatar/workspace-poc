@@ -8,6 +8,7 @@ import {
   DEVICE_PROOF_SOCKET_METHOD,
   decodeEnvelope,
   decodeRequestRecord,
+  E2E_REQUIRED_CODE,
   E2E_SESSION_UNKNOWN_CODE,
   type E2eChannel,
   type E2eEnvelope,
@@ -20,6 +21,7 @@ import {
   type httpSealedFrame,
   type MachineFrame,
   RELAY_TICKET_HEADER,
+  routes,
   type SocketAuthMessage,
 } from '@orch/shared'
 import type { z } from 'zod'
@@ -144,6 +146,19 @@ export function accessKeyOf(headers: [string, string][]): string | null {
   return singleHeader(headers, ACCESS_KEY_HEADER)
 }
 
+/**
+ * The only requests served unsealed through the tunnel, each its exact method
+ * and path as sent: the key bootstrap, which a browser needs before it can
+ * check the machine key a session is signed with, and the handshake that opens
+ * the session. Both still need a key or ticket and a device proof.
+ */
+const UNSEALED_ROUTES = [routes.system.machineKey, routes.e2e.open]
+
+/** True when a plain request may be served: its method and path match an exempt route exactly, query string included. */
+export function servedUnsealed({ method, path }: Pick<HttpRequestFrame, 'method' | 'path'>): boolean {
+  return UNSEALED_ROUTES.some((route) => route.method === method && route.path === path)
+}
+
 /** The largest `http.body` payload, so every encoded frame stays far below `MAX_TUNNEL_FRAME_BYTES`. */
 export const MAX_BODY_CHUNK_BYTES = 64 * 1024
 
@@ -211,8 +226,11 @@ type InnerRequest = Omit<HttpRequestFrame, 'type'>
  * relay ticket, streaming each response back as `http.response`, `http.body`
  * and `http.end`. Each body chunk waits for `room`, so a large response is read
  * only as fast as the tunnel takes it. After `close()` it writes nothing more,
- * so a dropped connection's requests never reach the next one. A request
- * refused by `authorize` gets `auth.failed`, then a 401, and never reaches
+ * so a dropped connection's requests never reach the next one. A plain
+ * request is served only for the two routes `servedUnsealed` allows; any other
+ * gets a JSON 403 `E2E_REQUIRED_CODE` before a credential is read, so it calls
+ * neither `authorize` nor `handle`, sends no `auth.failed` and is recorded as
+ * `unsealed`. A request refused by `authorize` gets `auth.failed`, then a 401, and never reaches
  * `handle`; one from a device that isn't approved gets a JSON 403
  * `device_not_approved` and no `auth.failed`. Each refused request is recorded
  * with its reason. A sealed request is opened on its own channel of the
@@ -235,9 +253,19 @@ export class TunnelHttp {
     private readonly sessions: SealedSessionLookup = () => null,
   ) {}
 
-  /** Starts answering `frame`. A frame whose `id` is already in flight is ignored. */
+  /**
+   * Starts answering `frame`, or refuses it as unsealed unless `servedUnsealed`
+   * allows it. A frame whose `id` is already in flight is ignored.
+   */
   request(frame: HttpRequestFrame) {
-    this.track(frame.id, (signal) => this.serve(frame, this.plainWriter(frame.id, signal), signal))
+    this.track(frame.id, (signal) => {
+      const writer = this.plainWriter(frame.id, signal)
+      if (servedUnsealed(frame)) return this.serve(frame, writer, signal)
+      // Nothing about the request is recorded: its path, headers and body stay out of the log.
+      this.record({ kind: 'refused', reason: 'unsealed' })
+      const body = { error: 'This request must be end-to-end encrypted', code: E2E_REQUIRED_CODE }
+      return writeAll(writer, 403, [['content-type', 'application/json']], encoder.encode(JSON.stringify(body)))
+    })
   }
 
   /**

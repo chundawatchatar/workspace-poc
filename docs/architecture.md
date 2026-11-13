@@ -285,10 +285,10 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
     capped and expires. What remains is an owner who copies a fingerprint they don't recognise from the pending list
     and types it in: that still approves the server's device. Pending rows keep their fingerprints so the owner can
     tell browsers apart and dismiss strangers.
-  - Until unsealed traffic is refused (REM-2: the handshake, sealed HTTP and sealed sockets are in), a compromised
-    server can read, and inject into, what a browser without a pinned machine key sends in the clear. It just can't
-    open a socket or send a request by itself. Requests and sockets through a pinned machine are sealed (see "Remote
-    access" below), so it can neither read nor inject into those.
+  - Through the tunnel the host serves only sealed requests and sockets, plus the key bootstrap and the handshake
+    (REM-2, see "Unsealed traffic" under "Remote access" below). So a compromised server can neither read nor inject
+    into a session, and a browser it steers off the sealed path is refused by the host. It still sees the key or
+    ticket and the proof in the clear on those two requests; the risks that remain are listed there.
   - Access keys from connect links still pass through the server, in a header or the first socket message, so a
     compromised server can capture one. A captured key alone no longer opens the machine through the tunnel, since
     it needs a fresh proof from an approved device, but with a key the server can still push its own device into
@@ -320,8 +320,9 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   `closed` when its channel ends for any reason: the browser closed it, a revoke or an ended session, the host, or a
   dropped tunnel. Every refused tunneled request or socket writes `refused` with a fixed reason from
   `auditRefusalReason` (`key_refused`, `ticket_refused`, `ticket_reused`, `proof_refused`, `device_not_approved`,
-  `no_auth` for a missing, malformed or late socket auth message), which `TunnelAccess.authorize` reports through a
-  callback, with the fingerprint and principal only when a proof verified. Accepted HTTP requests are not logged. Each
+  `no_auth`, which older lines carry for a missing, malformed or late plain socket auth message, and `unsealed` for a
+  plain request or socket refused before any credential is read; see "Unsealed traffic"), which
+  `TunnelAccess.authorize` reports through a callback, with the fingerprint and principal only when a proof verified. Accepted HTTP requests are not logged. Each
   line is one `z.strictObject` per kind (`auditLine` in `packages/shared`), so it can hold only ids, fingerprints,
   reasons and times, never a key, ticket, proof, nonce, public key, path, header or anything typed; the reader skips
   any line that doesn't parse. Past 1000 lines an append rewrites the file atomically with the newest 500 plus the new
@@ -398,8 +399,8 @@ and an app can register kinds this repo doesn't ship.
 
 All host calls already go through `callApi` and `buildSocketUrl`. Put them behind a `HostTransport` (base URL and how
 the access key is attached) with two implementations, local and remote. The app passes one into `terminal-ui`, and
-nothing inside the page knows which one is in use. End-to-end encryption (REM-2) later becomes a third
-implementation, not a rewrite.
+nothing inside the page knows which one is in use. End-to-end encryption (REM-2) became an option of the remote
+one (`machinePublicKey`), not a rewrite.
 
 ### 5. Identity is a list of keys, not one key
 
@@ -440,10 +441,11 @@ relay can never reach it, and it is never added to `routes` or relayed. Remote c
 
 ### Remote access (in progress, see the factory backlog)
 
-**Decision:** the first version relays plain frames inside TLS, so the server can read the traffic. End-to-end
-encryption (REM-2) comes later, by adding a sealed frame type: its payload is an inner frame encrypted between the
-browser and the host, with keys from a handshake the server passes along but can't read. Only the browser and the
-host change; the server keeps routing the same way.
+**Decision:** the first version relayed plain frames inside TLS, so the server could read the traffic. End-to-end
+encryption (REM-2) added sealed frame types (`http.sealed`, `ws.sealed`): their payload is an inner request or socket
+encrypted between the browser and the host, with keys from a handshake the server passes along but can't read. Only
+the browser and the host changed; the server keeps routing the same way. Through the tunnel the host now refuses
+unsealed traffic, except the key bootstrap and the handshake (see "Unsealed traffic" below).
 
 The crypto for it is in `packages/shared/src/contracts/e2e.ts` (WebCrypto only, so the browser and the host share it).
 The browser sends a fresh P-256 ephemeral key signed with its device key
@@ -480,10 +482,10 @@ before expiry, the same margin as tickets. A device holds at most 8 live session
 drops its oldest. Every path in `RemoteAccessService` that closes sockets closes the matching sessions through one
 helper, `closeAccess`: revoking a device, ending its session, unlinking, the server's `session.ended` and key rotation;
 turning remote access off or stopping the tunnel closes them all. Expiry closes no open socket. A session id, an ephemeral key, a signature or a derived key is never logged, saved or put in an error
-message, a URL or a query key. Open point: the key bootstrap (`routes.system.machineKey`) stays unsealed and outside
-the handshake, since the browser needs the key before it can check one, so `MachineKeyCheck` uses a transport without
-`machinePublicKey`. The job that refuses unsealed traffic must exempt that route or fold it into the handshake. Whether
-a handshake belongs in the remote audit log is also left open.
+message, a URL or a query key. The key bootstrap (`routes.system.machineKey`) stays unsealed and outside the
+handshake, since the browser needs the key before it can check one, so `MachineKeyCheck` uses a transport without
+`machinePublicKey`. It and the handshake are the two requests the host still serves unsealed through the tunnel (see
+"Unsealed traffic" below). Handshakes are not recorded in the remote audit log.
 
 HTTP is sealed with these sessions. `E2eSession.channel(n)` gives an independent sub-channel for each number from 1
 to `2^32 - 1`: its two keys come from the same HKDF base with ` channel <n>` added to each direction's label in the
@@ -513,7 +515,7 @@ malformed envelope, a channel already taken or a record that doesn't open gets a
 the page's `Response` from the opened head (a head that doesn't open rejects with `E2eError`); its body errors and
 never ends cleanly when a record fails to open or comes out of order, the end record carries an error, or the stream
 stops before the end record, so a truncated or reordered relay is never taken for a whole response. The handshake
-itself and `routes.system.machineKey` stay unsealed; unsealed requests and sockets are still accepted.
+itself and `routes.system.machineKey` stay unsealed; any other plain request is refused (see "Unsealed traffic" below).
 No session id, channel key, record, inner path, header or body is logged, saved, or put into an error message, a
 URL or a query key. Risks that remain: sizes, timing and which device connects stay visible to the server; the
 handshake still carries its key or ticket and proof in clear headers; and a compromised server can spend a
@@ -552,8 +554,39 @@ own credentials and a fresh proof; a live session admits nothing by itself, sess
 ticket, proof or message is logged, saved, or put in an error, a close reason, a URL or a query key. Risks that
 remain: a compromised server can cut a socket short, fake a close code or close it, which is a denial of service only
 (a faked `CLOSE_DEVICE_NOT_APPROVED` shows only the unapproved hint); it can spend channel numbers with junk
-envelopes, as for HTTP; and message sizes and timing stay visible, so keystroke timing in a terminal leaks. Refusing
-unsealed traffic is the next job.
+envelopes, as for HTTP; and message sizes and timing stay visible, so keystroke timing in a terminal leaks.
+
+**Unsealed traffic.** Through the tunnel the host refuses everything unsealed but two requests. `TunnelHttp.request`
+serves a plain `http.request` only when its method and path match `routes.e2e.open` or `routes.system.machineKey`
+exactly as sent (`servedUnsealed`, read from the `routes` registry), so a query string, another method or any other
+spelling doesn't match. Those two are exempt because they come before there can be a session: the browser needs the
+machine key to check the handshake's answer (`MachineKeyCheck`), and the handshake is what opens the session. Both
+are still authorized with a key or ticket and a fresh proof from an approved device. Every other plain request gets
+a JSON 403 `{ error, code: 'e2e_required' }` (`E2E_REQUIRED_CODE`) before any credential is read: there is no
+`auth.failed`, so the server's bad-key limit isn't charged; no call to `authorize`, so no nonce or ticket is spent and
+no device enters the pending list; and no handler. Every plain `ws.open` is closed with `CLOSE_ACCESS_DENIED` and the
+fixed reason `end-to-end encryption required` as it arrives, with no `auth.failed`. It is never registered, so no
+handler or auth timer starts and its `ws.data` reaches nothing. Each refusal is one `{ kind: 'refused', reason:
+'unsealed' }` line in the remote audit log, holding only the kind, the reason and the time: no path, header,
+credential or fingerprint, since no proof was read. The owner sees it as "Refused: not end-to-end encrypted". The log
+stays capped at `AUDIT_LOG_MAX_LINES`, so a flood of refusals only pushes older lines out. `http.sealed` and
+`ws.sealed` are unchanged, and local access (`apps/web`) never passes through the tunnel and is unchanged. The server still relays plain `/m/<id>/api` and `/m/<id>/ws`, and the host refuses them; the browser
+sends only the two exempt requests unsealed. There is no setting or grace period, and `TUNNEL_PROTOCOL_VERSION` stays
+4, since no frame changed.
+
+Risks that remain with end-to-end encryption:
+
+- **Client code served by a compromised server.** The client is plain web and can't be installed, so a server that
+  serves its own page can read what the user types into it and act as that browser. The host's open sessions list,
+  its remote audit log and its kill switch (revoking a device, ending a session, turning remote access off) are the
+  owner's cover for this.
+- **Metadata.** Timing, sizes and which device connects stay visible to the server, so keystroke timing in a
+  terminal leaks.
+- **Clear credentials in the bootstrap.** The handshake and the key bootstrap still carry the key or ticket and the
+  device proof in clear headers, so a compromised server can capture a connect link's access key there. Alone it
+  opens nothing, since every request also needs a fresh proof from an approved device.
+- **Denial of service.** The server can cut sockets, fake close codes, refuse to relay, and spend a session's channel
+  numbers with junk envelopes, which only makes the browser's requests and sockets fail.
 
 Accounts (sign-in, sessions, emails and the account's machine list) are described in [accounts](accounts.md).
 

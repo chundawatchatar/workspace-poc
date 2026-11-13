@@ -62,6 +62,7 @@ export {
   decodeEnvelope,
   decodeRequestRecord,
   decodeResponseRecord,
+  E2E_REQUIRED_CODE,
   E2E_SESSION_UNKNOWN_CODE,
   type E2eEnvelope,
   type E2eHttpHead,

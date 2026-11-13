@@ -1,11 +1,18 @@
 import { describe, expect, test } from 'bun:test'
-import { decodeFrame, type MachineFrame, machineFrame } from '@orch/shared'
+import { decodeFrame, type MachineFrame, machineFrame, routes } from '@orch/shared'
+import { sealedSocketEnvelope, testE2ePair } from './tunnel.testing'
 import { TunnelChannels } from './tunnel-channels.service'
 import { MAX_BODY_CHUNK_BYTES, TunnelHttp } from './tunnel-http.service'
 import { BULK_CAP_BYTES, TunnelOutbox } from './tunnel-outbox.service'
 
-/** An outbox over a fake socket whose buffered amount the test sets, wired to HTTP and channels as the client does. */
-function setup() {
+const SESSION_ID = 'AAECAwQFBgcICQoLDA0ODw'
+
+/**
+ * An outbox over a fake socket whose buffered amount the test sets, wired to
+ * HTTP and channels as the client does, with one live end-to-end session.
+ */
+async function setup() {
+  const pair = await testE2ePair()
   const socket = { buffered: Number.POSITIVE_INFINITY, written: [] as MachineFrame[] }
   const outbox = new TunnelOutbox({
     write: (data) => {
@@ -19,7 +26,8 @@ function setup() {
     outbox.send(frame)
     mostQueued = Math.max(mostQueued, outbox.bulkBytes)
   }
-  const authorize = () => ({ kind: 'key' as const, keyId: 'k1', name: 'default', deviceId: 'd1' })
+  const principal = { kind: 'key' as const, keyId: 'k1', name: 'default', deviceId: 'd1' }
+  const authorize = () => principal
   const http = new TunnelHttp(
     async () => new Response(new Uint8Array(4 * 1024 * 1024).fill(1)),
     authorize,
@@ -33,8 +41,9 @@ function setup() {
     },
     authorize,
     send,
+    { sessions: (id) => (id === SESSION_ID ? { principal, session: pair.machine } : null) },
   )
-  return { socket, outbox, http, channels, mostQueued: () => mostQueued }
+  return { socket, outbox, http, channels, browser: pair.browser, mostQueued: () => mostQueued }
 }
 
 async function until(check: () => boolean, timeoutMs = 2000) {
@@ -47,27 +56,28 @@ async function until(check: () => boolean, timeoutMs = 2000) {
 
 describe('TunnelOutbox', () => {
   test('holds a large response to the bulk cap while the socket is full, and lets terminal output overtake it', async () => {
-    const { socket, outbox, http, channels, mostQueued } = setup()
-    http.request({ type: 'http.request', id: 1, method: 'GET', path: '/api/big', headers: [] })
+    const { socket, outbox, http, channels, browser, mostQueued } = await setup()
+    http.request({ type: 'http.request', id: 1, method: 'GET', path: routes.system.machineKey.path, headers: [] })
     await until(() => outbox.bulkBytes >= BULK_CAP_BYTES)
     await Bun.sleep(30)
-    channels.receive({ type: 'ws.open', channel: 1, path: '/ws/term/t', headers: [] })
-    channels.receive({ type: 'ws.data', channel: 1, data: JSON.stringify({ type: 'auth', key: 'k', device: 'p' }) })
-    await Bun.sleep(1)
+    const open = { path: '/ws/term/t', auth: { type: 'auth' as const, key: 'k', device: 'p' } }
+    const { data } = await sealedSocketEnvelope(browser, SESSION_ID, 1, open)
+    channels.receive({ type: 'ws.sealed', channel: 1, data })
+    await Bun.sleep(10)
     expect(socket.written).toEqual([])
     expect(outbox.bulkBytes).toBeLessThan(BULK_CAP_BYTES + 2 * MAX_BODY_CHUNK_BYTES)
 
     socket.buffered = 0
     await until(() => socket.written.some((f) => f.type === 'http.end'))
     const types = socket.written.map((f) => f.type)
-    expect(types.slice(0, 4)).toEqual(['ws.data', 'ws.data', 'ws.ack', 'http.response'])
+    expect(types.slice(0, 3)).toEqual(['ws.data', 'ws.data', 'http.response'])
     const body = socket.written.reduce((sum, f) => sum + (f.type === 'http.body' ? f.data.byteLength : 0), 0)
     expect(body).toBe(4 * 1024 * 1024)
     expect(mostQueued()).toBeLessThan(BULK_CAP_BYTES + 2 * MAX_BODY_CHUNK_BYTES)
   })
 
   test('after close it writes nothing, even once the socket drains, and lets waiting readers go', async () => {
-    const { socket, outbox } = setup()
+    const { socket, outbox } = await setup()
     for (let i = 0; i < 20; i++) outbox.send({ type: 'http.body', id: 1, data: new Uint8Array(MAX_BODY_CHUNK_BYTES) })
     let released = false
     void outbox.room().then(() => {

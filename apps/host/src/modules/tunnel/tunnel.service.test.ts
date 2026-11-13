@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, type Mock, spyOn, test } from 'bun:test'
 import {
+  CLOSE_ACCESS_DENIED,
   CLOSE_REPLACED,
   CLOSE_UNSUPPORTED_VERSION,
   decodeFrame,
   encodeFrame,
   type MachineFrame,
   machineFrame,
+  routes,
   type ServerFrame,
   TUNNEL_PATH,
   TUNNEL_PROTOCOL_VERSION,
@@ -377,7 +379,7 @@ describe('TunnelClient', () => {
     expect(conn.closed).toBeNull()
   })
 
-  test('drops the requests of a lost connection, and answers a refused ws.open with a close', async () => {
+  test('drops the requests of a lost connection, and answers a plain ws.open with a close', async () => {
     let signal: AbortSignal | undefined
     let cancelled = false
     start({
@@ -402,7 +404,7 @@ describe('TunnelClient', () => {
     send(first, { type: 'ws.data', channel: 1, data: 'x' })
     send(first, { type: 'ws.open', channel: 3, path: '/ws/events', headers: [] })
     send(first, { type: 'ws.data', channel: 3, data: JSON.stringify({ type: 'auth', key: 'k', device: 'p' }) })
-    send(first, { type: 'http.request', id: 1, method: 'GET', path: '/api/slow', headers: [] })
+    send(first, { type: 'http.request', id: 1, method: 'GET', path: routes.system.machineKey.path, headers: [] })
     await until(() => first.frames.some((f) => f.type === 'http.body'))
     first.ws.close(1000)
     await until(() => cancelled && conns.length >= 2)
@@ -411,8 +413,8 @@ describe('TunnelClient', () => {
     expect(first.frames.find((f) => f.type === 'ws.close')).toEqual({
       type: 'ws.close',
       channel: 3,
-      code: 1008,
-      reason: 'no sockets here',
+      code: CLOSE_ACCESS_DENIED,
+      reason: 'end-to-end encryption required',
     })
     expect(signal?.aborted).toBe(true)
     expect(first.frames.filter((f) => f.type.startsWith('http.')).map((f) => f.type)).toEqual([

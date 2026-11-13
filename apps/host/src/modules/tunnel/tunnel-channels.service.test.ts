@@ -5,11 +5,11 @@ import { join } from 'node:path'
 import {
   auditLine,
   CLOSE_ACCESS_DENIED,
-  CLOSE_DEVICE_NOT_APPROVED,
   CLOSE_SESSION_ENDED,
+  type E2eSession,
+  type E2eSocketOpen,
   type MachineFrame,
   relaySocketProtocols,
-  WS_CHANNEL_WINDOW_BYTES,
   wsPayloadBytes,
 } from '@orch/shared'
 import { CAUGHT_UP, deliver, type TermClient } from '@orch/terminal'
@@ -19,6 +19,7 @@ import type { SocketRefusal } from '../../lib/socketRouter'
 import { AuditLogRepository, auditLogPath } from '../remote-access/audit-log.repository'
 import { type AuditEvent, AuditLogService } from '../remote-access/audit-log.service'
 import { fingerprintOf } from '../remote-access/device-proof.service'
+import { openMessages, sealedSocketEnvelope, sealMessage, testE2ePair } from './tunnel.testing'
 import { CHANNEL_QUEUE_CAP_BYTES, type OpenSocket, TunnelChannels } from './tunnel-channels.service'
 import { type Authorize, bodySha256, type Credentials, DEVICE_NOT_APPROVED } from './tunnel-http.service'
 
@@ -50,20 +51,12 @@ afterEach(() => {
   auditDir = null
 })
 
-/** The auth message for `key`, with the device proof `device`. */
-const auth = (key: string, device = 'p-good') => JSON.stringify({ type: 'auth', key, device })
-
-/** The auth message that asks to be judged by the ticket the channel opened with, and the device proof `device`. */
-const accountAuth = (device = 'p-good') => JSON.stringify({ type: 'auth', account: true, device })
-
-/** The `ws.open` headers of a socket that offered `ticket`, as a browser sends them. */
-const withTicket = (ticket: string): [string, string][] => [
-  ['sec-websocket-protocol', relaySocketProtocols(ticket).join(', ')],
-  ['x-thing', 'a'],
-]
-
 /** What `authorize` was asked, in order. */
 let asked: Credentials[] = []
+
+const keyK1: Principal = { kind: 'key', keyId: 'k1', name: 'default', deviceId: 'd1' }
+const keyK2: Principal = { kind: 'key', keyId: 'k2', name: 'second', deviceId: 'd1' }
+const account: Principal = { kind: 'account', accountId: 'u1', deviceId: 'd1', ticketExp: 0 }
 
 /**
  * Accepts the keys `good` (key id `k1`) and `other` (key id `k2`), and the
@@ -77,171 +70,174 @@ const authorize: Authorize = (credentials) => {
   if (!known) return null
   if (device?.proof === 'p-new') return DEVICE_NOT_APPROVED
   if (device?.proof !== 'p-good') return null
-  if (key === 'good') return { kind: 'key', keyId: 'k1', name: 'default', deviceId: 'd1' }
-  if (key === 'other') return { kind: 'key', keyId: 'k2', name: 'second', deviceId: 'd1' }
-  return { kind: 'account', accountId: 'u1', deviceId: 'd1', ticketExp: 0 }
+  if (key === 'good') return keyK1
+  if (key === 'other') return keyK2
+  return account
+}
+
+/** Who a sealed socket comes as; each has its own live session. */
+type As = 'good' | 'other' | 'account'
+const OWNERS: Record<As, Principal> = { good: keyK1, other: keyK2, account }
+
+/** The open record a browser seals for `as` on `path`. */
+function openRecord(as: As, path = '/ws/events', device = 'p-good'): E2eSocketOpen {
+  if (as === 'account') return { path, auth: { type: 'auth', account: true, device }, ticket: 't-good' }
+  return { path, auth: { type: 'auth', key: as, device } }
+}
+
+async function until(check: () => boolean, timeoutMs = 1000) {
+  const deadline = Date.now() + timeoutMs
+  while (!check()) {
+    if (Date.now() > deadline) throw new Error('timed out')
+    await Bun.sleep(2)
+  }
 }
 
 /**
- * Channels whose `openSocket` accepts every path but `/ws/nope`, with the
+ * Channels with one live session for each of `OWNERS`, whose `openSocket`
+ * accepts every path but `/ws/nope` and answers `ping` with `pong`, with the
  * frames they send collected as a fake server would.
  */
-function setup(
-  open?: (opened: Opened) => void,
-  authTimeoutMs = 1000,
-  now?: () => number,
-  record?: (event: AuditEvent) => void,
+async function setup(
+  options: { open?: (opened: Opened) => void; now?: () => number; record?: (event: AuditEvent) => void } = {},
 ) {
   const frames: MachineFrame[] = []
   const opened: Opened[] = []
+  const live = new Map<string, { principal: Principal; session: E2eSession }>()
+  const browsers = new Map<As, { sessionId: string; browser: E2eSession }>()
+  for (const as of ['good', 'other', 'account'] as const) {
+    const pair = await testE2ePair()
+    const sessionId = Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString('base64url')
+    live.set(sessionId, { principal: OWNERS[as], session: pair.machine })
+    browsers.set(as, { sessionId, browser: pair.browser })
+  }
   const openSocket: OpenSocket = (path, headers, conn, principal) => {
     if (path === '/ws/nope') return { code: 1008, reason: 'not found' } satisfies SocketRefusal
     const run: Opened = { path, headers, principal, conn, messages: [], closes: 0 }
     opened.push(run)
-    open?.(run)
-    return { message: (data) => run.messages.push(data), close: () => run.closes++ }
+    options.open?.(run)
+    return {
+      message: (data) => {
+        run.messages.push(data)
+        if (data === 'ping') conn.send('pong')
+      },
+      close: () => run.closes++,
+    }
   }
   const channels = new TunnelChannels(openSocket, authorize, (frame) => frames.push(frame), {
-    authTimeoutMs,
-    now,
-    record,
+    now: options.now,
+    record: options.record,
+    sessions: (id) => live.get(id) ?? null,
   })
-  /** Opens `channel` and authorizes it with `key`. */
-  const openChannel = (channel: number, key = 'good') => {
-    channels.receive({ type: 'ws.open', channel, path: '/ws/events', headers: [] })
-    channels.receive({ type: 'ws.data', channel, data: auth(key) })
-    const run = opened.at(-1)
-    if (!run) throw new Error('not opened')
-    return run
+  /** Sends `record` sealed on the session of `as`, as tunnel channel `id`; returns the browser's end. */
+  const sealedOpen = async (id: number, as: As, record: E2eSocketOpen) => {
+    const { sessionId, browser } = browsers.get(as) as { sessionId: string; browser: E2eSession }
+    const { channel, data } = await sealedSocketEnvelope(browser, sessionId, id, record)
+    channels.receive({ type: 'ws.sealed', channel: id, data })
+    return channel
   }
+  /** Opens `id` as `as` and waits for its handler. */
+  const openChannel = async (id: number, as: As = 'good') => {
+    const before = opened.length
+    const e2e = await sealedOpen(id, as, openRecord(as))
+    await until(() => opened.length > before)
+    return { run: opened.at(-1) as Opened, e2e }
+  }
+  const on = (id: number) => frames.filter((f) => 'channel' in f && f.channel === id)
+  const closeOf = (id: number) => on(id).find((f) => f.type === 'ws.close')
   const of = <T extends MachineFrame['type']>(type: T) =>
     frames.filter((f): f is Extract<MachineFrame, { type: T }> => f.type === type)
-  return { channels, frames, opened, openChannel, of }
+  return { channels, frames, opened, sealedOpen, openChannel, on, closeOf, of }
 }
 
-const tick = () => new Promise<void>((resolve) => queueMicrotask(resolve))
-
 describe('TunnelChannels', () => {
-  test('opens no socket until a valid auth message, and refuses anything else with auth.failed then 4401', async () => {
-    const { channels, frames, opened, of } = setup(undefined, 30)
-    const firsts: (string | Uint8Array<ArrayBuffer>)[] = [
-      new TextEncoder().encode(auth('good')),
-      'not json',
-      '{"type":"input","data":"ls"}',
-      auth('wrong'),
-    ]
-    for (const [i, data] of firsts.entries()) {
-      channels.receive({ type: 'ws.open', channel: i + 1, path: '/ws/events', headers: [] })
-      channels.receive({ type: 'ws.data', channel: i + 1, data })
-    }
-    channels.receive({ type: 'ws.open', channel: 9, path: '/ws/events', headers: [] })
-    expect(opened).toHaveLength(0)
-    await Bun.sleep(60)
-    channels.receive({ type: 'ws.data', channel: 9, data: auth('good') })
-    await tick()
+  test('refuses every plain ws.open as it arrives, before any credential, while a sealed socket opens and echoes', async () => {
+    const audit: AuditEvent[] = []
+    const { channels, frames, opened, openChannel, on, of } = await setup({ record: (event) => audit.push(event) })
+    const headers: [string, string][] = [['sec-websocket-protocol', relaySocketProtocols('t-good').join(', ')]]
+    channels.receive({ type: 'ws.open', channel: 1, path: '/ws/events', headers: [] })
+    channels.receive({ type: 'ws.open', channel: 2, path: '/ws/term/t1?cols=80', headers })
+    channels.receive({ type: 'ws.data', channel: 1, data: JSON.stringify({ type: 'auth', key: 'good', device: 'p' }) })
+    channels.receive({
+      type: 'ws.data',
+      channel: 2,
+      data: JSON.stringify({ type: 'auth', account: true, device: 'p' }),
+    })
+    await Bun.sleep(5)
 
-    expect(opened).toHaveLength(0)
-    for (const channel of [1, 2, 3, 4, 9]) {
-      const reason = channel === 9 ? 'auth timeout' : 'access denied'
-      expect(frames.filter((f) => 'channel' in f && f.channel === channel)).toEqual([
-        { type: 'auth.failed', channel },
-        { type: 'ws.close', channel, code: CLOSE_ACCESS_DENIED, reason },
-      ])
-    }
-    expect(of('ws.ack')).toHaveLength(0)
-    expect(channels.size).toBe(0)
-  })
-
-  test('opens with the principal of a valid key, and a bad path after it gets 1008 without auth.failed', () => {
-    const { channels, openChannel, of } = setup()
-    const run = openChannel(1, 'other')
-    expect(run.principal).toEqual({ kind: 'key', keyId: 'k2', name: 'second', deviceId: 'd1' })
-    expect(run.messages).toEqual([])
-
-    channels.receive({ type: 'ws.open', channel: 2, path: '/ws/nope', headers: [] })
-    channels.receive({ type: 'ws.data', channel: 2, data: auth('good') })
-    expect(of('ws.close')).toEqual([{ type: 'ws.close', channel: 2, code: 1008, reason: 'not found' }])
-    expect(of('auth.failed')).toEqual([])
-  })
-
-  test('an account auth message is judged by the ticket its socket offered, which it spends, and its device proof; a key message by the key', () => {
-    const { channels, frames, opened, of } = setup()
-    channels.receive({ type: 'ws.open', channel: 1, path: '/ws/events', headers: withTicket('t-good') })
-    channels.receive({ type: 'ws.data', channel: 1, data: accountAuth() })
-    expect(opened.map((run) => run.principal)).toEqual([
-      { kind: 'account', accountId: 'u1', deviceId: 'd1', ticketExp: 0 },
+    const reason = 'end-to-end encryption required'
+    expect(frames).toEqual([
+      { type: 'ws.close', channel: 1, code: CLOSE_ACCESS_DENIED, reason },
+      { type: 'ws.close', channel: 2, code: CLOSE_ACCESS_DENIED, reason },
     ])
-    const device = { proof: 'p-good', method: 'WS', path: '/ws/events', bodySha256: bodySha256() }
-    expect(asked).toEqual([{ key: null, ticket: 't-good', device, once: true }])
-    // The subprotocols carried the ticket, so the handler never sees them.
-    expect(opened[0]?.headers).toEqual([['x-thing', 'a']])
+    expect(audit).toEqual([
+      { kind: 'refused', reason: 'unsealed' },
+      { kind: 'refused', reason: 'unsealed' },
+    ])
+    expect([asked, opened, channels.list(), channels.size]).toEqual([[], [], [], 0])
 
-    // A bad ticket, and no ticket at all.
-    channels.receive({ type: 'ws.open', channel: 2, path: '/ws/events', headers: withTicket('t-bad') })
+    const { run, e2e } = await openChannel(3)
+    channels.receive({ type: 'ws.data', channel: 3, data: await sealMessage(e2e, 'ping') })
+    await until(() => on(3).some((f) => f.type === 'ws.data'))
+    expect(run.messages).toEqual(['ping'])
+    const payloads = on(3).flatMap((f) => (f.type === 'ws.data' ? [f.data] : []))
+    expect(await openMessages(e2e, payloads)).toEqual(['pong'])
+
+    // A plain open for a live channel, and frames for unknown channels, are ignored.
+    const before = frames.length
     channels.receive({ type: 'ws.open', channel: 3, path: '/ws/events', headers: [] })
-    for (const channel of [2, 3]) channels.receive({ type: 'ws.data', channel, data: accountAuth() })
-    expect(opened).toHaveLength(1)
-    expect(of('auth.failed')).toEqual([
-      { type: 'auth.failed', channel: 2 },
-      { type: 'auth.failed', channel: 3 },
-    ])
-    expect(of('ws.close').map((f) => f.code)).toEqual([CLOSE_ACCESS_DENIED, CLOSE_ACCESS_DENIED])
-
-    // A key auth message on a socket that offered a good ticket is judged by the key, with its proof and no `once`.
-    channels.receive({ type: 'ws.open', channel: 4, path: '/ws/events', headers: withTicket('t-good') })
-    channels.receive({ type: 'ws.data', channel: 4, data: auth('wrong') })
-    expect(opened).toHaveLength(1)
-    expect(asked.at(-1)).toEqual({ key: 'wrong', ticket: null, device })
-    expect(of('auth.failed').at(-1)).toEqual({ type: 'auth.failed', channel: 4 })
-
-    // A device waiting for approval gets its own close and no `auth.failed`; an account message without a proof,
-    // as an older page sends, is refused.
-    channels.receive({ type: 'ws.open', channel: 5, path: '/ws/events', headers: withTicket('t-good') })
-    channels.receive({ type: 'ws.data', channel: 5, data: accountAuth('p-new') })
-    channels.receive({ type: 'ws.open', channel: 6, path: '/ws/events', headers: withTicket('t-good') })
-    channels.receive({ type: 'ws.data', channel: 6, data: JSON.stringify({ type: 'auth', account: true }) })
-    expect(opened).toHaveLength(1)
-    expect(frames.filter((f) => 'channel' in f && f.channel === 5)).toEqual([
-      { type: 'ws.close', channel: 5, code: CLOSE_DEVICE_NOT_APPROVED, reason: 'device not approved' },
-    ])
-    expect(of('auth.failed').at(-1)).toEqual({ type: 'auth.failed', channel: 6 })
-
-    // The same for a key: a waiting device gets its own close, and a key message without a proof is refused.
-    channels.receive({ type: 'ws.open', channel: 7, path: '/ws/events', headers: [] })
-    channels.receive({ type: 'ws.data', channel: 7, data: auth('good', 'p-new') })
-    channels.receive({ type: 'ws.open', channel: 8, path: '/ws/events', headers: [] })
-    channels.receive({ type: 'ws.data', channel: 8, data: JSON.stringify({ type: 'auth', key: 'good' }) })
-    expect(opened).toHaveLength(1)
-    expect(frames.filter((f) => 'channel' in f && f.channel === 7)).toEqual([
-      { type: 'ws.close', channel: 7, code: CLOSE_DEVICE_NOT_APPROVED, reason: 'device not approved' },
-    ])
-    expect(of('auth.failed').at(-1)).toEqual({ type: 'auth.failed', channel: 8 })
+    channels.receive({ type: 'ws.data', channel: 9, data: 'x' })
+    channels.receive({ type: 'ws.ack', channel: 9, bytes: 5 })
+    channels.receive({ type: 'ws.close', channel: 9 })
+    await Bun.sleep(5)
+    expect(frames.slice(before).filter((f) => f.type !== 'ws.ack')).toEqual([])
+    expect(of('ws.ack').every((f) => f.channel === 3)).toBe(true)
+    expect(channels.size).toBe(1)
+    expect(audit.filter((e) => e.kind === 'refused')).toHaveLength(2)
     channels.close()
   })
 
-  test('closeChannels closes only the channels it matches, each handler once', () => {
-    const { channels, openChannel, opened, of } = setup()
-    const a = openChannel(1, 'good')
-    const b = openChannel(2, 'other')
-    const c = openChannel(3, 'good')
-    channels.receive({ type: 'ws.open', channel: 4, path: '/ws/events', headers: [] })
-    channels.receive({ type: 'ws.open', channel: 5, path: '/ws/events', headers: withTicket('t-good') })
-    channels.receive({ type: 'ws.data', channel: 5, data: accountAuth() })
-    const d = opened.at(-1)
+  test('judges a sealed socket by its key, or by the ticket sealed with it, which it spends, with its proof', async () => {
+    const { sealedOpen, openChannel, on, closeOf, opened } = await setup()
+    const device = { proof: 'p-good', method: 'WS', path: '/ws/events', bodySha256: bodySha256() }
+    expect((await openChannel(1, 'other')).run.principal).toEqual(keyK2)
+    expect(asked.at(-1)).toEqual({ key: 'other', ticket: null, device })
+    expect((await openChannel(2, 'account')).run.principal).toEqual(account)
+    expect(asked.at(-1)).toEqual({ key: null, ticket: 't-good', device, once: true })
+
+    // With a key the key decides, even when the ticket beside it would pass.
+    await sealedOpen(3, 'account', { ...openRecord('account'), auth: { type: 'auth', key: 'wrong', device: 'p-good' } })
+    // A handler that refuses the path closes without `auth.failed`.
+    await sealedOpen(4, 'good', openRecord('good', '/ws/nope'))
+    await until(() => Boolean(closeOf(3) && closeOf(4)))
+    expect(asked.at(-2)).toEqual({ key: 'wrong', ticket: null, device })
+    expect(on(3)).toEqual([
+      { type: 'auth.failed', channel: 3 },
+      { type: 'ws.close', channel: 3, code: CLOSE_ACCESS_DENIED, reason: 'access denied' },
+    ])
+    expect(on(4)).toEqual([{ type: 'ws.close', channel: 4, code: 1008, reason: 'not found' }])
+    expect(opened).toHaveLength(2)
+  })
+
+  test('closeChannels closes only the channels it matches, each handler once', async () => {
+    const { channels, openChannel, of } = await setup()
+    const a = (await openChannel(1, 'good')).run
+    const b = (await openChannel(2, 'other')).run
+    const c = (await openChannel(3, 'good')).run
+    const d = (await openChannel(5, 'account')).run
 
     const rotated = (p: Principal) => p.kind === 'key' && p.keyId === 'k1'
     channels.closeChannels(rotated, 'key rotated')
     channels.closeChannels(rotated, 'key rotated')
-    expect(d?.closes).toBe(0)
-    expect([a.closes, b.closes, c.closes]).toEqual([1, 0, 1])
+    expect([a.closes, b.closes, c.closes, d.closes]).toEqual([1, 0, 1, 0])
     expect(of('ws.close')).toEqual([
       { type: 'ws.close', channel: 1, code: CLOSE_ACCESS_DENIED, reason: 'key rotated' },
       { type: 'ws.close', channel: 3, code: CLOSE_ACCESS_DENIED, reason: 'key rotated' },
     ])
-    expect(channels.size).toBe(3)
+    expect(channels.size).toBe(2)
 
     channels.closeChannels((p) => p.kind === 'account', 'account unlinked')
-    expect([b.closes, d?.closes]).toEqual([0, 1])
+    expect([b.closes, d.closes]).toEqual([0, 1])
     expect(of('ws.close').at(-1)).toEqual({
       type: 'ws.close',
       channel: 5,
@@ -261,115 +257,74 @@ describe('TunnelChannels', () => {
     channels.close()
   })
 
-  test('list shows only open, authorized channels, each with its principal and when its auth was accepted', () => {
+  test('list shows only open, authorized channels, each with its principal and when its auth was accepted', async () => {
     let clock = 1000
-    const { channels, openChannel } = setup(undefined, 1000, () => clock)
-    openChannel(1, 'good')
-    clock = 2000
-    channels.receive({ type: 'ws.open', channel: 2, path: '/ws/events', headers: withTicket('t-good') })
+    const { channels, openChannel } = await setup({ now: () => clock })
+    await openChannel(1, 'good')
     clock = 3000
-    channels.receive({ type: 'ws.data', channel: 2, data: accountAuth() })
-    channels.receive({ type: 'ws.open', channel: 3, path: '/ws/events', headers: [] })
-    openChannel(4, 'other')
+    await openChannel(2, 'account')
+    await openChannel(4, 'other')
     channels.receive({ type: 'ws.close', channel: 4 })
 
     expect(channels.list()).toEqual([
-      { principal: { kind: 'key', keyId: 'k1', name: 'default', deviceId: 'd1' }, openedAt: 1000 },
-      { principal: { kind: 'account', accountId: 'u1', deviceId: 'd1', ticketExp: 0 }, openedAt: 3000 },
+      { principal: keyK1, openedAt: 1000 },
+      { principal: account, openedAt: 3000 },
     ])
     channels.close()
     expect(channels.list()).toEqual([])
   })
 
-  test('delivers messages in order and acks exactly the payload bytes, ignoring frames for unknown channels', async () => {
-    const { channels, openChannel, of, opened } = setup()
-    const run = openChannel(1)
-    const payloads: (string | Uint8Array<ArrayBuffer>)[] = ['{"type":"focus"}', 'héllo ✓', new Uint8Array([1, 2, 3])]
-    for (const data of payloads) channels.receive({ type: 'ws.data', channel: 1, data })
-    await tick()
-    channels.receive({ type: 'ws.data', channel: 1, data: 'later' })
-    await tick()
-
-    expect(run.messages).toEqual([...payloads, 'later'])
-    const acks = of('ws.ack')
-    expect(acks.length).toBe(2)
-    // The auth message is acked too, though the handler never sees it.
-    const total = [auth('good'), ...payloads, 'later'].reduce((sum, data) => sum + wsPayloadBytes(data), 0)
-    expect(acks.reduce((sum, ack) => sum + ack.bytes, 0)).toBe(total)
-
-    channels.receive({ type: 'ws.data', channel: 9, data: 'x' })
-    channels.receive({ type: 'ws.ack', channel: 9, bytes: 5 })
-    channels.receive({ type: 'ws.close', channel: 9 })
-    channels.receive({ type: 'ws.open', channel: 1, path: '/ws/events', headers: [] })
-    await tick()
-    expect(opened).toHaveLength(1)
-    expect(of('ws.ack')).toHaveLength(2)
-  })
-
-  test('sends within the window, queues the rest in order, and follows the acks', () => {
-    const { channels, openChannel, of } = setup()
-    const { conn } = openChannel(1)
-    const big = 'x'.repeat(WS_CHANNEL_WINDOW_BYTES - 10)
-    // Under the window a message may start even when it then runs over.
-    expect(conn.send(big)).toBe(big.length)
-    expect(conn.send('0123456789ab')).toBe(12)
-    expect(conn.send('queued-1')).toBe(-1)
-    expect(conn.send(new Uint8Array(4))).toBe(-1)
-    expect(conn.buffered()).toBe(big.length + 12 + 8 + 4)
-    expect(of('ws.data')).toHaveLength(2)
-
-    channels.receive({ type: 'ws.ack', channel: 1, bytes: big.length })
-    const data = of('ws.data').map((f) => f.data)
-    expect(data.slice(2)).toEqual(['queued-1', new Uint8Array(4)])
-    expect(conn.buffered()).toBe(12 + 8 + 4)
-  })
-
-  test('marks a terminal stale while acks are held back, and lets it resync once they arrive', () => {
+  test('marks a terminal stale while acks are held back, and lets it resync once they arrive', async () => {
     let client: TermClient | undefined
-    const { channels, openChannel, of } = setup(({ conn }) => {
-      client = {
-        ready: true,
-        queue: [],
-        queued: 0,
-        stale: false,
-        want: null,
-        answers: false,
-        send: (data) => conn.send(data),
-        buffered: () => conn.buffered(),
-      }
+    const { channels, openChannel, of } = await setup({
+      open: ({ conn }) => {
+        client = {
+          ready: true,
+          queue: [],
+          queued: 0,
+          stale: false,
+          want: null,
+          answers: false,
+          send: (data) => conn.send(data),
+          buffered: () => conn.buffered(),
+        }
+      },
     })
-    openChannel(1)
+    await openChannel(1)
     if (!client) throw new Error('no client')
+    const term = client
     const chunk = new Uint8Array(32 * 1024)
-    for (let i = 0; i < 40 && !client.stale; i++) deliver(client, chunk)
-    expect(client.stale).toBe(true)
-    expect(client.buffered()).toBeGreaterThan(1024 * 1024)
+    for (let i = 0; i < 40 && !term.stale; i++) deliver(term, chunk)
+    expect(term.stale).toBe(true)
+    expect(term.buffered()).toBeGreaterThan(1024 * 1024)
 
     // The fake server now acks all it has been sent, as the browser takes it.
+    const sent = () => of('ws.data').reduce((sum, f) => sum + wsPayloadBytes(f.data), 0)
     let acked = 0
-    while (client.buffered() >= CAUGHT_UP) {
-      const sent = of('ws.data').reduce((sum, f) => sum + wsPayloadBytes(f.data), 0)
-      if (sent === acked) throw new Error('the queue stopped moving')
-      channels.receive({ type: 'ws.ack', channel: 1, bytes: sent - acked })
-      acked = sent
+    while (term.buffered() >= CAUGHT_UP) {
+      await until(() => sent() > acked)
+      const total = sent()
+      channels.receive({ type: 'ws.ack', channel: 1, bytes: total - acked })
+      acked = total
     }
-    expect(client.buffered()).toBeLessThan(CAUGHT_UP)
+    expect(term.buffered()).toBeLessThan(CAUGHT_UP)
   })
 
-  test('closes a channel whose queue passes the cap with 1011, and one with an oversized message with 1009', () => {
-    const { channels, openChannel, of } = setup()
-    const slow = openChannel(1)
+  test('closes a channel whose queue passes the cap with 1011, and one with an oversized message with 1009', async () => {
+    const { channels, openChannel, of } = await setup()
+    const slow = (await openChannel(1)).run
     const chunk = 'y'.repeat(256 * 1024)
+    const sealed = chunk.length + 25
     const results: number[] = []
-    const queued = CHANNEL_QUEUE_CAP_BYTES / chunk.length
-    for (let i = 0; i < queued + 2; i++) results.push(slow.conn.send(chunk))
-    // One goes out within the window, the queue fills to the cap, and the next message closes the channel.
-    expect(results).toEqual([chunk.length, ...Array(queued).fill(-1), 0])
+    for (let i = 0; i < 20 && results.at(-1) !== 0; i++) results.push(slow.conn.send(chunk))
+    // One goes out within the window; the rest, counted while still being sealed, queue up to the cap.
+    const queued = Math.floor(CHANNEL_QUEUE_CAP_BYTES / sealed) - 1
+    expect(results).toEqual([sealed, ...Array(queued).fill(-1), 0])
     expect(slow.closes).toBe(1)
     expect(of('ws.close')).toEqual([{ type: 'ws.close', channel: 1, code: 1011, reason: 'too far behind' }])
     expect(slow.conn.send('more')).toBe(0)
 
-    const big = openChannel(2)
+    const big = (await openChannel(2)).run
     const secret = 'z'.repeat(2 * 1024 * 1024)
     expect(big.conn.send(secret)).toBe(0)
     expect(big.closes).toBe(1)
@@ -379,17 +334,18 @@ describe('TunnelChannels', () => {
     expect(channels.size).toBe(0)
   })
 
-  test('ends a channel the server closes, and every channel when the tunnel goes, sending nothing', () => {
-    const { channels, openChannel, frames } = setup()
-    const a = openChannel(1)
-    const b = openChannel(2)
-    const c = openChannel(3)
-    a.conn.send('x'.repeat(WS_CHANNEL_WINDOW_BYTES))
+  test('ends a channel the server closes, and every channel when the tunnel goes, sending nothing', async () => {
+    const { channels, openChannel, frames } = await setup()
+    const a = (await openChannel(1)).run
+    const b = (await openChannel(2)).run
+    const c = (await openChannel(3)).run
+    a.conn.send('x'.repeat(256 * 1024))
     a.conn.send('queued')
+    await Bun.sleep(10)
     const before = frames.length
 
     channels.receive({ type: 'ws.close', channel: 1, code: 1000 })
-    channels.receive({ type: 'ws.ack', channel: 1, bytes: WS_CHANNEL_WINDOW_BYTES })
+    channels.receive({ type: 'ws.ack', channel: 1, bytes: 512 * 1024 })
     channels.close()
     channels.close()
     b.conn.close(1000)
@@ -401,34 +357,32 @@ describe('TunnelChannels', () => {
     expect(channels.size).toBe(0)
   })
 
-  test('records each socket opened and closed, however it ends, and each refusal with its reason', async () => {
+  test('records each socket opened and closed, however it ends, and each refusal with its reason alone', async () => {
     auditDir = mkdtempSync(join(tmpdir(), 'orch-channels-audit-'))
     const file = auditLogPath(auditDir)
     const audit = new AuditLogService(new AuditLogRepository(file))
-    const { channels, opened, openChannel } = setup(undefined, 30, undefined, (event) => audit.record(event))
+    const { channels, opened, openChannel, sealedOpen, closeOf } = await setup({
+      record: (event) => audit.record(event),
+    })
     const lines = () =>
       readFileSync(file, 'utf8')
         .trimEnd()
         .split('\n')
         .map((line) => JSON.parse(line))
 
-    openChannel(1)
+    await openChannel(1)
     channels.receive({ type: 'ws.close', channel: 1, code: 1000 })
-    channels.receive({ type: 'ws.open', channel: 2, path: '/ws/events', headers: withTicket('t-good') })
-    channels.receive({ type: 'ws.data', channel: 2, data: accountAuth() })
+    await openChannel(2, 'account')
     channels.closeChannels((principal) => principal.kind === 'account', 'device revoked')
-    openChannel(3).conn.close(1000)
-    channels.receive({ type: 'ws.open', channel: 4, path: '/ws/nope', headers: [] })
-    channels.receive({ type: 'ws.data', channel: 4, data: auth('good') })
-    channels.receive({ type: 'ws.open', channel: 5, path: '/ws/events', headers: [] })
-    channels.receive({ type: 'ws.data', channel: 5, data: 'not json' })
-    channels.receive({ type: 'ws.open', channel: 6, path: '/ws/events', headers: [] })
-    channels.receive({ type: 'ws.data', channel: 6, data: auth('wrong') })
-    channels.receive({ type: 'ws.open', channel: 7, path: '/ws/events', headers: [] })
-    channels.receive({ type: 'ws.data', channel: 7, data: auth('good', 'p-new') })
-    channels.receive({ type: 'ws.open', channel: 8, path: '/ws/events', headers: [] })
-    await Bun.sleep(60)
-    openChannel(9)
+    ;(await openChannel(3)).run.conn.close(1000)
+    await sealedOpen(4, 'good', openRecord('good', '/ws/nope'))
+    await until(() => Boolean(closeOf(4)))
+    await sealedOpen(5, 'good', { path: '/ws/events', auth: { type: 'auth', key: 'wrong', device: 'p-good' } })
+    await until(() => Boolean(closeOf(5)))
+    await sealedOpen(6, 'good', openRecord('good', '/ws/events', 'p-new'))
+    await until(() => Boolean(closeOf(6)))
+    channels.receive({ type: 'ws.open', channel: 7, path: '/ws/events?key=secret', headers: [['x-orch-key', 'k']] })
+    await openChannel(8)
     channels.close()
 
     expect(opened).toHaveLength(4)
@@ -437,23 +391,24 @@ describe('TunnelChannels', () => {
     const fingerprint = fingerprintOf('d1')
     const sessions = written.filter((line) => line.kind === 'opened').map((line) => line.session)
     expect(new Set(sessions).size).toBe(5)
-    const [key, account, hostClosed, refusedByHandler, dropped] = sessions
+    const [key, accountSession, hostClosed, refusedByHandler, dropped] = sessions
     expect(written.map(({ at: _, ...line }) => line)).toEqual([
       { kind: 'opened', session: key, principal: 'key', keyId: 'k1', fingerprint },
       { kind: 'closed', session: key },
-      { kind: 'opened', session: account, principal: 'account', accountId: 'u1', fingerprint },
-      { kind: 'closed', session: account },
+      { kind: 'opened', session: accountSession, principal: 'account', accountId: 'u1', fingerprint },
+      { kind: 'closed', session: accountSession },
       { kind: 'opened', session: hostClosed, principal: 'key', keyId: 'k1', fingerprint },
       { kind: 'closed', session: hostClosed },
       { kind: 'opened', session: refusedByHandler, principal: 'key', keyId: 'k1', fingerprint },
       { kind: 'closed', session: refusedByHandler },
-      { kind: 'refused', reason: 'no_auth' },
       // This stub gives no reasons, so the channel falls back to the credential it was given.
       { kind: 'refused', reason: 'key_refused' },
       { kind: 'refused', reason: 'device_not_approved' },
-      { kind: 'refused', reason: 'no_auth' },
+      { kind: 'refused', reason: 'unsealed' },
       { kind: 'opened', session: dropped, principal: 'key', keyId: 'k1', fingerprint },
       { kind: 'closed', session: dropped },
     ])
+    // An unsealed refusal holds its kind, reason and time, and nothing about the socket.
+    expect(Object.keys(written.find((line) => line.reason === 'unsealed')).sort()).toEqual(['at', 'kind', 'reason'])
   })
 })
