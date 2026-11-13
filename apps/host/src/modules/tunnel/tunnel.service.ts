@@ -20,7 +20,7 @@ import type { z } from 'zod'
 import type { Principal } from '../../lib/principal'
 import type { RecordAudit } from '../remote-access/audit-log.service'
 import type { MachineKey } from './tunnel.repository'
-import { AUTH_TIMEOUT_MS, type OpenChannel, type OpenSocket, TunnelChannels } from './tunnel-channels.service'
+import { type OpenChannel, type OpenSocket, TunnelChannels } from './tunnel-channels.service'
 import { type Authorize, type SealedSessionLookup, type TunnelHandler, TunnelHttp } from './tunnel-http.service'
 import { TunnelOutbox } from './tunnel-outbox.service'
 
@@ -89,8 +89,6 @@ export interface TunnelTimings extends Backoff {
   silenceTimeoutMs: number
   /** How long a connection must stay welcomed before the backoff starts again from the first attempt. */
   stableAfterMs: number
-  /** How long a tunneled socket has to send its auth message. */
-  authTimeoutMs: number
   /** How long the server has to answer an enrollment frame. */
   enrollTimeoutMs: number
   /** How often the wake watchdog compares the wall clock with its previous tick. */
@@ -107,7 +105,6 @@ const defaultTimings: TunnelTimings = {
   pingIntervalMs: 20_000,
   silenceTimeoutMs: 45_000,
   stableAfterMs: 60_000,
-  authTimeoutMs: AUTH_TIMEOUT_MS,
   enrollTimeoutMs: 10_000,
   wakeCheckMs: 1000,
   wakeJumpMs: 10_000,
@@ -283,7 +280,6 @@ export class TunnelClient {
         this.options.e2eSession,
       ),
       channels: new TunnelChannels(this.options.openSocket, this.options.authorize, (frame) => this.send(conn, frame), {
-        authTimeoutMs: this.timings.authTimeoutMs,
         record: this.options.record,
         sessions: this.options.e2eSession,
       }),
