@@ -13,7 +13,10 @@ import {
   type MachineFrame,
   machineFrame,
   machineIdFromPublicKey,
+  openE2eSessionResponse,
+  routes,
   type ServerFrame,
+  startBrowserHandshake,
   TUNNEL_PATH,
   wsPayloadBytes,
 } from '@orch/shared'
@@ -275,4 +278,27 @@ export async function openLocal(path: string) {
   ws.addEventListener('message', (event) => typeof event.data === 'string' && messages.push(event.data))
   await new Promise((resolve) => ws.addEventListener('open', resolve, { once: true }))
   return { ws, messages }
+}
+
+/**
+ * Opens an end-to-end session through `conn` as the browser does, with `key` and the approved `device`, as tunneled
+ * request `id`. Returns the browser's side and the session id.
+ */
+export async function openE2eSession(conn: Conn, id: number) {
+  const { path, method } = routes.e2e.open
+  const browser = await startBrowserHandshake({ machineId, device: device.signer })
+  const hello = JSON.stringify(browser.hello)
+  send(conn, {
+    type: 'http.request',
+    id,
+    method,
+    path,
+    headers: [['content-type', 'application/json'], ...(await keyHeaders(key, method, path, hello))],
+    body: new TextEncoder().encode(hello),
+  })
+  const of = () => conn.frames.filter((f) => 'id' in f && f.id === id)
+  await until(() => of().some((f) => f.type === 'http.end'))
+  const body = Buffer.concat(of().flatMap((f) => (f.type === 'http.body' ? [f.data] : []))).toString()
+  const opened = openE2eSessionResponse.parse(JSON.parse(body))
+  return { session: await browser.finish(opened.hello, machineKey.publicKey), sessionId: opened.sessionId }
 }

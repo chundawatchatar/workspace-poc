@@ -14,9 +14,11 @@ import {
   type E2eSession,
   encodeEnvelope,
   encodeRequestRecord,
+  encodeSocketOpenRecord,
   MAX_E2E_CHANNEL,
   machinePathPrefix,
   machineSealedPath,
+  machineSealedSocketPath,
   openE2eSessionResponse,
   RELAY_TICKET_HEADER,
   RecordFramer,
@@ -28,6 +30,7 @@ import {
 } from '@orch/shared'
 import { createDeviceProof, type DeviceSigner } from './lib/deviceProof'
 import { type OpenLater, pendingSocket } from './lib/pendingSocket'
+import { sealedSocket } from './lib/sealedSocket'
 
 export type { DeviceSigner } from './lib/deviceProof'
 
@@ -103,7 +106,17 @@ interface Channels {
    * request instead (401 when the account can't open the machine). Throws for a body that isn't a string.
    */
   credentials(path: string, init: RequestInit): Promise<Headers | Response>
-  openLater(path: string): OpenLater
+  /**
+   * What a socket for `path` opens with: its auth message with a fresh `'WS'` proof, and with `account: true` a fresh
+   * ticket, or the close code it fails with instead (`CLOSE_ACCESS_DENIED` when the account can't open the machine).
+   */
+  socketAuth(path: string): Promise<SocketAuth | number>
+}
+
+/** A socket's auth message, and the relay ticket an account socket opens with. */
+interface SocketAuth {
+  auth: SocketAuthMessage
+  ticket?: string
 }
 
 /**
@@ -161,8 +174,7 @@ export function createRemoteTransport({
         headers.set(DEVICE_PROOF_HEADER, proof)
         return headers
       },
-      openLater: (path) => async () =>
-        authedSocket(path, { type: 'auth', key: accessKey, device: await socketProof(path) }),
+      socketAuth: async (path) => ({ auth: { type: 'auth', key: accessKey, device: await socketProof(path) } }),
     }
   } else {
     const tickets = relayTicket as RelayTicketSource
@@ -189,12 +201,11 @@ export function createRemoteTransport({
         headers.set(DEVICE_PROOF_HEADER, proof)
         return headers
       },
-      openLater: (path) => async () => {
+      socketAuth: async (path) => {
         // A fresh ticket per socket: the machine lets each ticket open only one.
         const fresh = await tickets()
         if (!fresh) return CLOSE_ACCESS_DENIED
-        const auth: SocketAuthMessage = { type: 'auth', account: true, device: await socketProof(path) }
-        return authedSocket(path, auth, relaySocketProtocols(fresh.ticket))
+        return { auth: { type: 'auth', account: true, device: await socketProof(path) }, ticket: fresh.ticket }
       },
     }
   }
@@ -205,11 +216,24 @@ export function createRemoteTransport({
       if (headers instanceof Response) return headers
       return fetch(`${http}${path}`, { ...init, headers })
     },
-    openLater: channels.openLater,
+    openLater: (path) => async () => {
+      const opening = await channels.socketAuth(path)
+      if (typeof opening === 'number') return opening
+      return authedSocket(path, opening.auth, opening.ticket ? relaySocketProtocols(opening.ticket) : undefined)
+    },
   }
-  const sealedUrl = `${server.origin}${server.pathname.replace(/\/$/, '')}${machineSealedPath(machineId)}`
+  const base = `${server.origin}${server.pathname.replace(/\/$/, '')}`
+  const sealedUrl = `${base}${machineSealedPath(machineId)}`
+  const sealedSocketUrl = `${base}${machineSealedSocketPath(machineId)}`.replace(/^http/, 'ws')
   const carried = machinePublicKey
-    ? withE2eSession(plain, channels, { machineId, signer, machinePublicKey, onMachineUnverified, sealedUrl })
+    ? withE2eSession(plain, channels, {
+        machineId,
+        signer,
+        machinePublicKey,
+        onMachineUnverified,
+        sealedUrl,
+        sealedSocketUrl,
+      })
     : plain
   return {
     request: carried.request,
@@ -249,8 +273,8 @@ interface Refused {
  * from then on every call fails with `E2eError` without reaching the machine.
  *
  * Every request after the handshake is sealed: it takes the session's next channel, puts its key or ticket and a
- * fresh proof into the inner headers, and goes as one envelope posted to `sealedUrl`; see `sealedRequest`. Sockets
- * still go through `plain`.
+ * fresh proof into the inner headers, and goes as one envelope posted to `sealedUrl`; see `sealedRequest`. Every
+ * socket is sealed too; see `sealedSocketLater`.
  */
 function withE2eSession(
   plain: Carrier,
@@ -261,6 +285,7 @@ function withE2eSession(
     machinePublicKey: string
     onMachineUnverified?: () => void
     sealedUrl: string
+    sealedSocketUrl: string
   },
 ): Carrier {
   let current: OpenSession | null = null
@@ -332,6 +357,26 @@ function withE2eSession(
     return openSealedResponse(outer, channel)
   }
 
+  /**
+   * Opens a socket sealed on the next channel of `open`: its first message is an envelope holding the path, the auth
+   * message and any ticket, and every message after it is sealed on the same channel (`sealedSocket`). A close with
+   * `CLOSE_E2E_SESSION_UNKNOWN` drops the session, and the page's own reconnect opens a new one.
+   */
+  const sealedSocketLater = async (open: OpenSession, path: string): Promise<WebSocket | number> => {
+    // Taken before any await, from the same counter as requests, so no two share a channel.
+    if (open.nextChannel > MAX_E2E_CHANNEL) throw new E2eError('counter exhausted')
+    const n = open.nextChannel++
+    const opening = await channels.socketAuth(path)
+    if (typeof opening === 'number') return opening
+    const channel = await open.session.channel(n)
+    const sealed = await channel.seal(encodeSocketOpenRecord({ path, ...opening }))
+    const onSessionUnknown = () => {
+      if (current === open) current = null
+    }
+    const envelope = encodeEnvelope({ sessionId: open.sessionId, channel: n, sealed })
+    return sealedSocket({ url: options.sealedSocketUrl, envelope, channel, onSessionUnknown })
+  }
+
   return {
     request: async (path, init) => {
       // A concurrent 409 may drop the session between the handshake and this call, so it opens again.
@@ -342,9 +387,11 @@ function withE2eSession(
       }
     },
     openLater: (path) => async () => {
-      const refused = await ensureSession()
-      if (refused) return closeCodeFor(refused)
-      return plain.openLater(path)()
+      for (;;) {
+        const refused = await ensureSession()
+        if (refused) return closeCodeFor(refused)
+        if (current) return sealedSocketLater(current, path)
+      }
     },
   }
 }

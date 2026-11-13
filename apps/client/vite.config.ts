@@ -23,6 +23,8 @@ export default defineConfig({
       '^/m/[^/]+/(api|ws)/': { target, ws: true },
       // The sealed route that carries a machine's requests end to end.
       '^/m/[^/]+/e2e$': { target },
+      // And the sealed socket route that carries its sockets end to end.
+      '^/m/[^/]+/e2e/ws$': { target, ws: true },
     },
   },
   preview: { host, port, strictPort: true },

@@ -1,7 +1,6 @@
 import {
   CLOSE_ACCESS_DENIED,
   CLOSE_DEVICE_NOT_APPROVED,
-  DEVICE_PROOF_SOCKET_METHOD,
   encodeFrame,
   MAX_TUNNEL_FRAME_BYTES,
   type MachineFrame,
@@ -16,7 +15,16 @@ import type { Principal } from '../../lib/principal'
 import type { SocketConn, SocketData, SocketSession } from '../../lib/socket'
 import type { SocketRefusal } from '../../lib/socketRouter'
 import type { RecordAudit } from '../remote-access/audit-log.service'
-import { type Authorize, authorizeWithReason, bodySha256, DEVICE_NOT_APPROVED } from './tunnel-http.service'
+import {
+  type Authorize,
+  authorizeWithReason,
+  type Credentials,
+  DEVICE_NOT_APPROVED,
+  type SealedSessionLookup,
+  samePrincipal,
+  socketCredentials,
+} from './tunnel-http.service'
+import { CLOSE_POLICY, openSealedChannel, SealedChannel, sealableRecord, sealedSize } from './tunnel-sealed.service'
 
 /**
  * Opens the socket a `ws.open` asks for, as the principal that authorized it,
@@ -47,9 +55,6 @@ const FRAME_OVERHEAD_BYTES = 64
 
 const encoder = new TextEncoder()
 
-/** A socket proof's `bodySha256`: sockets have no body. */
-const EMPTY_SHA256 = bodySha256()
-
 /** A `ws.data` payload. Bun never hands the host a `SharedArrayBuffer`, so every `SocketData` is one. */
 type Payload = string | Uint8Array<ArrayBuffer>
 
@@ -59,7 +64,7 @@ export interface OpenChannel {
   openedAt: number
 }
 
-type ChannelFrame = Extract<ServerFrame, { type: 'ws.open' | 'ws.data' | 'ws.close' | 'ws.ack' }>
+type ChannelFrame = Extract<ServerFrame, { type: 'ws.open' | 'ws.sealed' | 'ws.data' | 'ws.close' | 'ws.ack' }>
 
 /** One open channel. Byte counts are `ws.data` payload bytes. */
 interface Channel {
@@ -88,6 +93,8 @@ interface Channel {
   queuedBytes: number
   /** Bytes delivered to the handler that the host has not acked yet. */
   owed: number
+  /** Set for a channel `ws.sealed` opened, whose payloads are sealed records. Null for a plain one. */
+  sealed: SealedChannel | null
 }
 
 /**
@@ -105,6 +112,13 @@ interface Channel {
  * and no `auth.failed`. Anything else, or nothing within the auth timeout,
  * gets `auth.failed` and a `CLOSE_ACCESS_DENIED` close.
  *
+ * A `ws.sealed` channel is registered at once and opens from its envelope
+ * (`openSealedChannel`, with `sessions`); its auth message and ticket are then
+ * authorized as above, and its principal must have opened the session
+ * (`CLOSE_ACCESS_DENIED`, no `auth.failed`). Its handler gets no headers, and
+ * its payloads are opened and sealed in order (`SealedChannel`); windows,
+ * queues, acks and `buffered()` count sealed bytes.
+ *
  * Every refusal is recorded with its reason, and every socket that starts is
  * recorded as `opened`, then `closed` when its channel ends for any reason.
  */
@@ -118,17 +132,26 @@ export class TunnelChannels {
   private readonly authTimeoutMs: number
   private readonly record: RecordAudit
   private readonly now: () => number
+  private readonly sessions: SealedSessionLookup
 
   constructor(
     private readonly openSocket: OpenSocket,
     private readonly authorize: Authorize,
     private readonly send: (frame: MachineFrame) => void,
-    options: { queueCapBytes?: number; authTimeoutMs?: number; now?: () => number; record?: RecordAudit } = {},
+    options: {
+      queueCapBytes?: number
+      authTimeoutMs?: number
+      now?: () => number
+      record?: RecordAudit
+      /** Finds the session a sealed socket names. Without it, every one gets `CLOSE_E2E_SESSION_UNKNOWN`. */
+      sessions?: SealedSessionLookup
+    } = {},
   ) {
     this.queueCapBytes = options.queueCapBytes ?? CHANNEL_QUEUE_CAP_BYTES
     this.authTimeoutMs = options.authTimeoutMs ?? AUTH_TIMEOUT_MS
     this.now = options.now ?? Date.now
     this.record = options.record ?? (() => {})
+    this.sessions = options.sessions ?? (() => null)
   }
 
   /** Takes a `ws.*` frame from the server. Frames for unknown or closed channels are ignored. */
@@ -136,6 +159,10 @@ export class TunnelChannels {
     if (this.closed) return
     if (frame.type === 'ws.open') {
       this.open(frame.channel, frame.path, frame.headers)
+      return
+    }
+    if (frame.type === 'ws.sealed') {
+      this.openSealed(frame.channel, frame.data)
       return
     }
     const channel = this.channels.get(frame.channel)
@@ -182,12 +209,24 @@ export class TunnelChannels {
   private open(id: number, path: string, headers: [string, string][]) {
     if (this.channels.has(id)) return
     const protocols = headers.filter(([name]) => name.toLowerCase() === 'sec-websocket-protocol')
-    const channel: Channel = {
-      id,
+    const channel = this.register(id, {
       path,
       // The subprotocols carry the ticket, so no handler sees them; the host's sockets negotiate none.
       headers: headers.filter(([name]) => name.toLowerCase() !== 'sec-websocket-protocol'),
       ticket: protocols.length === 1 ? ticketFromProtocols(protocols[0]?.[1]) : null,
+      sealed: null,
+    })
+    channel.authTimer = setTimeout(() => {
+      this.record({ kind: 'refused', reason: 'no_auth' })
+      this.deny(channel, 'auth timeout')
+    }, this.authTimeoutMs)
+  }
+
+  /** Registers an open channel with nothing sent or received yet. */
+  private register(id: number, fields: Pick<Channel, 'path' | 'headers' | 'ticket' | 'sealed'>): Channel {
+    const channel: Channel = {
+      id,
+      ...fields,
       principal: null,
       opened: null,
       authTimer: undefined,
@@ -199,10 +238,30 @@ export class TunnelChannels {
       owed: 0,
     }
     this.channels.set(id, channel)
-    channel.authTimer = setTimeout(() => {
-      this.record({ kind: 'refused', reason: 'no_auth' })
-      this.deny(channel, 'auth timeout')
-    }, this.authTimeoutMs)
+    return channel
+  }
+
+  /** Registers a sealed channel at once, so its `ws.data` waits in its inbound chain while the envelope opens. */
+  private openSealed(id: number, data: Uint8Array) {
+    if (this.channels.has(id)) return
+    const sealed = new SealedChannel()
+    const channel = this.register(id, { path: '', headers: [], ticket: null, sealed })
+    // A failure past the open (an `authorize` that throws) closes the channel rather than stalling its queue.
+    sealed.inbound = this.admitSealed(channel, sealed, data).catch(() => this.fail(channel, CLOSE_INTERNAL_ERROR))
+  }
+
+  private async admitSealed(channel: Channel, sealed: SealedChannel, data: Uint8Array) {
+    const opened = await openSealedChannel(data, this.sessions)
+    if (!channel.open || this.closed) return
+    if (!opened.ok) {
+      this.fail(channel, opened.code, opened.reason)
+      return
+    }
+    const { e2e, record, owner } = opened
+    sealed.e2e = e2e
+    channel.path = record.path
+    channel.ticket = record.ticket ?? null
+    this.admit(channel, socketCredentials(record.auth, record.path, channel.ticket), owner)
   }
 
   /** Reads a channel's first message as its auth message, then opens its socket or refuses it. */
@@ -210,24 +269,20 @@ export class TunnelChannels {
     clearTimeout(channel.authTimer)
     channel.authTimer = undefined
     const message = parseMessage(socketAuthMessage, data)
-    const device = message && {
-      proof: message.device,
-      method: DEVICE_PROOF_SOCKET_METHOD,
-      path: channel.path,
-      bodySha256: EMPTY_SHA256,
-    }
     if (!message) {
       this.record({ kind: 'refused', reason: 'no_auth' })
       this.deny(channel, 'access denied')
       return
     }
-    // A key socket spends no ticket, so it isn't `once`; its proof's nonce bounds a replay.
-    const { authorization: principal, refusal } = authorizeWithReason(
-      this.authorize,
-      'key' in message
-        ? { key: message.key, ticket: null, device }
-        : { key: null, ticket: channel.ticket, device, once: true },
-    )
+    this.admit(channel, socketCredentials(message, channel.path, channel.ticket))
+  }
+
+  /**
+   * Opens the channel's socket once `authorize` accepts `credentials`, or
+   * refuses it. With `owner`, only that principal is accepted.
+   */
+  private admit(channel: Channel, credentials: Credentials, owner?: Principal) {
+    const { authorization: principal, refusal } = authorizeWithReason(this.authorize, credentials)
     if (refusal) this.record({ kind: 'refused', ...refusal })
     if (!principal) {
       this.deny(channel, 'access denied')
@@ -235,6 +290,11 @@ export class TunnelChannels {
     }
     if (principal === DEVICE_NOT_APPROVED) {
       this.fail(channel, CLOSE_DEVICE_NOT_APPROVED, 'device not approved')
+      return
+    }
+    // Valid credentials, but not the access that opened the session: not a bad key, so no `auth.failed`.
+    if (owner && !samePrincipal(principal, owner)) {
+      this.fail(channel, CLOSE_ACCESS_DENIED, 'access denied')
       return
     }
     channel.principal = principal
@@ -254,7 +314,7 @@ export class TunnelChannels {
     const { id, path, headers } = channel
     const conn: SocketConn = {
       send: (data) => this.write(channel, data),
-      buffered: () => (channel.open ? channel.unacked + channel.queuedBytes : 0),
+      buffered: () => (channel.open ? channel.unacked + channel.queuedBytes + (channel.sealed?.sealing ?? 0) : 0),
       close: (code, reason) => this.fail(channel, code, reason),
     }
     let result: SocketSession | SocketRefusal
@@ -277,16 +337,31 @@ export class TunnelChannels {
   }
 
   private deliver(channel: Channel, data: SocketData) {
+    if (channel.sealed) this.receiveSealed(channel, channel.sealed, data)
+    else this.handOver(channel, data, wsPayloadBytes(data))
+  }
+
+  /** Opens a sealed payload after the open and every earlier payload, then hands its message over. */
+  private receiveSealed(channel: Channel, sealed: SealedChannel, data: SocketData) {
+    const live = () => channel.open && !this.closed
+    const fail = () => this.fail(channel, CLOSE_POLICY, 'bad message')
+    sealed.receive(data, live, (message, bytes) => this.handOver(channel, message, bytes), fail)
+    // The server's window bounds this; a server past it is cut off rather than buffered for.
+    if (sealed.inboundBytes > this.queueCapBytes) this.fail(channel, CLOSE_POLICY, 'window exceeded')
+  }
+
+  /** Hands a message to the channel's handler, or as its auth message, and owes the server an ack for `bytes`. */
+  private handOver(channel: Channel, data: SocketData, bytes: number) {
     try {
       if (channel.principal) channel.session?.message(data)
-      else this.authenticate(channel, data)
+      else if (!channel.sealed) this.authenticate(channel, data)
     } catch (error) {
       // A local socket's handler error ends at Bun's socket; here it must not reach the tunnel's own listener.
       console.error(`tunneled socket ${channel.id} failed on a message`, error)
       this.fail(channel, CLOSE_INTERNAL_ERROR, 'internal error')
     }
     if (!channel.open) return
-    channel.owed += wsPayloadBytes(data)
+    channel.owed += bytes
     this.owing.add(channel)
     if (this.ackScheduled) return
     this.ackScheduled = true
@@ -317,27 +392,60 @@ export class TunnelChannels {
   /** `SocketConn.send` for a channel, with Bun's return meaning. */
   private write(channel: Channel, message: SocketData): number {
     if (!channel.open || this.closed) return 0
+    if (channel.sealed) return this.writeSealed(channel, channel.sealed, message)
     const data = message as Payload
-    if (!fitsInFrame(channel.id, data)) {
-      // Only the size is logged: the message may be terminal output.
-      console.warn(
-        `closing tunneled socket ${channel.id}: a ${wsPayloadBytes(data)}-byte message does not fit in a frame`,
-      )
-      this.fail(channel, CLOSE_TOO_BIG, 'message too big')
-      return 0
-    }
+    if (!fitsInFrame(channel.id, data)) return this.tooBig(channel, wsPayloadBytes(data))
     const size = wsPayloadBytes(data)
-    if (channel.queue.length === 0 && channel.unacked < WS_CHANNEL_WINDOW_BYTES) {
+    if (!this.hasWindow(channel) && !this.mayQueue(channel, size)) return 0
+    return this.sendOrQueue(channel, data)
+  }
+
+  /**
+   * `SocketConn.send` for a sealed channel. The message is sealed after every
+   * earlier one and sent or queued in that order once sealed, so its size and
+   * the result are known at once: the sealed size, or -1 when it will queue.
+   */
+  private writeSealed(channel: Channel, sealed: SealedChannel, message: SocketData): number {
+    const record = sealableRecord(message)
+    if (!record) return this.tooBig(channel, wsPayloadBytes(message))
+    const size = sealedSize(record)
+    // Messages still being sealed go out ahead of this one, so they count as sent already.
+    const now = channel.queue.length === 0 && channel.unacked + sealed.sealing < WS_CHANNEL_WINDOW_BYTES
+    if (!now && !this.mayQueue(channel, sealed.sealing + size)) return 0
+    const live = () => channel.open && !this.closed
+    const fail = () => this.fail(channel, CLOSE_INTERNAL_ERROR, 'internal error')
+    sealed.seal(record, live, (out) => this.sendOrQueue(channel, out), fail)
+    return now ? size : -1
+  }
+
+  /** Closes a channel whose message of `bytes` does not fit in one frame. */
+  private tooBig(channel: Channel, bytes: number): number {
+    // Only the size is logged: the message may be terminal output.
+    console.warn(`closing tunneled socket ${channel.id}: a ${bytes}-byte message does not fit in a frame`)
+    this.fail(channel, CLOSE_TOO_BIG, 'message too big')
+    return 0
+  }
+
+  private hasWindow(channel: Channel): boolean {
+    return channel.queue.length === 0 && channel.unacked < WS_CHANNEL_WINDOW_BYTES
+  }
+
+  /** True when `bytes` more fit in the channel's queue; otherwise the channel is closed. */
+  private mayQueue(channel: Channel, bytes: number): boolean {
+    if (channel.queuedBytes + bytes <= this.queueCapBytes) return true
+    console.warn(`closing tunneled socket ${channel.id}: its client stopped taking messages`)
+    this.fail(channel, CLOSE_INTERNAL_ERROR, 'too far behind')
+    return false
+  }
+
+  /** Sends `data` while the channel has window, else queues a copy, since the caller may reuse its buffer. */
+  private sendOrQueue(channel: Channel, data: Payload): number {
+    const size = wsPayloadBytes(data)
+    if (this.hasWindow(channel)) {
       channel.unacked += size
       this.send({ type: 'ws.data', channel: channel.id, data })
       return size
     }
-    if (channel.queuedBytes + size > this.queueCapBytes) {
-      console.warn(`closing tunneled socket ${channel.id}: its client stopped taking messages`)
-      this.fail(channel, CLOSE_INTERNAL_ERROR, 'too far behind')
-      return 0
-    }
-    // The caller may reuse its buffer, so a queued message keeps a copy.
     channel.queue.push(typeof data === 'string' ? data : data.slice())
     channel.queuedBytes += size
     return -1

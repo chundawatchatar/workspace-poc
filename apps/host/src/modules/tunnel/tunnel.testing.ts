@@ -2,12 +2,17 @@ import { createHash, createPublicKey, generateKeyPairSync, sign, verify } from '
 import {
   answerBrowserHandshake,
   decodeResponseRecord,
+  decodeSocketMessageRecord,
   type E2eChannel,
   type E2eHttpRequest,
   type E2eHttpResponseRecord,
   type E2eSession,
+  type E2eSocketMessage,
+  type E2eSocketOpen,
   encodeEnvelope,
   encodeRequestRecord,
+  encodeSocketMessageRecord,
+  encodeSocketOpenRecord,
   type helloFrame,
   helloSignedMessage,
   RecordFramer,
@@ -94,4 +99,26 @@ export async function openSealedReply(channel: E2eChannel, payloads: Uint8Array[
     body: Buffer.concat(chunks).toString(),
     end: records.at(-1),
   }
+}
+
+/** A sealed socket's envelope, as the browser sends it first: `open` sealed on channel `n` of `session`. */
+export async function sealedSocketEnvelope(session: E2eSession, sessionId: string, n: number, open: E2eSocketOpen) {
+  const channel = await session.channel(n)
+  const data = encodeEnvelope({ sessionId, channel: n, sealed: await channel.seal(encodeSocketOpenRecord(open)) })
+  return { channel, data }
+}
+
+/** `message` sealed on `channel` as the browser sends it, a `ws.data` payload. */
+export async function sealMessage(channel: E2eChannel, message: E2eSocketMessage) {
+  return (await channel.seal(encodeSocketMessageRecord(message))) as Uint8Array<ArrayBuffer>
+}
+
+/** The messages in the host's `ws.data` payloads, opened in order on `channel` as the browser does. */
+export async function openMessages(channel: E2eChannel, payloads: (string | Uint8Array)[]) {
+  const messages: E2eSocketMessage[] = []
+  for (const payload of payloads) {
+    if (typeof payload === 'string') throw new Error('a sealed channel sent text')
+    messages.push(decodeSocketMessageRecord(await channel.open(payload)))
+  }
+  return messages
 }

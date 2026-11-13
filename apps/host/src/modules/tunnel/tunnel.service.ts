@@ -123,7 +123,10 @@ export interface TunnelClientOptions {
   authorize: Authorize
   /** Answers each tunneled request. */
   handle: TunnelHandler
-  /** Finds the end-to-end session a sealed request names. Without it, every sealed request gets the unsealed 409. */
+  /**
+   * Finds the end-to-end session a sealed request or socket names. Without it, every sealed request gets the unsealed
+   * 409 and every sealed socket `CLOSE_E2E_SESSION_UNKNOWN`.
+   */
   e2eSession?: SealedSessionLookup
   /** Opens each tunneled WebSocket, or refuses it. */
   openSocket: OpenSocket
@@ -282,6 +285,7 @@ export class TunnelClient {
       channels: new TunnelChannels(this.options.openSocket, this.options.authorize, (frame) => this.send(conn, frame), {
         authTimeoutMs: this.timings.authTimeoutMs,
         record: this.options.record,
+        sessions: this.options.e2eSession,
       }),
       challenged: false,
       welcomed: false,
@@ -330,6 +334,7 @@ export class TunnelClient {
         if (conn.welcomed) conn.http.sealed(frame)
         return
       case 'ws.open':
+      case 'ws.sealed':
       case 'ws.data':
       case 'ws.close':
       case 'ws.ack':

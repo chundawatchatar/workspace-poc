@@ -38,6 +38,7 @@ import {
   machineId,
   machineKey,
   OUTPUT,
+  openE2eSession,
   openLocal,
   remoteAccess,
   send,
@@ -429,27 +430,14 @@ describe('tunneled end-to-end handshake', () => {
 
   test('a sealed request on a live session is served like a plain one, and a replay or a closed session is refused', async () => {
     const conn = await welcomed()
-    const { path, method } = routes.e2e.open
-    const browser = await startBrowserHandshake({ machineId, device: device.signer })
-    const hello = JSON.stringify(browser.hello)
-    send(conn, {
-      type: 'http.request',
-      id: 1,
-      method,
-      path,
-      headers: [['content-type', 'application/json'], ...(await keyHeaders(key, method, path, hello))],
-      body: new TextEncoder().encode(hello),
-    })
+    const { session, sessionId } = await openE2eSession(conn, 1)
     const of = (id: number) => conn.frames.filter((f) => 'id' in f && f.id === id)
     const ended = (id: number) => until(() => of(id).some((f) => f.type === 'http.end'))
     const payloads = (id: number) => of(id).flatMap((f) => (f.type === 'http.body' ? [f.data] : []))
-    await ended(1)
-    const opened = openE2eSessionResponse.parse(JSON.parse(Buffer.concat(payloads(1)).toString()))
-    const session = await browser.finish(opened.hello, machineKey.publicKey)
 
     const health = routes.system.health.path
     const request = { method: 'GET', path: health, headers: await keyHeaders(key, 'GET', health) }
-    const { channel, data } = await sealedEnvelope(session, opened.sessionId, 1, request)
+    const { channel, data } = await sealedEnvelope(session, sessionId, 1, request)
     send(conn, { type: 'http.sealed', id: 2, data })
     await ended(2)
     const reply = await openSealedReply(channel, payloads(2))
@@ -465,7 +453,7 @@ describe('tunneled end-to-end handshake', () => {
     await ended(3)
     expect(of(3).find((f) => f.type === 'http.response')).toMatchObject({ status: 400 })
     e2eSessions.closeAll()
-    const after = await sealedEnvelope(session, opened.sessionId, 2, {
+    const after = await sealedEnvelope(session, sessionId, 2, {
       ...request,
       headers: await keyHeaders(key, 'GET', health),
     })

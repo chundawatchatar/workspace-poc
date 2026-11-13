@@ -84,6 +84,16 @@ export {
   openE2eSessionResponse,
 } from './e2eSession'
 export {
+  decodeSocketMessageRecord,
+  decodeSocketOpenRecord,
+  type E2eSocketMessage,
+  type E2eSocketOpen,
+  e2eSocketOpen,
+  encodeSocketMessageRecord,
+  encodeSocketOpenRecord,
+  MAX_E2E_SOCKET_MESSAGE_BYTES,
+} from './e2eSocket'
+export {
   type DirListing,
   listDirsQuery,
   listDirsResponse,
@@ -121,6 +131,7 @@ export {
 export {
   ACCESS_KEY_HEADER,
   CLOSE_ACCESS_DENIED,
+  CLOSE_E2E_SESSION_UNKNOWN,
   CLOSE_MACHINE_OFFLINE,
   CLOSE_RATE_LIMITED,
   CLOSE_SESSION_ENDED,
@@ -128,9 +139,11 @@ export {
   formatConnectFragment,
   MACHINE_API_ROUTE,
   MACHINE_SEALED_ROUTE,
+  MACHINE_SEALED_SOCKET_ROUTE,
   MACHINE_WS_ROUTE,
   machinePathPrefix,
   machineSealedPath,
+  machineSealedSocketPath,
   parseConnectFragment,
   type SocketAuthMessage,
   socketAuthMessage,
@@ -243,6 +256,7 @@ export {
   wsDataFrame,
   wsOpenFrame,
   wsPayloadBytes,
+  wsSealedFrame,
 } from './tunnel'
 
 /**

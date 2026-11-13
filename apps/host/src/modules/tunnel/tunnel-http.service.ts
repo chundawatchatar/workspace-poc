@@ -5,6 +5,7 @@ import {
   type AuditRefusalReason,
   DEVICE_NOT_APPROVED_CODE,
   DEVICE_PROOF_HEADER,
+  DEVICE_PROOF_SOCKET_METHOD,
   decodeEnvelope,
   decodeRequestRecord,
   E2E_SESSION_UNKNOWN_CODE,
@@ -19,6 +20,7 @@ import {
   type httpSealedFrame,
   type MachineFrame,
   RELAY_TICKET_HEADER,
+  type SocketAuthMessage,
 } from '@orch/shared'
 import type { z } from 'zod'
 import { HOST_ORIGIN } from '../../lib/localOrigin'
@@ -125,6 +127,13 @@ export function requestCredentials({ headers, method, path, body }: HttpRequestF
   const hasKey = headers.some(([name]) => name.toLowerCase() === ACCESS_KEY_HEADER)
   if (hasKey) return { key: accessKeyOf(headers), ticket: null, device }
   return { key: null, ticket: singleHeader(headers, RELAY_TICKET_HEADER), device }
+}
+
+/** What a socket's auth message presents for `path`: its key, or with `account: true` the socket's `ticket`. */
+export function socketCredentials(message: SocketAuthMessage, path: string, ticket: string | null): Credentials {
+  const device = { proof: message.device, method: DEVICE_PROOF_SOCKET_METHOD, path, bodySha256: bodySha256() }
+  // A key socket spends no ticket, so it isn't `once`; its proof's nonce bounds a replay.
+  return 'key' in message ? { key: message.key, ticket: null, device } : { key: null, ticket, device, once: true }
 }
 
 /**

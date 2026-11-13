@@ -170,21 +170,26 @@ export class RecordFramer {
   }
 }
 
-function tagged(kind: number, payload: Uint8Array): Uint8Array<ArrayBuffer> {
+/** `payload` behind the tag byte `kind`. Not re-exported from the index. */
+export function tagged(kind: number, payload: Uint8Array): Uint8Array<ArrayBuffer> {
   const out = new Uint8Array(1 + payload.byteLength)
   out[0] = kind
   out.set(payload, 1)
   return out
 }
 
-/** `value` checked against `schema`, throwing `E2eError` rather than an error that could quote it. */
-function checked<T>(schema: z.ZodType<T>, value: unknown): T {
+/**
+ * `value` checked against `schema`, throwing `E2eError` rather than an error that could quote it. Not re-exported
+ * from the index.
+ */
+export function checked<T>(schema: z.ZodType<T>, value: unknown): T {
   const parsed = schema.safeParse(value)
   if (!parsed.success) throw new E2eError('bad message')
   return parsed.data
 }
 
-function parseJson<T>(schema: z.ZodType<T>, bytes: Uint8Array): T {
+/** `bytes` read as UTF-8 JSON and checked against `schema`, throwing `E2eError`. Not re-exported from the index. */
+export function parseJson<T>(schema: z.ZodType<T>, bytes: Uint8Array): T {
   let value: unknown
   try {
     value = JSON.parse(decoder.decode(bytes))

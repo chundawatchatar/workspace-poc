@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, jest, spyOn, test } from 'bun:test'
 import { connect, type Socket } from 'node:net'
 import {
   type AgentState,
@@ -6,8 +6,10 @@ import {
   CLOSE_MACHINE_OFFLINE,
   decodeFrame,
   encodeFrame,
+  MAX_E2E_ENVELOPE_BYTES,
   type MachineFrame,
   machinePathPrefix,
+  machineSealedSocketPath,
   type ServerEvent,
   type ServerFrame,
   type SessionInfo,
@@ -29,18 +31,20 @@ const idA = keyA.machineId
 
 let registry: MachineRegistry
 let bridge: ChannelBridge
+let limiter: ConnectionLimiter
 let server: Server<unknown>
 let sockets: WebSocket[]
 
 beforeEach(() => {
   registry = new MachineRegistry()
   bridge = new ChannelBridge({ registry })
+  limiter = new ConnectionLimiter()
   const forwarder = new HttpForwarder({ registry })
   const app = createApp({
     registry,
     forwarder,
     bridge,
-    limiter: new ConnectionLimiter(),
+    limiter,
     pingIntervalMs: 30,
     heartbeatTimeoutMs: 120,
   })
@@ -49,6 +53,7 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
+  jest.useRealTimers()
   for (const ws of sockets) ws.close()
   await server.stop(true)
 })
@@ -85,7 +90,16 @@ interface Browser {
 }
 
 function browser(path: string, machineId = idA, headers?: Record<string, string>): Browser {
-  const url = `ws://127.0.0.1:${server.port}${machinePathPrefix(machineId)}${path}`
+  return browserAt(`${machinePathPrefix(machineId)}${path}`, headers)
+}
+
+/** A browser socket to a sealed socket route, as `browser`. */
+function sealedBrowser(machineId = idA, headers?: Record<string, string>): Browser {
+  return browserAt(machineSealedSocketPath(machineId), headers)
+}
+
+function browserAt(serverPath: string, headers?: Record<string, string>): Browser {
+  const url = `ws://127.0.0.1:${server.port}${serverPath}`
   const ws = new WebSocket(url, headers ? { headers } : undefined)
   ws.binaryType = 'arraybuffer'
   sockets.push(ws)
@@ -315,6 +329,73 @@ describe('bridge socket', () => {
     const base = `http://127.0.0.1:${server.port}${machinePathPrefix(idA)}`
     expect((await fetch(`${base}/ws/term/a`)).status).toBe(404)
     expect((await fetch(`${base}/ws`)).status).toBe(404)
+    expect(bridge.size).toBe(0)
+  })
+
+  test('a sealed socket sends its first message unread as one ws.sealed, with no path, header or subprotocol', async () => {
+    const m = await machine(keyA)
+    const b = sealedBrowser(idA, { Cookie: 'session=abc', 'Sec-WebSocket-Protocol': 'orch', 'x-thing': 'a' })
+    await opened(b)
+    const envelope = Uint8Array.from({ length: 300 }, (_, i) => i % 256)
+    b.ws.send(envelope)
+    b.ws.send(Uint8Array.of(7, 7))
+    await until(() => of(m, 'ws.data').length === 1)
+
+    expect(m.frames).toEqual([
+      { type: 'ws.sealed', channel: 1, data: envelope },
+      { type: 'ws.data', channel: 1, data: Uint8Array.of(7, 7) },
+    ])
+    expect(Object.keys(m.frames[0] ?? {}).sort()).toEqual(['channel', 'data', 'type'])
+
+    m.send({ type: 'ws.data', channel: 1, data: Uint8Array.of(9, 9, 9) })
+    await until(() => b.received.length === 1)
+    expect(b.received).toEqual([[9, 9, 9]])
+    expect(of(m, 'ws.ack', 1)).toEqual([{ type: 'ws.ack', channel: 1, bytes: 3 }])
+
+    // The machine refuses the channel's credentials: the browser's IP is charged once, then the close passes through.
+    const badKey = spyOn(limiter, 'badKey')
+    m.send({ type: 'auth.failed', channel: 1 })
+    m.send({ type: 'auth.failed', channel: 1 })
+    m.send({ type: 'ws.close', channel: 1, code: 4401, reason: 'access denied' })
+    expect(await b.closed).toEqual({ code: 4401, reason: 'access denied' })
+    expect(badKey).toHaveBeenCalledTimes(1)
+    b.ws.close()
+    await Bun.sleep(20)
+    expect(of(m, 'ws.close')).toHaveLength(0)
+    expect(bridge.size).toBe(0)
+  })
+
+  test('a sealed socket whose first message is text or too large is closed with 1008, and nothing reaches the machine', async () => {
+    const m = await machine(keyA)
+    const text = sealedBrowser()
+    await opened(text)
+    text.ws.send('{"type":"auth"}')
+    const large = sealedBrowser()
+    await opened(large)
+    large.ws.send(new Uint8Array(MAX_E2E_ENVELOPE_BYTES + 1))
+    expect([(await text.closed).code, (await large.closed).code]).toEqual([1008, 1008])
+    await Bun.sleep(20)
+    expect(m.frames).toEqual([])
+    expect(bridge.size).toBe(0)
+
+    // An offline machine closes it as for a plain socket.
+    const offline = sealedBrowser(keyB.machineId)
+    await opened(offline)
+    offline.ws.send(new Uint8Array(64))
+    expect((await offline.closed).code).toBe(CLOSE_MACHINE_OFFLINE)
+  })
+
+  test('a sealed socket that sends nothing for 10 seconds is closed with 1008', async () => {
+    const m = await machine(keyA)
+    jest.useFakeTimers()
+    const b = sealedBrowser()
+    await opened(b)
+    jest.advanceTimersByTime(9_999)
+    expect(b.ws.readyState).toBe(WebSocket.OPEN)
+    jest.advanceTimersByTime(1)
+    expect((await b.closed).code).toBe(1008)
+    jest.useRealTimers()
+    expect(m.frames).toEqual([])
     expect(bridge.size).toBe(0)
   })
 })
