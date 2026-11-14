@@ -62,7 +62,7 @@ function hostApp() {
   const sessions = { list: () => [] } as unknown as SessionManager
   const { app } = createApp({
     sessions,
-    daemonStartedAt: () => null,
+    daemon: () => ({ startedAt: null, compatibility: null, daemonProtocol: null, stopCommand: 'stop' }),
     machinePublicKey: () => 'the-public-key',
   } as AppDeps)
   const handle: TunnelHandler = async (request, p) => app.fetch(request, tunnelEnv(p))

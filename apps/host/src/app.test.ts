@@ -16,7 +16,13 @@ function fakeSession(alive: boolean) {
 
 // The HTTP routes under test only read the session list and the daemon's start time.
 const sessions = { list: () => [fakeSession(true), fakeSession(true), fakeSession(false)] } as SessionManager
-const { app } = createApp({ sessions, daemonStartedAt: () => Date.now() - 90_000 } as AppDeps)
+const daemon = () => ({
+  startedAt: Date.now() - 90_000,
+  compatibility: 'outdated' as const,
+  daemonProtocol: 1,
+  stopCommand: 'bun run terminals:stop',
+})
+const { app } = createApp({ sessions, daemon } as AppDeps)
 
 const html = { accept: 'text/html' }
 const upgrade = {
@@ -60,8 +66,8 @@ async function watchedApp() {
   const stub = { list: () => [] }
   const deps = {
     sessions: watched('sessions', stub, () => armed),
-    daemonStartedAt: () => {
-      reached.push('daemonStartedAt')
+    daemon: () => {
+      reached.push('daemon')
       return null
     },
     machinePublicKey: () => {

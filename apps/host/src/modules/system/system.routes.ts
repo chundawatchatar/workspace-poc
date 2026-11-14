@@ -2,24 +2,24 @@ import { routes } from '@orch/shared'
 import type { SessionManager } from '@orch/terminal'
 import { HTTPException } from 'hono/http-exception'
 import { createRouter } from '../../lib/createRouter'
-import { daemonStatus } from './system.service'
+import { type DaemonState, daemonStatus } from './system.service'
 
 /** What the system routes need from the host. */
 export interface SystemDeps {
   sessions: SessionManager
-  /** When the terminal daemon started, in epoch milliseconds, or null when no status has said. */
-  daemonStartedAt: () => number | null
+  /** What the host last heard from the terminal daemon, and the command that stops it. */
+  daemon: () => DaemonState
   /** The machine key's public half, read from an existing key and never created. Null means none exists yet. */
   machinePublicKey: () => string | null
 }
 
 /** Serves `routes.system`. */
-export function createSystemRoutes({ sessions, daemonStartedAt, machinePublicKey }: SystemDeps) {
+export function createSystemRoutes({ sessions, daemon, machinePublicKey }: SystemDeps) {
   return createRouter(routes.system, {
     health: async () => ({ ok: true }),
     daemon: async () =>
       daemonStatus({
-        startedAt: daemonStartedAt(),
+        ...daemon(),
         liveTerminals: sessions.list().filter((session) => session.info().alive).length,
         now: Date.now(),
       }),

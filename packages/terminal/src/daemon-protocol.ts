@@ -8,6 +8,11 @@ import { trackedKinds } from './agents'
  * The terminal daemon wire version: JSON control messages and raw binary frames
  * for terminal output. Keeping output binary means a flood pays neither base64
  * nor JSON on the daemon-to-host hop, matching the browser connection.
+ *
+ * The frame envelope (kind byte, 4-byte length, JSON payload), the `hello`
+ * request's `type` and `protocol` fields and the `refused` answer must stay
+ * readable by every future protocol: they are how a host and a daemon of
+ * different protocols find out, so a host can leave the daemon's shells alone.
  */
 export const DAEMON_PROTOCOL = 1
 
@@ -50,18 +55,36 @@ export const daemonStatus = z.object({
     .optional(),
 })
 
+/** Replaced with a string literal by a build that passes `--define ORCH_BUILD_ID='"<id>"'`; undefined otherwise. */
+declare const ORCH_BUILD_ID: string
+
 /**
- * A hash of the code a daemon runs: its entry file and this package's sources.
- * The daemon computes it at startup and the host from the files on disk, so a
- * daemon still running code from before an edit or a branch switch is noticed.
+ * The build id compiled into this executable, or null when nothing defined one, as when running from source. It is
+ * a compile-time identifier, never read from the environment, so no setting can claim another build.
  */
-export function daemonBuild(entry: string): string {
-  const sources = readdirSync(import.meta.dir)
-    .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
-    .sort()
-    .map((name) => join(import.meta.dir, name))
+export function embeddedBuildId(): string | null {
+  return typeof ORCH_BUILD_ID === 'string' ? ORCH_BUILD_ID : null
+}
+
+/**
+ * Names the code a daemon runs. An executable uses the id compiled into it, so its host and the daemons it starts
+ * agree without reading any file. From source it is a hash of every non-test `.ts` file in `sourceDir` and in this
+ * package, so a daemon still running code from before an edit or a branch switch is noticed.
+ */
+export function daemonBuild(sourceDir: string): string {
+  return buildId(embeddedBuildId(), sourceDir)
+}
+
+/** `embedded` when there is one, else the 16-hex sha256 of the sources `daemonBuild` describes. */
+export function buildId(embedded: string | null, sourceDir: string): string {
+  if (embedded !== null) return embedded
   const hash = createHash('sha256')
-  for (const file of [entry, ...sources]) hash.update(readFileSync(file))
+  for (const dir of [sourceDir, import.meta.dir]) {
+    const files = readdirSync(dir)
+      .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
+      .sort()
+    for (const name of files) hash.update(readFileSync(join(dir, name)))
+  }
   return hash.digest('hex').slice(0, 16)
 }
 
@@ -70,6 +93,8 @@ export const daemonMessage = z.discriminatedUnion('type', [
   z.object({ type: z.literal('snapshot'), data: z.string(), status: daemonStatus }),
   z.object({ type: z.literal('status'), status: daemonStatus }),
   z.object({ type: z.literal('closed') }),
+  /** The daemon speaks another protocol, named here. It closes the connection and leaves its sessions alone. */
+  z.object({ type: z.literal('refused'), protocol: z.number().int() }),
 ])
 
 /** One decoded daemon frame: a JSON control message, or a raw output chunk. */

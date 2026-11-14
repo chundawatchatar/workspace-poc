@@ -20,8 +20,9 @@ import {
 import type { z } from 'zod'
 import { ProgressWatch } from './agent-interrupt.service'
 import type { DaemonRecord } from './daemon.repository'
+import { DaemonRefused } from './daemon-build'
 import type { SharedDaemon } from './shared-daemon.service'
-import { sendInterrupted, sendSnapshot } from './view-snapshot.service'
+import { refusalNotice, sendInterrupted, sendNotice, sendSnapshot, unavailableNotice } from './view-snapshot.service'
 
 /** A browser-facing terminal whose shell and screen belong to a separate process. */
 export class DaemonSession implements TerminalSession {
@@ -56,6 +57,8 @@ export class DaemonSession implements TerminalSession {
   /** The last derived agent state, so its `since` stays put while the state doesn't change. */
   private agentState: SessionInfo['agentState'] = null
   private readonly progress = new ProgressWatch(() => this.onChange(this))
+  /** Why the daemon can't be reached, shown to every view until a connection is made, also to ones that attach. */
+  private notice: string | null = null
 
   constructor(
     readonly id: string,
@@ -186,6 +189,7 @@ export class DaemonSession implements TerminalSession {
       sendInterrupted(client, this.interrupted, this.size)
       return
     }
+    if (this.notice && !this.socket) sendNotice(client, this.notice)
     this.answer()
     this.requestSnapshot()
     if (this.status?.queries) this.send({ type: 'redraw' })
@@ -246,11 +250,8 @@ export class DaemonSession implements TerminalSession {
     clearTimeout(this.retry)
     this.progress.stop()
     this.stopResync()
-    if (this.socket) {
-      this.send({ type: 'close' })
-    } else if (!this.connecting) {
-      void this.connect(false)
-    }
+    if (this.socket) this.send({ type: 'close' })
+    else if (!this.connecting) void this.connect(false)
   }
 
   shutdown() {
@@ -324,11 +325,9 @@ export class DaemonSession implements TerminalSession {
   }
 
   private tell(client: TermClient) {
-    if (client.ready && this.status) {
-      client.send(
-        JSON.stringify({ type: 'size', cols: this.status.cols, rows: this.status.rows } satisfies TermServerMsg),
-      )
-    }
+    if (!client.ready || !this.status) return
+    const { cols, rows } = this.status
+    client.send(JSON.stringify({ type: 'size', cols, rows } satisfies TermServerMsg))
   }
 
   private requestSnapshot() {
@@ -354,6 +353,7 @@ export class DaemonSession implements TerminalSession {
       return
     }
     const message = daemonMessage.parse(frame.value)
+    if (message.type === 'refused') throw new DaemonRefused(message.protocol)
     if (message.type === 'closed') {
       // A session the daemon no longer has is acknowledged before any status. Unless closing, it was asked to
       // attach without creating one because an agent ran in it: the daemon restarted and lost it.
@@ -393,6 +393,7 @@ export class DaemonSession implements TerminalSession {
     this.restoring = null
     if (command) this.send({ type: 'input', data: `${command}\r` })
     if (status.colors && this.palette) this.send({ type: 'colors', ...this.palette })
+    this.notice = null
     this.shared.heard(status)
     // The daemon learned whether views are attached from `hello`; ask a full-screen program to repaint for them.
     this.viewing = this.clients.size > 0
@@ -412,11 +413,12 @@ export class DaemonSession implements TerminalSession {
       await this.openOrLaunch(allowLaunch)
     } catch (error) {
       if (this.stopped) return
-      console.error(`terminal ${this.id}:`, error)
-      const text = `\r\nTerminal daemon unavailable: ${error instanceof Error ? error.message : String(error)}\r\n`
-      for (const client of this.clients) {
-        client.send(JSON.stringify({ type: 'snapshot', cols: 80, rows: 24, data: text } satisfies TermServerMsg))
-      }
+      // `SharedDaemon` logs a refusal once; this terminal keeps retrying quietly until the daemon is replaced.
+      const refused = error instanceof DaemonRefused
+      if (refused) this.shared.refused(error.protocol)
+      else console.error(`terminal ${this.id}:`, error)
+      this.notice = refused ? refusalNotice(error.protocol, this.shared.stopHint) : unavailableNotice(error)
+      for (const client of this.clients) sendNotice(client, this.notice)
       if (this.closing) {
         // A refused socket means there is no owner to close; identity failures keep their record for diagnosis.
         if (['ENOENT', 'ECONNREFUSED'].includes((error as NodeJS.ErrnoException).code ?? ''))

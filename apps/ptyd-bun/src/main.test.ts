@@ -261,3 +261,25 @@ test('a daemon that can not write the shim folder still starts terminals that ca
   expect(token).toMatch(/^[a-f0-9]{64}$/)
   expect((await request(join(dir, 'agent.sock'), token, '/v1/session')).status).toBe(200)
 }, 30_000)
+
+test('a hello of another protocol is refused and closed, and live sessions keep running', async () => {
+  const { socket } = await daemon()
+  const live = await attach(socket, 'a')
+  const before = await until(() => live.statuses.at(-1)?.pid, 'the live shell')
+
+  const connection: Socket = createConnection(socket)
+  const decoder = new DaemonDecoder()
+  const received: unknown[] = []
+  connection.on('data', (chunk: Buffer) => {
+    for (const frame of decoder.push(chunk)) received.push(frame.kind === 'control' ? frame.value : frame.kind)
+  })
+  const closed = new Promise((done) => connection.once('close', done))
+  await new Promise((done) => connection.once('connect', done))
+  connection.write(encodeControlFrame({ type: 'hello', protocol: DAEMON_PROTOCOL + 1, id: 'a', token: 'token-a' }))
+  await closed
+  expect(received).toEqual([{ type: 'refused', protocol: DAEMON_PROTOCOL }])
+
+  const again = await attach(socket, 'a')
+  expect(await until(() => again.statuses.at(-1)?.pid, 'the shell again')).toBe(before)
+  expect(live.statuses.at(-1)?.alive).toBe(true)
+}, 30_000)

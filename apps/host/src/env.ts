@@ -24,5 +24,8 @@ export function devDaemonRuntime(): string {
   return optionalEnv('ORCH_PTY_RUNTIME') ?? daemonRuntimeDir(devDataDir, process.getuid?.() ?? 'user')
 }
 
+/** The dev terminal daemon's source folder, whose files name the build of a host run from source. */
+export const devDaemonSourceDir = join(repoRoot, 'apps', 'ptyd-bun', 'src')
+
 /** Starts the dev terminal daemon from its source. */
-export const devDaemonCommand = [process.execPath, join(repoRoot, 'apps', 'ptyd-bun', 'src', 'main.ts')]
+export const devDaemonCommand = [process.execPath, join(devDaemonSourceDir, 'main.ts')]

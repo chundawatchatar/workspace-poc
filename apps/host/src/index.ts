@@ -4,9 +4,9 @@ import { resolve } from 'node:path'
 import { websocket } from '@hono/bun'
 import type { HostInfo } from '@orch/shared'
 import { optionalEnv, requiredEnv } from '@orch/shared/env'
-import { SessionManager, shellProgram } from '@orch/terminal'
+import { daemonBuild, embeddedBuildId, SessionManager, shellProgram } from '@orch/terminal'
 import { createApp } from './app'
-import { devDaemonCommand, devDaemonRuntime, devDataDir, repoRoot } from './env'
+import { devDaemonCommand, devDaemonRuntime, devDaemonSourceDir, devDataDir, repoRoot } from './env'
 import { tunnelEnv } from './lib/principal'
 import { accessKeysPath } from './modules/access/access.repository'
 import { AgentTrackingRepository, agentTrackingPath } from './modules/agent-tracking/agent-tracking.repository'
@@ -21,6 +21,7 @@ import { LinkedAccountRepository, linkedAccountPath } from './modules/remote-acc
 import { RemoteAccessRepository, remoteAccessPath } from './modules/remote-access/remote-access.repository'
 import { RemoteAccessService } from './modules/remote-access/remote-access.service'
 import { daemonFactory, resendTracking, restoreTerminals } from './modules/terminals/daemon.service'
+import { daemonCommand, stopDaemonHint } from './modules/terminals/daemon-build'
 import { machineKeyFile } from './modules/tunnel/tunnel.repository'
 import { loadUiSite } from './modules/ui/ui.service'
 
@@ -49,10 +50,15 @@ if (uiDir !== null && !ui) {
 const hub = new EventHub()
 const layout = new LayoutRepository(dataFile(dataDir), projectRoot)
 const agentTracking = new AgentTrackingService(new AgentTrackingRepository(agentTrackingPath(dataDir)))
+// A compiled host carries its build id, and runs the daemon from its own executable; from source it runs the
+// daemon's entry file, and both sides hash the daemon's sources.
+const packaged = embeddedBuildId() !== null
 const daemon = daemonFactory({
   dataDir,
   runtime: devDaemonRuntime(),
-  daemonCommand: devDaemonCommand,
+  daemonCommand: daemonCommand({ packaged, execPath: process.execPath, dev: devDaemonCommand }),
+  build: daemonBuild(devDaemonSourceDir),
+  stopHint: stopDaemonHint(packaged),
   tracking: () => agentTracking.tracking(),
 })
 const sessions = new SessionManager(
@@ -99,7 +105,7 @@ const { app, sockets } = createApp({
   layout,
   sessions,
   info,
-  daemonStartedAt: () => daemon.shared.startedAt,
+  daemon: () => daemon.shared.report(),
   machinePublicKey: () => remoteAccess.machinePublicKey(),
   access: () => remoteAccess.current(),
   remoteAccess,

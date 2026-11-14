@@ -55,19 +55,34 @@ function ShortcutsHelp() {
   )
 }
 
-/** The terminal daemon's uptime and live terminal count, fetched each time the dialog opens. */
-function DaemonStatusLine() {
+/**
+ * The terminal daemon's uptime, live terminal count and, when it doesn't match the host, how to replace it. It is
+ * fetched each time the dialog opens.
+ */
+export function DaemonStatusLine() {
   // The host is local, so a failure is shown at once rather than after the default retries; reopening asks again.
   const status = useQuery({ ...apiQuery(routes.system.daemon, {}), retry: false })
-  let text: string
-  if (status.isPending) text = 'Terminal daemon: checking…'
-  else if (status.isError) text = 'Terminal daemon status unavailable'
-  else {
-    const { uptimeMs, liveTerminals } = status.data
-    const state = uptimeMs === null ? 'not connected' : `up ${formatUptime(uptimeMs)}`
-    text = `Terminal daemon: ${state} · ${liveTerminals} live ${liveTerminals === 1 ? 'terminal' : 'terminals'}`
-  }
-  return <p className="mt-3 text-xs text-faint">{text}</p>
+  if (status.isPending) return <p className="mt-3 text-xs text-faint">Terminal daemon: checking…</p>
+  if (status.isError) return <p className="mt-3 text-xs text-faint">Terminal daemon status unavailable</p>
+  const { uptimeMs, liveTerminals, compatibility, daemonProtocol, stopCommand } = status.data
+  const uptime = uptimeMs === null ? 'not connected' : `up ${formatUptime(uptimeMs)}`
+  const state =
+    compatibility === 'incompatible'
+      ? `incompatible (protocol ${daemonProtocol})`
+      : `${uptime}${compatibility === 'outdated' ? ', out of date' : ''}`
+  const terminals = `${liveTerminals} live ${liveTerminals === 1 ? 'terminal' : 'terminals'}`
+  const stale = compatibility === 'outdated' || compatibility === 'incompatible'
+  return (
+    <p className="mt-3 text-xs text-faint">
+      Terminal daemon: {state} · {terminals}
+      {stale && (
+        <>
+          {' '}
+          · run <code>{stopCommand}</code> to replace it (ends its shells)
+        </>
+      )}
+    </p>
+  )
 }
 
 function NewWorkspace() {

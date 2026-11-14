@@ -217,7 +217,7 @@ export {
   unlinkMachineResponse,
 } from './serverMachines'
 export { serverHealthResponse } from './serverSystem'
-export { type DaemonReport, daemonResponse, healthResponse } from './system'
+export { type DaemonCompatibility, type DaemonReport, daemonResponse, healthResponse } from './system'
 export {
   authFailedFrame,
   CLOSE_HEARTBEAT_TIMEOUT,
