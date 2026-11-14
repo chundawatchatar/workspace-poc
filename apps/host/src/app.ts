@@ -13,9 +13,16 @@ import { gitRoutes } from './modules/git/git.routes'
 import { createRemoteAccessRoutes, type RemoteAccessDeps } from './modules/remote-access/remote-access.routes'
 import { createSystemRoutes, type SystemDeps } from './modules/system/system.routes'
 import { createTerminalSocket, terminalSocketHandler } from './modules/terminals/terminals.ws'
+import { createUiRoutes, type UiDeps } from './modules/ui/ui.routes'
 
 /** Everything the modules need, built once in `index.ts`. Add another module's deps with `&`. */
-export type AppDeps = EventsSocketDeps & SystemDeps & AccessDeps & RemoteAccessDeps & AgentTrackingDeps & E2eDeps
+export type AppDeps = EventsSocketDeps &
+  SystemDeps &
+  AccessDeps &
+  RemoteAccessDeps &
+  AgentTrackingDeps &
+  E2eDeps &
+  UiDeps
 
 /** The host's routes: `app` serves HTTP and local sockets, and `sockets` opens the same sockets for the tunnel. */
 export interface HostApp {
@@ -48,6 +55,8 @@ export function createApp(deps: AppDeps): HostApp {
   app.route('/', createE2eRoutes(deps))
   app.route('/', createEventsSocket(events))
   app.route('/', createTerminalSocket(terminal))
+  // Last, behind the origin check above, so no API or socket path is ever shadowed by the page.
+  if (deps.ui) app.route('/', createUiRoutes(deps.ui))
 
   // A socket served here is also listed here, so it works through the tunnel too.
   const sockets = createSocketRouter([
