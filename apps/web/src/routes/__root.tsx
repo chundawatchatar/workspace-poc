@@ -1,6 +1,7 @@
 import { FAVICON_HREF } from '@orch/brand'
 import {
   createLocalTransport,
+  type HostTransport,
   NotFound,
   SIDEBAR_BOOT_SCRIPT,
   TerminalUI,
@@ -11,8 +12,24 @@ import { createRootRoute, HeadContent, Outlet, Scripts, useNavigate, useParams }
 import { type ReactNode, useCallback } from 'react'
 import appCss from '../styles.css?url'
 
-// The host listens on the loopback address only.
-const transport = createLocalTransport(import.meta.env.VITE_HOST_URL)
+// The host listens on the loopback address only. In dev the page comes from Vite on `WEB_PORT` and is told where the
+// host is; a build is served by the host itself, so it talks to the page's own origin, whatever port that is. The
+// `DEV` check keeps a `VITE_HOST_URL` from the shell out of a build.
+const transport =
+  import.meta.env.DEV && import.meta.env.VITE_HOST_URL
+    ? createLocalTransport(import.meta.env.VITE_HOST_URL)
+    : sameOriginTransport()
+
+/** A transport to the origin that served the page, read at each call since the prerendered shell has no `window`. */
+function sameOriginTransport(): HostTransport {
+  return {
+    request: (path, init) => fetch(`${window.location.origin}${path}`, init),
+    openSocket: (path) => {
+      const { protocol, host } = window.location
+      return new WebSocket(`${protocol === 'https:' ? 'wss:' : 'ws:'}//${host}${path}`)
+    },
+  }
+}
 
 export const Route = createRootRoute({
   head: () => ({
@@ -32,6 +49,8 @@ export const Route = createRootRoute({
   notFoundComponent: NotFound,
 })
 
+// The shell is prerendered into `index.html` at build time. The host allows inline scripts by their hashes in that
+// file, so every inline script here must have fixed contents.
 function RootDocument({ children }: { children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
