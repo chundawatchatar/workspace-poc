@@ -12,6 +12,7 @@ import {
 } from '@orch/shared'
 import type { SessionManager } from '@orch/terminal'
 import { type AppDeps, createApp } from '../../app'
+import { localRequest } from '../../app.testing'
 import { HOST_ORIGIN } from '../../lib/localOrigin'
 import { type Principal, tunnelEnv } from '../../lib/principal'
 import type { AuditEvent } from '../remote-access/audit-log.service'
@@ -155,13 +156,13 @@ describe('TunnelHttp', () => {
     expect(seen?.request.url).toBe(`${HOST_ORIGIN}${MACHINE_KEY}`)
     expect(seen?.request.headers.has(ACCESS_KEY_HEADER)).toBe(false)
     expect(seen?.principal).toEqual(principal)
-    const direct = await app.fetch(new Request(`${HOST_ORIGIN}${MACHINE_KEY}`))
+    const direct = await localRequest(app, MACHINE_KEY)
     expect(frames[0]).toMatchObject({ type: 'http.response', id: 1, status: direct.status })
     expect(JSON.parse(bodyOf(frames, 1))).toEqual(await direct.json())
     expect(JSON.parse(bodyOf(frames, 1))).toEqual({ publicKey: 'the-public-key' })
     expect(audit).toEqual([])
     // The same foreign origin without the tunnel's authorization is still refused.
-    const foreign = await app.fetch(new Request(`${HOST_ORIGIN}${MACHINE_KEY}`, { headers: [headers[1]] }))
+    const foreign = await localRequest(app, MACHINE_KEY, { headers: [headers[1]] })
     expect(foreign.status).toBe(403)
   })
 

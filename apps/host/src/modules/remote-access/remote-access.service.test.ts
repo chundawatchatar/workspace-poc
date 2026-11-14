@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { machineFingerprint, type RotateAccessResponse, routes, startBrowserHandshake } from '@orch/shared'
+import { localRequest } from '../../app.testing'
 import type { Principal } from '../../lib/principal'
 import { fingerprintOf } from './device-proof.service'
 import { testDevice } from './device-proof.testing'
@@ -81,7 +82,7 @@ describe('RemoteAccessService', () => {
       linkedAccount: null,
     })
     // With no machine key yet, the key route answers 404 and never creates one.
-    expect((await app.request(routes.system.machineKey.path)).status).toBe(404)
+    expect((await localRequest(app, routes.system.machineKey.path)).status).toBe(404)
     expect(existsSync(machineKeyFile())).toBe(false)
     service.shutdown()
 
@@ -139,7 +140,7 @@ describe('RemoteAccessService', () => {
       { enabled: true, serverUrl: 'https://x', clientUrl: null },
       { enabled: false, serverUrl: 'ws://127.0.0.1:4600', clientUrl: 'ftp://x' },
     ]) {
-      const response = await app.request(routes.remoteAccess.update.path, {
+      const response = await localRequest(app, routes.remoteAccess.update.path, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
@@ -152,7 +153,7 @@ describe('RemoteAccessService', () => {
 
   test('rotate follows the setting: a link on the default, then on the saved or derived client address', async () => {
     const app = setup()
-    const rotate = () => app.request(routes.access.rotate.path, { method: 'POST' })
+    const rotate = () => localRequest(app, routes.access.rotate.path, { method: 'POST' })
     const fallback = (await (await rotate()).json()) as RotateAccessResponse
     expect(fallback.link).toStartWith('https://orch.example.com/#machine=')
 
@@ -290,7 +291,7 @@ describe('remote sessions', () => {
 
   test('listSessions groups channels per device, newest first, and endSession closes one device with 4401', async () => {
     const off = setup()
-    expect(await (await off.request(routes.remoteAccess.sessions.path)).json()).toEqual({ sessions: [] })
+    expect(await (await localRequest(off, routes.remoteAccess.sessions.path)).json()).toEqual({ sessions: [] })
 
     const { app, tunnel } = connected()
     const [a, b] = [deviceId(1), deviceId(2)]
@@ -300,7 +301,7 @@ describe('remote sessions', () => {
       { principal: { kind: 'account', accountId, deviceId: a, ticketExp: 0 }, openedAt: Date.UTC(2026, 10, 6, 13, 0) },
       { principal: { kind: 'key', keyId: 'k2', name: 'phone', deviceId: b }, openedAt: Date.UTC(2026, 10, 6, 12, 30) },
     ]
-    const listed = await app.request(routes.remoteAccess.sessions.path)
+    const listed = await localRequest(app, routes.remoteAccess.sessions.path)
     const text = await listed.text()
     expect(JSON.parse(text)).toEqual({
       sessions: [

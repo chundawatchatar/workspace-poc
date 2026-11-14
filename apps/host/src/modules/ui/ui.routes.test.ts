@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { SessionManager } from '@orch/terminal'
 import { type AppDeps, createApp } from '../../app'
+import { localRequest } from '../../app.testing'
 import { tunnelEnv } from '../../lib/principal'
 import { SANDBOX_CSP } from './ui.routes'
 import { loadUiSite, resolveUi } from './ui.service'
@@ -41,15 +42,15 @@ async function setup(withUi = true) {
 describe('UI routes', () => {
   test('without a site no UI is served and the API is unchanged', async () => {
     const app = await setup(false)
-    expect((await app.request('/', { headers: html })).status).toBe(404)
-    expect((await app.request('/assets/index-abc.js')).status).toBe(404)
-    expect((await app.request('/api/health')).status).toBe(200)
+    expect((await localRequest(app, '/', { headers: html })).status).toBe(404)
+    expect((await localRequest(app, '/assets/index-abc.js')).status).toBe(404)
+    expect((await localRequest(app, '/api/health')).status).toBe(200)
   })
 
   test("the page and the UI's own routes get index.html with its CSP and security headers", async () => {
     const app = await setup()
     for (const path of ['/', '/w/ws_1', '/index.html']) {
-      const response = await app.request(path, { headers: html })
+      const response = await localRequest(app, path, { headers: html })
       expect(response.status).toBe(200)
       expect(await response.text()).toBe(indexHtml)
       expect(response.headers.get('content-type')).toBe('text/html; charset=utf-8')
@@ -64,7 +65,7 @@ describe('UI routes', () => {
   test('assets are served byte for byte, cached for good and sandboxed', async () => {
     const app = await setup()
     for (const method of ['GET', 'HEAD']) {
-      const response = await app.request('/assets/index-abc.js', { method })
+      const response = await localRequest(app, '/assets/index-abc.js', { method })
       expect(response.status).toBe(200)
       expect(response.headers.get('cache-control')).toBe('public, max-age=31536000, immutable')
       expect(response.headers.get('content-security-policy')).toBe(SANDBOX_CSP)
@@ -80,15 +81,15 @@ describe('UI routes', () => {
     for (const path of leaving) {
       // The URL parser resolves dot segments before the app sees them, so the raw path is checked on its own too.
       expect({ path, target: await resolveUi(site, path, true) }).toEqual({ path, target: { kind: 'not-found' } })
-      expect({ path, status: (await app.request(path)).status }).toEqual({ path, status: 404 })
-      expect(await (await app.request(path, { headers: html })).text()).not.toContain('secret')
+      expect({ path, status: (await localRequest(app, path)).status }).toEqual({ path, status: 404 })
+      expect(await (await localRequest(app, path, { headers: html })).text()).not.toContain('secret')
     }
-    expect((await app.request('/leak.txt', { headers: html })).status).toBe(404)
+    expect((await localRequest(app, '/leak.txt', { headers: html })).status).toBe(404)
     for (const method of ['POST', 'PUT', 'DELETE']) {
-      expect((await app.request('/', { method, headers: html })).status).toBe(404)
+      expect((await localRequest(app, '/', { method, headers: html })).status).toBe(404)
     }
     for (const path of ['/api/nope', '/ws/nope', '/api', '/%61pi/nope']) {
-      const response = await app.request(path, { headers: html })
+      const response = await localRequest(app, path, { headers: html })
       expect(response.status).toBe(404)
       expect(await response.text()).not.toBe(indexHtml)
     }
@@ -97,7 +98,7 @@ describe('UI routes', () => {
   test('a foreign origin gets 403 and a tunneled request gets 404, for the page and assets alike', async () => {
     const app = await setup()
     for (const path of ['/', '/assets/index-abc.js']) {
-      const foreign = await app.request(path, { headers: { ...html, origin: 'http://evil.example' } })
+      const foreign = await localRequest(app, path, { headers: { ...html, origin: 'http://evil.example' } })
       expect(foreign.status).toBe(403)
       const throughTunnel = await app.request(path, { headers: html }, tunneled)
       expect(throughTunnel.status).toBe(404)
