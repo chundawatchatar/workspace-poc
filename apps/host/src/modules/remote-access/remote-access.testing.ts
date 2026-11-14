@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Endpoint, TunnelState } from '@orch/shared'
 import { type AppDeps, createApp } from '../../app'
+import { localRequest } from '../../app.testing'
 import type { Principal } from '../../lib/principal'
 import { AccessKeyRepository } from '../access/access.repository'
 import { E2eSessions } from '../e2e/e2e.service'
@@ -138,7 +139,7 @@ export const storedKeys = () => new AccessKeyRepository(keysFile()).load()
 
 /** Posts `body` to `endpoint` as a local caller and reads the answer. */
 export async function post(app: ReturnType<typeof setup>, endpoint: Endpoint, body: unknown) {
-  const response = await app.request(endpoint.path, {
+  const response = await localRequest(app, endpoint.path, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
