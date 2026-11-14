@@ -17,16 +17,18 @@ import { SharedDaemon } from './shared-daemon.service'
 /**
  * Authenticates to one registered daemon and asks it to end its terminal. A record whose socket is gone is
  * stale and removed; a daemon that fails the identity check is left running, with its record kept for diagnosis.
+ * A daemon of another protocol refuses the hello: it is reported to `onRefused` and left alone, record and all.
  */
 export function closeDaemon(
   repository: DaemonRepository,
   record: DaemonRecord,
-): Promise<'closed' | 'stale' | 'failed'> {
+  onRefused: (protocol: number) => void = () => {},
+): Promise<'closed' | 'stale' | 'failed' | 'refused'> {
   return new Promise((done) => {
     const socket = createConnection(repository.socket)
     const decoder = new DaemonDecoder()
     let verified = false
-    let result: 'closed' | 'stale' | 'failed' = 'failed'
+    let result: 'closed' | 'stale' | 'failed' | 'refused' = 'failed'
     const deadline = setTimeout(() => socket.destroy(new Error('Daemon close timed out')), 3000)
     socket.on('connect', () =>
       socket.write(
@@ -39,19 +41,30 @@ export function closeDaemon(
         }),
       ),
     )
+    /** Takes one control message. False means the daemon refused, and the connection ends. */
+    const take = (value: unknown): boolean => {
+      const message = daemonMessage.parse(value)
+      if (message.type === 'refused') {
+        result = 'refused'
+        onRefused(message.protocol)
+        return false
+      }
+      if (verified || message.type === 'closed') {
+        if (message.type === 'closed') result = 'closed'
+        return true
+      }
+      if (message.type !== 'snapshot' || message.status.id !== record.id) throw new Error('Daemon identity mismatch')
+      verified = true
+      socket.write(encodeControlFrame({ type: 'close' }))
+      return true
+    }
     socket.on('data', (chunk: Buffer) => {
       try {
         for (const frame of decoder.push(chunk)) {
-          if (frame.kind !== 'control') continue
-          const message = daemonMessage.parse(frame.value)
-          if (verified || message.type === 'closed') {
-            if (message.type === 'closed') result = 'closed'
-            continue
+          if (frame.kind === 'control' && !take(frame.value)) {
+            socket.destroy()
+            return
           }
-          if (message.type !== 'snapshot' || message.status.id !== record.id)
-            throw new Error('Daemon identity mismatch')
-          verified = true
-          socket.write(encodeControlFrame({ type: 'close' }))
         }
       } catch (error) {
         console.error(`terminal ${record.id}:`, error)
@@ -64,7 +77,7 @@ export function closeDaemon(
     })
     socket.on('close', () => {
       clearTimeout(deadline)
-      if (result !== 'failed') repository.remove(record.id)
+      if (result === 'closed' || result === 'stale') repository.remove(record.id)
       done(result)
     })
   })
@@ -115,16 +128,26 @@ export function resendTracking(sessions: TerminalSession[]) {
 
 /**
  * Creates the one persistent daemon and the terminals that attach to it. The entry point gives the data folder, the
- * daemon's runtime folder and the command that starts the daemon; `tracking` reads the trust answers.
+ * daemon's runtime folder, the command that starts the daemon, this host's build and the command that stops the
+ * daemon; `tracking` reads the trust answers.
  */
 export function daemonFactory(options: {
   dataDir: string
   runtime: string
   daemonCommand: string[]
+  build: string
+  stopHint: string
   tracking?: () => AgentTracking
 }) {
   const repository = new DaemonRepository({ dataDir: options.dataDir, runtime: options.runtime })
-  const shared = new SharedDaemon(repository, options.daemonCommand, shellProgram(), options.tracking)
+  const shared = new SharedDaemon({
+    repository,
+    command: options.daemonCommand,
+    build: options.build,
+    stopHint: options.stopHint,
+    shell: shellProgram(),
+    tracking: options.tracking,
+  })
   return {
     repository,
     shared,
@@ -132,8 +155,11 @@ export function daemonFactory(options: {
       new DaemonSession(id, cwd, cols, rows, onChange, shared),
     /** Ends sessions whose terminal is no longer in the layout. Call it only with a layout that loaded or was absent. */
     reconcile: async (liveIds: Set<string>) => {
+      // A daemon of another protocol can't be asked to close a session, so its records and shells are left alone.
+      if (shared.compatibility === 'incompatible') return
       const orphans = repository.list().filter((record) => !liveIds.has(record.id))
-      const results = await Promise.all(orphans.map((record) => closeDaemon(repository, record)))
+      const refused = (protocol: number) => shared.refused(protocol)
+      const results = await Promise.all(orphans.map((record) => closeDaemon(repository, record, refused)))
       const closed = results.filter((result) => result === 'closed').length
       if (closed) console.log(`closed ${closed} terminal session(s) that are no longer in the layout`)
     },

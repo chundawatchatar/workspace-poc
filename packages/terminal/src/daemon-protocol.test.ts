@@ -1,5 +1,20 @@
-import { expect, test } from 'bun:test'
-import { DaemonDecoder, daemonStatus, encodeControlFrame, encodeOutputFrame } from './daemon-protocol'
+import { afterEach, expect, test } from 'bun:test'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import {
+  buildId,
+  DaemonDecoder,
+  daemonStatus,
+  embeddedBuildId,
+  encodeControlFrame,
+  encodeOutputFrame,
+} from './daemon-protocol'
+
+const dirs: string[] = []
+afterEach(() => {
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+})
 
 test('decodes fragmented and coalesced frames, keeping control and output apart', () => {
   const decoder = new DaemonDecoder()
@@ -42,4 +57,22 @@ test('a daemon status may carry its start time, and one from an older daemon wit
   const agentHook = { agent: 'claude', state: 'working', reason: 'tool', at: 5 }
   expect(daemonStatus.parse({ ...status, agentHook }).agentHook).toEqual(agentHook as never)
   expect(daemonStatus.parse({ ...status, agentHook: null }).agentHook).toBeNull()
+})
+
+test('an embedded build id reads no file; from source the id hashes the non-test sources', () => {
+  expect(buildId('abc', '/nonexistent/orch-build')).toBe('abc')
+  // Nothing defines `ORCH_BUILD_ID` under `bun test`.
+  expect(embeddedBuildId()).toBeNull()
+
+  const dir = mkdtempSync(join(tmpdir(), 'orch-build-'))
+  dirs.push(dir)
+  writeFileSync(join(dir, 'main.ts'), 'run()')
+  writeFileSync(join(dir, 'main.test.ts'), 'test()')
+  const first = buildId(null, dir)
+  expect(first).toMatch(/^[a-f0-9]{16}$/)
+
+  writeFileSync(join(dir, 'main.test.ts'), 'test(again)')
+  expect(buildId(null, dir)).toBe(first)
+  writeFileSync(join(dir, 'main.ts'), 'run(again)')
+  expect(buildId(null, dir)).not.toBe(first)
 })

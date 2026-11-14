@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/main.ts"
+    ".": "./src/main.ts",
+    "./daemon": "./src/daemon.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
