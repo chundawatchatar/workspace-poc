@@ -19,6 +19,7 @@
     "host:remote": "bun run --filter @orch/host remote",
     "terminals:stop": "bun scripts/stop-terminals.ts",
     "test:bun-daemon": "bun scripts/verify-bun-daemon.ts",
+    "test:served-ui": "bun scripts/verify-served-ui.ts",
     "spike:compile": "bun scripts/spike-compile.ts",
     "typecheck": "bun run --filter '*' typecheck",
     "lint": "biome check .",
