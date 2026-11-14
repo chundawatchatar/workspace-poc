@@ -13,6 +13,7 @@ import { LinkedAccountRepository } from './linked-account.repository'
 import { RemoteAccessRepository } from './remote-access.repository'
 import { createRemoteAccessRoutes } from './remote-access.routes'
 import { RemoteAccessService } from './remote-access.service'
+import { startAddresses } from './remote-access.testing'
 
 const publicKey = { kty: 'EC', crv: 'P-256', x: 'x'.repeat(43), y: 'y'.repeat(43) } as const
 /** Device ids that differ in their first character, so each has its own fingerprint. */
@@ -32,6 +33,9 @@ beforeEach(() => {
     e2eSessions: new E2eSessions({ machineKey: () => null }),
     machineKeyFile: join(dir, 'machine-key'),
     keysFile: join(dir, 'access-keys.json'),
+    settingsFile: join(dir, 'config.json'),
+    addresses: startAddresses({}, join(dir, 'config.json')),
+    autoEnable: true,
     handle: async () => new Response('ok'),
     openSocket: () => ({ code: 1008, reason: 'none' }),
   })

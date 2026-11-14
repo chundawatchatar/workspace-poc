@@ -26,6 +26,12 @@ import {
   remoteAccessPath,
 } from '../apps/host/src/modules/remote-access/remote-access.repository'
 import { RemoteAccessService } from '../apps/host/src/modules/remote-access/remote-access.service'
+import {
+  migrateRemoteAccessAddresses,
+  readSettingsFile,
+  settingsPath,
+} from '../apps/host/src/modules/settings/settings.repository'
+import { loadSettings, SETTINGS_DEFAULTS } from '../apps/host/src/modules/settings/settings.service'
 import { DaemonRepository } from '../apps/host/src/modules/terminals/daemon.repository'
 import { stopDaemon } from '../apps/host/src/modules/terminals/daemon.service'
 import { DaemonSession } from '../apps/host/src/modules/terminals/daemon-session.service'
@@ -122,6 +128,13 @@ const sessions = new SessionManager(
   (id, cwd, cols, rows, onChange) => new DaemonSession(id, cwd, cols, rows, onChange, daemon),
 )
 const e2eSessions: E2eSessions = new E2eSessions({ machineKey: () => remoteAccess.signingKey() })
+migrateRemoteAccessAddresses(dataDir)
+const settings = loadSettings({
+  flags: {},
+  env: {},
+  file: readSettingsFile(settingsPath(dataDir)),
+  defaults: SETTINGS_DEFAULTS,
+})
 const remoteAccess = new RemoteAccessService({
   repository: new RemoteAccessRepository(remoteAccessPath(dataDir)),
   linkedAccounts: new LinkedAccountRepository(linkedAccountPath(dataDir)),
@@ -130,7 +143,9 @@ const remoteAccess = new RemoteAccessService({
   e2eSessions,
   machineKeyFile: machineKeyFile(dataDir),
   keysFile: accessKeysPath(dataDir),
-  env: {},
+  settingsFile: settingsPath(dataDir),
+  addresses: settings,
+  autoEnable: false,
   handle: async () => new Response(null, { status: 404 }),
   openSocket: () => {
     throw new Error('this check opens no tunnel')

@@ -15,23 +15,23 @@ beforeEach(() => {
 afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
 describe('RemoteAccessRepository', () => {
-  test('loads null from a missing file, and saves atomically', () => {
+  test('loads null from a missing file, saves only the flag atomically, and still reads the old addresses', () => {
     const repository = new RemoteAccessRepository(file)
     expect(repository.load()).toBeNull()
 
-    repository.save({ enabled: true, serverUrl: 'ws://127.0.0.1:4600', clientUrl: null })
-    repository.save({ enabled: false, serverUrl: 'wss://relay.example.com', clientUrl: 'https://orch.example' })
-    expect(repository.load()).toEqual({
-      enabled: false,
-      serverUrl: 'wss://relay.example.com',
-      clientUrl: 'https://orch.example',
-    })
+    repository.save({ enabled: true })
+    repository.save({ enabled: false })
+    expect(repository.load()).toEqual({ enabled: false })
     expect(readdirSync(join(dir, 'data'))).toEqual(['remote-access.json'])
+
+    const old = { enabled: true, serverUrl: 'wss://relay.example.com', clientUrl: null }
+    writeFileSync(file, JSON.stringify(old))
+    expect(repository.load()).toEqual(old)
   })
 
   test('a file that fails the schema throws and is left as it is', () => {
     const repository = new RemoteAccessRepository(file)
-    repository.save({ enabled: true, serverUrl: null, clientUrl: null })
+    repository.save({ enabled: true })
     for (const content of ['not json', JSON.stringify({ enabled: 'yes', serverUrl: null, clientUrl: null })]) {
       writeFileSync(file, content)
       expect(() => repository.load()).toThrow('not valid')

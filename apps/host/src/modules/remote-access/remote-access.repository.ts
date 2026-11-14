@@ -2,16 +2,24 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
 
-/** The remote access setting as saved. It holds only addresses and a flag, nothing secret. */
+/** The remote access setting as saved: only the flag. The addresses live in the settings file, `config.json`. */
 export const remoteAccessSettings = z.object({
   /** True when the host should keep the tunnel open from its next start. */
   enabled: z.boolean(),
-  /** The server address as entered. Null means none was saved. */
-  serverUrl: z.string().nullable(),
-  /** The client address for connect links. Null means it is derived from `serverUrl`. */
-  clientUrl: z.string().nullable(),
 })
 export type RemoteAccessSettings = z.infer<typeof remoteAccessSettings>
+
+/**
+ * The file as `load` reads it. A folder from before `config.json` also holds
+ * the addresses here; only `migrateRemoteAccessAddresses` reads them.
+ */
+const storedRemoteAccess = remoteAccessSettings.extend({
+  /** The server address as entered. Null means none was saved. */
+  serverUrl: z.string().nullable().optional(),
+  /** The client address for connect links. Null means it is derived from `serverUrl`. */
+  clientUrl: z.string().nullable().optional(),
+})
+export type StoredRemoteAccess = z.infer<typeof storedRemoteAccess>
 
 /** Where the remote access setting is kept. */
 export function remoteAccessPath(dataDir: string) {
@@ -22,8 +30,12 @@ export function remoteAccessPath(dataDir: string) {
 export class RemoteAccessRepository {
   constructor(readonly file: string) {}
 
-  /** The saved setting, or null when the file does not exist. A file that is not valid throws and is left as it is. */
-  load(): RemoteAccessSettings | null {
+  /**
+   * The saved setting, with the old addresses if the file still has them, or
+   * null when the file does not exist. A file that is not valid throws and is
+   * left as it is.
+   */
+  load(): StoredRemoteAccess | null {
     if (!existsSync(this.file)) return null
     let value: unknown
     try {
@@ -31,16 +43,16 @@ export class RemoteAccessRepository {
     } catch {
       value = undefined
     }
-    const parsed = remoteAccessSettings.safeParse(value)
+    const parsed = storedRemoteAccess.safeParse(value)
     if (!parsed.success) {
       throw new Error(`the remote access setting in ${this.file} is not valid. Fix the file, or save the setting again`)
     }
     return parsed.data
   }
 
-  /** Replaces the file in one step, so a crash never leaves half of it. */
-  save(settings: RemoteAccessSettings) {
-    writeJsonAtomic(this.file, settings)
+  /** Replaces the file with the flag alone, in one step, so a crash never leaves half of it. */
+  save({ enabled }: RemoteAccessSettings) {
+    writeJsonAtomic(this.file, { enabled })
   }
 }
 

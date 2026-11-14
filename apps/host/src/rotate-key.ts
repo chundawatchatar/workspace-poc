@@ -4,12 +4,9 @@ import { optionalEnv } from '@orch/shared/env'
 import { devDataDir, hostUrl } from './env'
 import { AccessKeyRepository, accessKeysPath } from './modules/access/access.repository'
 import { AccessKeys, rotateAccess } from './modules/access/access.service'
-import {
-  RemoteAccessRepository,
-  type RemoteAccessSettings,
-  remoteAccessPath,
-} from './modules/remote-access/remote-access.repository'
-import { linkClientUrl } from './modules/remote-access/remote-access.service'
+import { devAddresses, linkClientUrl } from './modules/remote-access/addresses.service'
+import { migrateRemoteAccessAddresses, readSettingsFile, settingsPath } from './modules/settings/settings.repository'
+import { loadSettings, SETTINGS_DEFAULTS } from './modules/settings/settings.service'
 import { loadOrCreateMachineKey, machineKeyFile } from './modules/tunnel/tunnel.repository'
 
 // `bun run host:rotate-key`: replaces the access key. A running host rotates it
@@ -39,23 +36,25 @@ async function rotateThroughHost(): Promise<RotateAccessResponse | null> {
 
 /**
  * Rotates `access-keys.json` directly, for a host that is not running. The link
- * is built like the host builds it: `CLIENT_URL` and `SERVER_URL` first, then
- * the saved Remote access setting.
+ * is built like the host builds it at start: `CLIENT_URL` and `SERVER_URL`
+ * first, then the settings file, after migrating a folder from before it. A
+ * settings file that can't be used stops the rotation before any key changes.
  */
 function rotateFile(): RotateAccessResponse {
+  migrateRemoteAccessAddresses(dataDir)
+  const settings = loadSettings({
+    flags: {},
+    env: {},
+    file: readSettingsFile(settingsPath(dataDir)),
+    defaults: SETTINGS_DEFAULTS,
+  })
+  const { clientUrl } = devAddresses(settings, {
+    SERVER_URL: optionalEnv('SERVER_URL'),
+    CLIENT_URL: optionalEnv('CLIENT_URL'),
+  })
   const { machineId } = loadOrCreateMachineKey(machineKeyFile(dataDir))
   const keys = new AccessKeys(new AccessKeyRepository(accessKeysPath(dataDir)))
-  let saved: RemoteAccessSettings | null = null
-  try {
-    saved = new RemoteAccessRepository(remoteAccessPath(dataDir)).load()
-  } catch (error) {
-    console.error(`ignoring the saved setting: ${error instanceof Error ? error.message : error}`)
-  }
-  const clientUrl = linkClientUrl(
-    { SERVER_URL: optionalEnv('SERVER_URL'), CLIENT_URL: optionalEnv('CLIENT_URL') },
-    saved,
-  )
-  return rotateAccess({ keys, machineId, clientUrl })
+  return rotateAccess({ keys, machineId, clientUrl: linkClientUrl(clientUrl) })
 }
 
 try {

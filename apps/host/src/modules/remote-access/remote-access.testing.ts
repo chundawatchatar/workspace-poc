@@ -8,15 +8,18 @@ import { localRequest } from '../../app.testing'
 import type { Principal } from '../../lib/principal'
 import { AccessKeyRepository } from '../access/access.repository'
 import { E2eSessions } from '../e2e/e2e.service'
+import { readSettingsFile } from '../settings/settings.repository'
+import { loadSettings } from '../settings/settings.service'
 import type { EnrollAnswer, EnrollRequest, TunnelClientOptions } from '../tunnel/tunnel.service'
 import type { OpenChannel } from '../tunnel/tunnel-channels.service'
+import { devAddresses, type RemoteAccessEnv, type RemoteAddresses } from './addresses.service'
 import { AuditLogRepository } from './audit-log.repository'
 import { AuditLogService } from './audit-log.service'
 import { DevicesRepository } from './devices.repository'
 import { LinkedAccountRepository } from './linked-account.repository'
 import { testRelayKey } from './relay-ticket.testing'
-import { RemoteAccessRepository, type RemoteAccessSettings } from './remote-access.repository'
-import { type RemoteAccessEnv, RemoteAccessService } from './remote-access.service'
+import { RemoteAccessRepository } from './remote-access.repository'
+import { RemoteAccessService } from './remote-access.service'
 
 // Test-only harness for the remote access service: a temp dir, a fake tunnel
 // and the service wired to them. Each test file calls
@@ -82,6 +85,7 @@ export let service: RemoteAccessService
 export let e2eSessions: E2eSessions
 
 export const settingsFile = () => join(dir, 'remote-access.json')
+export const configFile = () => join(dir, 'config.json')
 export const keysFile = () => join(dir, 'access-keys.json')
 export const machineKeyFile = () => join(dir, 'machine-key')
 export const linkedFile = () => join(dir, 'linked-account.json')
@@ -105,9 +109,35 @@ export function useRemoteAccessHarness() {
   })
 }
 
-/** Starts a service on the temp dir, with `saved` written first and `env` as the environment. */
-export function setup(saved?: RemoteAccessSettings | string, env: RemoteAccessEnv = {}) {
-  if (saved !== undefined) writeFileSync(settingsFile(), typeof saved === 'string' ? saved : JSON.stringify(saved))
+/** A setting to start with: the flag goes to `remote-access.json`, and each address that isn't null to `config.json`. */
+export interface SavedSetup {
+  enabled: boolean
+  serverUrl: string | null
+  clientUrl: string | null
+}
+
+/** The addresses the dev host would start with from the temp dir's `config.json` and `env`. */
+export function startAddresses(env: RemoteAccessEnv = {}, file = configFile()) {
+  return devAddresses(loadSettings({ flags: {}, env: {}, file: readSettingsFile(file) }), env)
+}
+
+/**
+ * Starts a service on the temp dir, with `saved` written first, or written
+ * as it is to `remote-access.json` when it is a string, and `env` as the dev
+ * host's environment. `autoEnable` is the dev host's (true) unless given, and
+ * `addresses` replaces the ones loaded from the files and `env`.
+ */
+export function setup(
+  saved?: SavedSetup | string,
+  env: RemoteAccessEnv = {},
+  options: { autoEnable?: boolean; addresses?: RemoteAddresses } = {},
+) {
+  if (typeof saved === 'string') writeFileSync(settingsFile(), saved)
+  else if (saved) {
+    writeFileSync(settingsFile(), JSON.stringify({ enabled: saved.enabled }))
+    const addresses = { relayUrl: saved.serverUrl ?? undefined, clientUrl: saved.clientUrl ?? undefined }
+    writeFileSync(configFile(), JSON.stringify(addresses))
+  }
   e2eSessions = new E2eSessions({ machineKey: () => service.signingKey() })
   service = new RemoteAccessService({
     repository: new RemoteAccessRepository(settingsFile()),
@@ -117,7 +147,9 @@ export function setup(saved?: RemoteAccessSettings | string, env: RemoteAccessEn
     e2eSessions,
     machineKeyFile: machineKeyFile(),
     keysFile: keysFile(),
-    env,
+    settingsFile: configFile(),
+    addresses: options.addresses ?? startAddresses(env),
+    autoEnable: options.autoEnable ?? true,
     handle: async () => new Response('ok'),
     openSocket: () => ({ code: 1008, reason: 'none' }),
     createTunnel: (options) => {

@@ -39,7 +39,7 @@ const notWaiting = (typed: string) =>
  * `linked` starts it linked, with two browsers waiting and one approved. `auditLog` is what its audit log
  * holds at first, and `audit.entries` later; null makes that request fail.
  */
-function setup({ linked = false, auditLog = [] as AuditLogEntry[] | null } = {}) {
+function setup({ linked = false, auditLog = [] as AuditLogEntry[] | null, address = {} } = {}) {
   const seenAt = '2026-11-04T12:05:00.000Z'
   let devices: DevicesResponse = {
     pending: [
@@ -53,12 +53,16 @@ function setup({ linked = false, auditLog = [] as AuditLogEntry[] | null } = {})
     serverUrl: 'wss://relay.example.com',
     serverUrlIsDefault: false,
     clientUrl: null,
-    serverUrlFromEnv: false,
-    clientUrlFromEnv: false,
+    serverUrlSetBy: null,
+    clientUrlSetBy: null,
+    savedServerUrl: 'wss://relay.example.com',
+    savedClientUrl: null,
+    restartNeeded: false,
     machineId: 'm-1',
     machineFingerprint: 'ABCD-EFGH-JKMN-PQRS',
     tunnel: 'connected',
     linkedAccount: linked ? linkedAccount : null,
+    ...address,
   }
   // The fake host's open sessions; a test sets them to stand for browsers connecting.
   const live = { sessions: [] as RemoteSession[] }
@@ -116,6 +120,13 @@ function setup({ linked = false, auditLog = [] as AuditLogEntry[] | null } = {})
         live.sessions = live.sessions.filter((session) => session.deviceId !== id)
         return Response.json(live)
       }
+      if (path === routes.remoteAccess.update.path) {
+        // Like the host: the address is saved for the next start, and the one in use stays.
+        const { enabled, serverUrl } = body as { enabled: boolean; serverUrl: string }
+        const saved = serverUrl || null
+        status = { ...status, enabled, savedServerUrl: saved, restartNeeded: (saved ?? '') !== status.serverUrl }
+        return Response.json(status)
+      }
       if (path === routes.remoteAccess.unlink.path) {
         status = { ...status, linkedAccount: null }
         return Response.json(status)
@@ -135,6 +146,26 @@ function setup({ linked = false, auditLog = [] as AuditLogEntry[] | null } = {})
 }
 
 describe('RemoteAccessSetting', () => {
+  test('shows the saved server address, saves an edit for the next start, and says so', async () => {
+    const user = userEvent.setup()
+    const { sent } = setup({ address: { savedServerUrl: 'wss://saved.example.com', restartNeeded: true } })
+    const field = await screen.findByRole('textbox', { name: 'Server address' })
+    await waitFor(() => expect(field).toHaveValue('wss://saved.example.com'))
+    expect(field).not.toHaveAttribute('readonly')
+    expect(screen.getByText('Saved. The host uses the new address from its next start.')).toBeInTheDocument()
+
+    await user.clear(field)
+    await user.type(field, 'wss://relay.example.com')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(screen.queryByText('Saved. The host uses the new address from its next start.')).not.toBeInTheDocument(),
+    )
+    expect(field).toHaveValue('wss://relay.example.com')
+    expect(sent).toEqual([
+      [routes.remoteAccess.update.path, { enabled: true, serverUrl: 'wss://relay.example.com', clientUrl: null }],
+    ])
+  })
+
   test('previews a key, sends link only on Link, keeps the key out of the caches, and unlinks', async () => {
     const user = userEvent.setup()
     const { sent, queryClient } = setup()

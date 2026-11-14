@@ -10,8 +10,11 @@ const status: RemoteAccessStatus = {
   serverUrl: 'wss://relay.example.com',
   serverUrlIsDefault: false,
   clientUrl: null,
-  serverUrlFromEnv: false,
-  clientUrlFromEnv: true,
+  serverUrlSetBy: null,
+  clientUrlSetBy: 'CLIENT_URL',
+  savedServerUrl: 'wss://relay.example.com',
+  savedClientUrl: null,
+  restartNeeded: false,
   machineId: 'm-1',
   machineFingerprint: 'ABCD-EFGH-JKMN-PQRS',
   tunnel: 'off',
@@ -128,9 +131,23 @@ describe('RemoteAccessForm', () => {
     // An address from the host's environment is shown but can't be edited.
     expect(screen.getByRole('textbox', { name: /Client address/ })).toHaveAttribute('readonly')
     expect(screen.getByText('Set by CLIENT_URL.')).toBeInTheDocument()
+    expect(screen.queryByText(/from its next start/)).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Copy the link' }))
     expect(await navigator.clipboard.readText()).toBe('https://app.example.com/#machine=m-1&key=k')
+  })
+
+  test('an address a flag or variable sets is read-only and names it, and a saved one waiting says so', () => {
+    for (const setBy of ['SERVER_URL', '--relay-url', 'CORCH_RELAY_URL']) {
+      const { unmount } = setup({
+        status: { ...status, serverUrlSetBy: setBy, clientUrlSetBy: null, restartNeeded: true },
+      })
+      expect(screen.getByRole('textbox', { name: /^Server address/ })).toHaveAttribute('readonly')
+      expect(screen.getByText(`Set by ${setBy}.`)).toBeInTheDocument()
+      expect(screen.getByRole('textbox', { name: /Client address/ })).not.toHaveAttribute('readonly')
+      expect(screen.getByText('Saved. The host uses the new address from its next start.')).toBeInTheDocument()
+      unmount()
+    }
   })
 
   test('while busy, nothing can be sent again', async () => {
