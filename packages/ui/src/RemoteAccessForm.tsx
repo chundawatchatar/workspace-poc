@@ -23,9 +23,9 @@ interface Props {
   /** What the status line says, such as "Connected". */
   statusLabel: string
   statusTone: RemoteAccessTone
-  /** The server address field. */
+  /** The server address field: the saved one, or the one in use when a flag or the environment sets it. */
   serverUrl: string
-  /** The client address field. Empty means links use the one derived from the server address. */
+  /** The client address field, like `serverUrl`. Empty means links use the one derived from the server address. */
   clientUrl: string
   onServerUrlChange: (value: string) => void
   onClientUrlChange: (value: string) => void
@@ -55,12 +55,16 @@ interface Props {
  * The remote access setting: the server and client addresses, an on/off
  * switch, where the tunnel stands, a button for a fresh connect link, the
  * account this machine is linked to, the browsers approved for it, and the
- * recent remote access. An address set by the host's environment is shown read-only.
+ * recent remote access. An address set by a flag or the host's environment is
+ * shown read-only. A saved address applies from the host's next start, which
+ * the form says while one waits.
  */
 export function RemoteAccessForm(props: Props) {
   const { status, link, error, busy } = props
   const [copied, setCopied] = useState(false)
   const enabled = status?.enabled ?? false
+  const serverSetBy = status?.serverUrlSetBy ?? null
+  const clientSetBy = status?.clientUrlSetBy ?? null
   const field =
     'w-full rounded-md border border-line bg-bg px-2.5 py-1.5 font-mono text-[13px] outline-none focus:border-accent read-only:text-dim'
 
@@ -124,28 +128,31 @@ export function RemoteAccessForm(props: Props) {
         <label className="block">
           <span className="mb-1 block text-xs text-dim">Server address</span>
           <input
-            autoFocus={!status?.serverUrlFromEnv}
+            autoFocus={serverSetBy === null}
             value={props.serverUrl}
             onChange={(event) => props.onServerUrlChange(event.target.value)}
-            readOnly={status?.serverUrlFromEnv}
+            readOnly={serverSetBy !== null}
             className={field}
-            placeholder="wss://relay.example.com"
+            placeholder={status?.serverUrlIsDefault ? status.serverUrl : 'wss://relay.example.com'}
             spellCheck={false}
           />
-          {status?.serverUrlFromEnv && <span className="mt-1 block text-xs text-faint">Set by SERVER_URL.</span>}
+          {serverSetBy !== null && <span className="mt-1 block text-xs text-faint">Set by {serverSetBy}.</span>}
         </label>
         <label className="block">
           <span className="mb-1 block text-xs text-dim">Client address (optional)</span>
           <input
             value={props.clientUrl}
             onChange={(event) => props.onClientUrlChange(event.target.value)}
-            readOnly={status?.clientUrlFromEnv}
+            readOnly={clientSetBy !== null}
             className={field}
             placeholder="Defaults to the server address over http(s)"
             spellCheck={false}
           />
-          {status?.clientUrlFromEnv && <span className="mt-1 block text-xs text-faint">Set by CLIENT_URL.</span>}
+          {clientSetBy !== null && <span className="mt-1 block text-xs text-faint">Set by {clientSetBy}.</span>}
         </label>
+        {status?.restartNeeded && (
+          <p className="text-xs text-warn">Saved. The host uses the new address from its next start.</p>
+        )}
 
         {status && <RemoteAccessLink {...props.accountLink} linkedAccount={status.linkedAccount} busy={busy} />}
         {status?.linkedAccount && <RemoteAccessDevices {...props.devices} busy={busy} />}

@@ -266,8 +266,11 @@ describe('tunneled sockets', () => {
       serverUrl: `ws://127.0.0.1:${server.port}`,
       serverUrlIsDefault: false,
       clientUrl: 'https://orch.example',
-      serverUrlFromEnv: false,
-      clientUrlFromEnv: false,
+      serverUrlSetBy: null,
+      clientUrlSetBy: null,
+      savedServerUrl: `ws://127.0.0.1:${server.port}`,
+      savedClientUrl: 'https://orch.example',
+      restartNeeded: false,
       machineId,
       machineFingerprint: machineFingerprint(machineId),
       tunnel: 'connected',
@@ -287,7 +290,14 @@ describe('tunneled sockets', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ enabled: false, serverUrl: `ws://127.0.0.1:${server.port}`, clientUrl: null }),
     })
-    expect(remoteAccessStatus.parse(await off.json())).toMatchObject({ enabled: false, tunnel: 'off', clientUrl: null })
+    // The cleared client address is saved for the next start; the one in use stays until then.
+    expect(remoteAccessStatus.parse(await off.json())).toMatchObject({
+      enabled: false,
+      tunnel: 'off',
+      clientUrl: 'https://orch.example',
+      savedClientUrl: null,
+      restartNeeded: true,
+    })
     expect(clients[0]?.status).toBe('off')
     expect(JSON.parse(readFileSync(settingsFile, 'utf8'))).toMatchObject({ enabled: false })
   })

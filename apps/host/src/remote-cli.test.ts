@@ -10,6 +10,7 @@ import {
   type UpdateRemoteAccessBody,
 } from '@orch/shared'
 import { accessKeysPath } from './modules/access/access.repository'
+import type { RemoteAccessEnv } from './modules/remote-access/addresses.service'
 import { fingerprintOf } from './modules/remote-access/device-proof.service'
 import { DevicesRepository, devicesPath } from './modules/remote-access/devices.repository'
 import { DevicesService } from './modules/remote-access/devices.service'
@@ -17,7 +18,7 @@ import { linkedAccountPath } from './modules/remote-access/linked-account.reposi
 import { AmbiguousDevice, LinkError, UnknownDevice } from './modules/remote-access/remote-access.errors'
 import { remoteAccessPath } from './modules/remote-access/remote-access.repository'
 import { createRemoteAccessRoutes } from './modules/remote-access/remote-access.routes'
-import { DEFAULT_SERVER_URL, type RemoteAccessEnv } from './modules/remote-access/remote-access.service'
+import { DEFAULT_SERVER_URL } from './modules/remote-access/remote-access.service'
 import { NoRemoteSessions } from './modules/remote-access/remote-access.testing'
 import { machineKeyFile } from './modules/tunnel/tunnel.repository'
 import { createTestMachineKey } from './modules/tunnel/tunnel.testing'
@@ -45,8 +46,11 @@ class FakeRemoteAccess extends NoRemoteSessions {
     serverUrl: DEFAULT_SERVER_URL,
     serverUrlIsDefault: true,
     clientUrl: 'https://app.example.com',
-    serverUrlFromEnv: false,
-    clientUrlFromEnv: false,
+    serverUrlSetBy: null,
+    clientUrlSetBy: null,
+    savedServerUrl: null,
+    savedClientUrl: 'https://app.example.com',
+    restartNeeded: false,
     machineId: machineKey.machineId,
     machineFingerprint: machineFingerprint(machineKey.machineId),
     tunnel: 'connected',
@@ -197,7 +201,7 @@ describe('host:remote with the host running', () => {
 
   test('server is refused when SERVER_URL sets the address, and on when the setting file is not valid', async () => {
     const url = runningHost()
-    host.current.serverUrlFromEnv = true
+    host.current.serverUrlSetBy = 'SERVER_URL'
     const refused = await run(url, ['server', 'wss://host'])
     expect(refused.code).toBe(1)
     expect(refused.text).toContain('SERVER_URL sets the server address; change it there')
@@ -385,8 +389,8 @@ describe('host:remote with the host stopped', () => {
     expect(existsSync(accessKeysPath(dir))).toBe(false)
 
     writeFileSync(join(dir, 'machine-key'), machineKey.pem)
-    const settings = { enabled: true, serverUrl: 'wss://host', clientUrl: null }
-    writeFileSync(join(dir, 'remote-access.json'), JSON.stringify(settings))
+    writeFileSync(join(dir, 'remote-access.json'), JSON.stringify({ enabled: true }))
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({ relayUrl: 'wss://host' }))
     writeFileSync(join(dir, 'linked-account.json'), JSON.stringify(linked))
     const saved = await run(url, ['status'])
     expect(saved.text).toContain('Server address: wss://host\n')
@@ -394,31 +398,6 @@ describe('host:remote with the host stopped', () => {
     expect(saved.text).toContain(machineKey.machineId)
     expect(saved.text).toContain(`Machine key:    ${machineFingerprint(machineKey.machineId)}\n`)
     expect(saved.text).toContain('Ada (a***@example.com)')
-  })
-
-  test('server, on and off rewrite only their field, and leave a broken file alone', async () => {
-    const url = stoppedHost()
-    expect((await run(url, ['server', ' wss://host '])).code).toBe(0)
-    expect(JSON.parse(readFileSync(join(dir, 'remote-access.json'), 'utf8'))).toEqual({
-      enabled: false,
-      serverUrl: 'wss://host',
-      clientUrl: null,
-    })
-    writeFileSync(
-      remoteAccessPath(dir),
-      JSON.stringify({ enabled: false, serverUrl: 'wss://host', clientUrl: 'https://c' }),
-    )
-    expect((await run(url, ['on'])).text).toContain('next starts')
-    expect(JSON.parse(readFileSync(remoteAccessPath(dir), 'utf8'))).toEqual({
-      enabled: true,
-      serverUrl: 'wss://host',
-      clientUrl: 'https://c',
-    })
-
-    expect((await run(url, ['server', 'https://x'])).code).toBe(1)
-    writeFileSync(remoteAccessPath(dir), '{ broken')
-    for (const args of [['on'], ['off'], ['server', 'wss://host']]) expect((await run(url, args)).code).toBe(1)
-    expect(readFileSync(remoteAccessPath(dir), 'utf8')).toBe('{ broken')
   })
 
   test('link refuses without writing, and unlink removes even a broken account file', async () => {

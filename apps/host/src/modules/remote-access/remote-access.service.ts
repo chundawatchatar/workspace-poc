@@ -14,25 +14,14 @@ import {
 } from '@orch/shared'
 import type { Principal } from '../../lib/principal'
 import { AccessKeyRepository } from '../access/access.repository'
-import {
-  AccessKeys,
-  clientUrlFromServerUrl,
-  connectLink,
-  DEFAULT_KEY_NAME,
-  parseClientUrl,
-  type RemoteAccess,
-} from '../access/access.service'
+import { AccessKeys, connectLink, DEFAULT_KEY_NAME, type RemoteAccess } from '../access/access.service'
 import type { E2eSessions } from '../e2e/e2e.service'
+import { DEFAULT_SERVER_URL } from '../settings/settings.service'
 import { loadOrCreateMachineKey, type MachineKey } from '../tunnel/tunnel.repository'
-import {
-  type EnrollAnswer,
-  type EnrollRequest,
-  parseServerUrl,
-  TunnelClient,
-  type TunnelClientOptions,
-} from '../tunnel/tunnel.service'
+import { type EnrollAnswer, type EnrollRequest, TunnelClient, type TunnelClientOptions } from '../tunnel/tunnel.service'
 import type { OpenSocket } from '../tunnel/tunnel-channels.service'
 import type { Authorization, Credentials, Refusal, TunnelHandler } from '../tunnel/tunnel-http.service'
+import { linkClientUrl, RemoteAccessAddresses, type RemoteAddresses } from './addresses.service'
 import type { AuditLogService } from './audit-log.service'
 import type { DevicesRepository } from './devices.repository'
 import { DevicesService } from './devices.service'
@@ -42,18 +31,7 @@ import type { RemoteAccessRepository, RemoteAccessSettings } from './remote-acce
 import { groupSessions } from './sessions.service'
 import { TunnelAccess } from './tunnel-access.service'
 
-/**
- * The server address used when neither `SERVER_URL` nor a saved one is set.
- * `orch.example.com` is a reserved placeholder: replace it with the real
- * server's address before launch.
- */
-export const DEFAULT_SERVER_URL = 'wss://orch.example.com'
-
-/** The environment variables that override the saved setting. Empty values count as unset. */
-export interface RemoteAccessEnv {
-  SERVER_URL?: string
-  CLIENT_URL?: string
-}
+export { DEFAULT_SERVER_URL }
 
 /** The parts of a `TunnelClient` the service drives. */
 export type Tunnel = Pick<TunnelClient, 'start' | 'stop' | 'closeChannels' | 'listChannels' | 'status' | 'enroll'>
@@ -72,8 +50,17 @@ export interface RemoteAccessServiceOptions {
   machineKeyFile: string
   /** The access keys file. */
   keysFile: string
-  env?: RemoteAccessEnv
-  /** The server address used when none is set. Defaults to `DEFAULT_SERVER_URL`; tests pass a loopback one. */
+  /** The settings file, where a changed address is saved for the next start. */
+  settingsFile: string
+  /** The addresses in use until the host restarts. */
+  addresses: RemoteAddresses
+  /**
+   * True when a relay address set by the environment turns the tunnel on at
+   * start, whatever the saved flag says: the dev host's `SERVER_URL`. A packaged
+   * host passes false.
+   */
+  autoEnable: boolean
+  /** The server address used when none is set. Defaults to `DEFAULT_SERVER_URL`. */
   defaultServerUrl?: string
   /** Answers each tunneled request. Read only once a tunnel is open, so it may close over the app built later. */
   handle: TunnelHandler
@@ -83,41 +70,9 @@ export interface RemoteAccessServiceOptions {
   createTunnel?: (options: TunnelClientOptions) => Tunnel
 }
 
-/**
- * The server address to save from what the user entered: trimmed, or null when
- * empty, which means the default. Throws `InvalidRemoteAccessSetting` for an
- * address `parseServerUrl` refuses.
- */
-export function enteredServerUrl(value: string): string | null {
-  const trimmed = value.trim()
-  if (trimmed && !parseServerUrl(trimmed)) {
-    throw new InvalidRemoteAccessSetting(
-      'The server address must be wss://<host>, or ws:// on 127.0.0.1, [::1] or localhost',
-    )
-  }
-  return trimmed || null
-}
-
 /** The name a link gives this machine: its host name, trimmed and cut to 64 characters, or `this machine`. */
 export function hostMachineName(name = hostname()): string {
   return name.trim().slice(0, 64).trim() || 'this machine'
-}
-
-/**
- * The client address connect links are built on: `CLIENT_URL` if it is valid,
- * else the saved client address, else the one derived from the server address
- * in use (`SERVER_URL`, else the saved one, else `defaultServerUrl`). Null when
- * that address is not a `ws(s)://` one.
- */
-export function linkClientUrl(
-  env: RemoteAccessEnv,
-  saved: RemoteAccessSettings | null,
-  defaultServerUrl = DEFAULT_SERVER_URL,
-): string | null {
-  const fromEnv = env.CLIENT_URL ? parseClientUrl(env.CLIENT_URL) : null
-  if (fromEnv) return fromEnv
-  if (saved?.clientUrl) return saved.clientUrl
-  return clientUrlFromServerUrl(env.SERVER_URL || saved?.serverUrl || defaultServerUrl)
 }
 
 /** The status and message each `enroll.failed` code answers with. */
@@ -129,14 +84,16 @@ const ENROLL_FAILURES = {
 
 /**
  * Owns remote access while the host runs: the saved setting, the machine
- * key, the access keys, the tunnel, the linked account and its devices. `SERVER_URL` and `CLIENT_URL`
- * override the saved addresses, and `SERVER_URL` turns the tunnel on at start
- * whatever the saved flag says. Nothing is read from disk until `start()`.
+ * key, the access keys, the tunnel, the linked account and its devices. The
+ * addresses are the ones loaded at start: a changed one is saved to the
+ * settings file for the next start, and only the on/off flag applies at once.
+ * With `autoEnable`, a relay address from the environment turns the tunnel on
+ * at start whatever the saved flag says. Nothing is read from disk until `start()`.
  */
 export class RemoteAccessService {
-  private readonly env: RemoteAccessEnv
-  private readonly defaultServerUrl: string
   private saved: RemoteAccessSettings | null = null
+  /** The addresses in use, and the ones saved for the next start. */
+  private readonly addresses: RemoteAccessAddresses
   private linked: SavedLinkedAccount | null = null
   private machineKey: MachineKey | null = null
   private keys: AccessKeys | null = null
@@ -148,8 +105,7 @@ export class RemoteAccessService {
   private readonly access: TunnelAccess
 
   constructor(private readonly options: RemoteAccessServiceOptions) {
-    this.env = { SERVER_URL: options.env?.SERVER_URL || undefined, CLIENT_URL: options.env?.CLIENT_URL || undefined }
-    this.defaultServerUrl = options.defaultServerUrl ?? DEFAULT_SERVER_URL
+    this.addresses = new RemoteAccessAddresses(options.addresses, options.settingsFile, options.defaultServerUrl)
     this.devices = new DevicesService(options.devices)
     this.access = new TunnelAccess({
       devices: this.devices,
@@ -161,37 +117,31 @@ export class RemoteAccessService {
   }
 
   /**
-   * Reads the saved setting and opens the tunnel when `SERVER_URL` is set or
-   * the setting is on. Any problem is logged and leaves the host local only;
-   * a setting file that is not valid is left as it is.
+   * Reads the saved setting and opens the tunnel when the setting is on, or
+   * when `autoEnable` is on and the environment sets the relay address. Any
+   * problem is logged and leaves the host local only; a setting file that is
+   * not valid is left as it is.
    */
   start() {
     try {
-      this.saved = this.options.repository.load()
+      const saved = this.options.repository.load()
+      this.saved = saved && { enabled: saved.enabled }
     } catch (error) {
       console.error(`remote access is off: ${error instanceof Error ? error.message : 'its setting could not be read'}`)
     }
+    this.addresses.load()
     try {
       this.linked = this.options.linkedAccounts.load()
     } catch (error) {
       console.error(`no linked account: ${error instanceof Error ? error.message : 'it could not be read'}`)
     }
     this.devices.start()
-    if (this.env.CLIENT_URL && !parseClientUrl(this.env.CLIENT_URL)) {
-      console.error('CLIENT_URL must be an http:// or https:// URL. Ignoring it')
-    }
-    if (this.env.SERVER_URL) {
-      if (!parseServerUrl(this.env.SERVER_URL)) {
-        console.error(
-          'SERVER_URL must be wss://<host>, or ws:// on 127.0.0.1, [::1] or localhost. Running without a tunnel',
-        )
-        return
-      }
-    } else if (!this.saved?.enabled) {
-      return
-    }
+    const { relayUrl } = this.addresses.inUse
+    if (!(this.autoEnabled() || this.saved?.enabled)) return
     if (!this.serverTunnelUrl()) {
-      console.error('remote access is off: the saved server address is not valid. Enter it again in the setting')
+      console.error(
+        `${relayUrl.setBy ?? 'The server address'} must be wss://<host>, or ws:// on 127.0.0.1, [::1] or localhost. Running without a tunnel`,
+      )
       return
     }
     const keys = this.loadKeys()
@@ -210,11 +160,7 @@ export class RemoteAccessService {
     const machineId = this.machineId()
     return {
       enabled: this.tunnel !== null,
-      serverUrl: this.serverUrl(),
-      serverUrlIsDefault: this.serverUrlIsDefault(),
-      clientUrl: this.env.CLIENT_URL ?? this.saved?.clientUrl ?? null,
-      serverUrlFromEnv: this.env.SERVER_URL !== undefined,
-      clientUrlFromEnv: this.env.CLIENT_URL !== undefined,
+      ...this.addresses.status(),
       machineId,
       machineFingerprint: machineId === null ? null : machineFingerprint(machineId),
       tunnel: this.tunnel?.status ?? 'off',
@@ -228,16 +174,17 @@ export class RemoteAccessService {
   }
 
   /**
-   * Saves the setting, then opens, moves or closes the tunnel to match. An
-   * address set by `SERVER_URL` or `CLIENT_URL` keeps the saved one as it was.
-   * Throws `InvalidRemoteAccessSetting` for an address the host refuses, before
-   * anything is saved or the tunnel changes.
+   * Saves the addresses to the settings file for the next start, and the flag,
+   * then opens or closes the tunnel to match; an open tunnel keeps the address
+   * it has. An address set by a flag or the environment keeps the saved one as
+   * it was. Throws `InvalidRemoteAccessSetting` for an address the host
+   * refuses, before anything is saved or the tunnel changes.
    */
   update(input: UpdateRemoteAccessBody): RemoteAccessStatus {
-    const next = this.validate(input)
-    this.options.repository.save(next)
-    this.saved = next
-    if (next.enabled) this.connect()
+    this.addresses.save(input)
+    this.options.repository.save({ enabled: input.enabled })
+    this.saved = { enabled: input.enabled }
+    if (input.enabled) this.connect()
     else this.disconnect({ remoteOff: true })
     return this.status()
   }
@@ -253,7 +200,7 @@ export class RemoteAccessService {
       throw new LinkError(502, 'The server sent an answer the host does not expect')
     return {
       serverUrl: this.serverUrl(),
-      serverUrlIsDefault: this.serverUrlIsDefault(),
+      serverUrlIsDefault: this.addresses.isDefault(),
       account: answer.account,
       fingerprint: answer.fingerprint,
       expiresAt: answer.expiresAt,
@@ -397,7 +344,7 @@ export class RemoteAccessService {
     const keys = this.loadKeys()
     const machineId = this.machineId()
     if (!keys || !machineId) return null
-    return { keys, machineId, clientUrl: linkClientUrl(this.env, this.saved, this.defaultServerUrl) }
+    return { keys, machineId, clientUrl: linkClientUrl(this.addresses.inUse.clientUrl) }
   }
 
   /** Closes the tunnel and writes pending key use, for shutdown. */
@@ -406,25 +353,9 @@ export class RemoteAccessService {
     this.keys?.flush()
   }
 
-  private validate({ enabled, serverUrl, clientUrl }: UpdateRemoteAccessBody): RemoteAccessSettings {
-    let savedServer = this.saved?.serverUrl ?? null
-    if (this.env.SERVER_URL) {
-      if (enabled && !parseServerUrl(this.env.SERVER_URL)) {
-        throw new InvalidRemoteAccessSetting('SERVER_URL is not a valid server address. Fix it and restart the host')
-      }
-    } else {
-      savedServer = enteredServerUrl(serverUrl)
-    }
-    let savedClient = this.saved?.clientUrl ?? null
-    if (!this.env.CLIENT_URL) {
-      const trimmed = clientUrl?.trim() ?? ''
-      const parsed = trimmed ? parseClientUrl(trimmed) : null
-      if (trimmed && !parsed) {
-        throw new InvalidRemoteAccessSetting('The client address must be an http:// or https:// URL')
-      }
-      savedClient = parsed
-    }
-    return { enabled, serverUrl: savedServer, clientUrl: savedClient }
+  /** True when the environment sets the relay address and `autoEnable` lets it turn the tunnel on. */
+  private autoEnabled(): boolean {
+    return this.options.autoEnable && this.addresses.inUse.relayUrl.source === 'env'
   }
 
   /** Opens the tunnel to the server address in use, unless one to it is already open. Throws when it cannot. */
@@ -479,7 +410,7 @@ export class RemoteAccessService {
     } catch (error) {
       throw new Error(`the access key could not be saved (${error instanceof Error ? error.message : error})`)
     }
-    const clientUrl = linkClientUrl(this.env, this.saved, this.defaultServerUrl)
+    const clientUrl = linkClientUrl(this.addresses.inUse.clientUrl)
     const target = clientUrl
       ? `Connect link: ${connectLink(clientUrl, machineId, key)}`
       : `Machine id: ${machineId}\nAccess key: ${key}`
@@ -566,18 +497,12 @@ export class RemoteAccessService {
     return answer
   }
 
-  /** The server address in use: `SERVER_URL`, else the saved one, else the default. */
+  /** The server address in use, as loaded at start. */
   private serverUrl(): string {
-    return this.env.SERVER_URL ?? this.saved?.serverUrl ?? this.defaultServerUrl
-  }
-
-  /** True when the address in use is the default's, compared as tunnel URLs. */
-  private serverUrlIsDefault(): boolean {
-    const inUse = this.serverTunnelUrl()
-    return inUse !== null && inUse === parseServerUrl(this.defaultServerUrl)
+    return this.addresses.inUse.relayUrl.value
   }
 
   private serverTunnelUrl(): string | null {
-    return parseServerUrl(this.serverUrl())
+    return this.addresses.tunnelUrl()
   }
 }

@@ -56,8 +56,9 @@ export function RemoteAccessSetting() {
   const [linking, setLinking] = useState(false)
 
   const data = status.data
-  const shownServer = data?.serverUrlFromEnv ? (data.serverUrl ?? '') : (serverUrl ?? data?.serverUrl ?? '')
-  const shownClient = data?.clientUrlFromEnv ? (data.clientUrl ?? '') : (clientUrl ?? data?.clientUrl ?? '')
+  // An address a flag or the environment sets shows the one in use; any other shows what is saved for the next start.
+  const shownServer = data?.serverUrlSetBy ? data.serverUrl : (serverUrl ?? data?.savedServerUrl ?? '')
+  const shownClient = data?.clientUrlSetBy ? (data.clientUrl ?? '') : (clientUrl ?? data?.savedClientUrl ?? '')
 
   async function save(enabled: boolean) {
     setError(null)

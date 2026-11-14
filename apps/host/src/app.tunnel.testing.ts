@@ -40,6 +40,7 @@ import { LinkedAccountRepository } from './modules/remote-access/linked-account.
 import { testRelayKey } from './modules/remote-access/relay-ticket.testing'
 import { RemoteAccessRepository } from './modules/remote-access/remote-access.repository'
 import { RemoteAccessService } from './modules/remote-access/remote-access.service'
+import { startAddresses } from './modules/remote-access/remote-access.testing'
 import { TunnelClient } from './modules/tunnel/tunnel.service'
 import {
   createTestMachineKey,
@@ -191,9 +192,11 @@ async function setUp() {
   const approved = [{ id: device.id, publicKey: device.publicKey, approvedAt: new Date().toISOString() }]
   new DevicesRepository(join(dir, 'devices.json')).save(approved)
   key = new AccessKeys(new AccessKeyRepository(keysFile)).create('default')
+  writeFileSync(settingsFile, JSON.stringify({ enabled: true }))
+  const configFile = join(dir, 'config.json')
   writeFileSync(
-    settingsFile,
-    JSON.stringify({ enabled: true, serverUrl: `ws://127.0.0.1:${server.port}`, clientUrl: 'https://orch.example' }),
+    configFile,
+    JSON.stringify({ relayUrl: `ws://127.0.0.1:${server.port}`, clientUrl: 'https://orch.example' }),
   )
   e2eSessions = new E2eSessions({ machineKey: () => remoteAccess.signingKey() })
   remoteAccess = new RemoteAccessService({
@@ -204,6 +207,9 @@ async function setUp() {
     e2eSessions,
     machineKeyFile,
     keysFile,
+    settingsFile: configFile,
+    addresses: startAddresses({}, configFile),
+    autoEnable: true,
     handle: async (request, principal) => app.fetch(request, tunnelEnv(principal)),
     openSocket: (path, headers, conn, principal) => sockets.open(path, headers, conn, principal),
     createTunnel: (options) => {

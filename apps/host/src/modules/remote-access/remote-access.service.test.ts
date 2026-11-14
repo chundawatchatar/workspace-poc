@@ -3,13 +3,16 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { machineFingerprint, type RotateAccessResponse, routes, startBrowserHandshake } from '@orch/shared'
 import { localRequest } from '../../app.testing'
 import type { Principal } from '../../lib/principal'
+import { loadSettings } from '../settings/settings.service'
+import { devAddresses, linkClientUrl } from './addresses.service'
 import { fingerprintOf } from './device-proof.service'
 import { testDevice } from './device-proof.testing'
 import { DevicesRepository } from './devices.repository'
-import { DEFAULT_SERVER_URL, hostMachineName, linkClientUrl } from './remote-access.service'
+import { DEFAULT_SERVER_URL, hostMachineName } from './remote-access.service'
 import {
   account,
   accountId,
+  configFile,
   connected,
   devicesFile,
   dir,
@@ -43,7 +46,7 @@ describe('RemoteAccessService', () => {
     const printed = `Connect link: http://127.0.0.1:4600/#machine=${machineId}&key=`
     const link = logs.find((line) => line.includes(printed))
     expect(link).toEndWith(`&fp=${machineFingerprint(String(machineId))}`)
-    expect(service.status()).toMatchObject({ enabled: true, serverUrlFromEnv: false, tunnel: 'connecting' })
+    expect(service.status()).toMatchObject({ enabled: true, serverUrlSetBy: null, tunnel: 'connecting' })
   })
 
   test('SERVER_URL and CLIENT_URL override the saved addresses, and SERVER_URL turns the tunnel on', () => {
@@ -55,18 +58,41 @@ describe('RemoteAccessService', () => {
       enabled: true,
       serverUrl: 'wss://relay.example.com',
       clientUrl: 'https://env.example/',
-      serverUrlFromEnv: true,
-      clientUrlFromEnv: true,
+      serverUrlSetBy: 'SERVER_URL',
+      clientUrlSetBy: 'CLIENT_URL',
+      savedServerUrl: 'ws://127.0.0.1:4600',
+      savedClientUrl: 'https://saved.example',
+      restartNeeded: false,
     })
     expect(service.current()?.clientUrl).toBe('https://env.example')
 
     // The link falls back from `CLIENT_URL` to the saved client address, then to the server address in use.
-    expect(linkClientUrl({}, saved)).toBe('https://saved.example')
-    expect(linkClientUrl({}, { ...saved, clientUrl: null })).toBe('http://127.0.0.1:4600')
-    expect(linkClientUrl({ SERVER_URL: 'wss://relay.example.com' }, { ...saved, clientUrl: null })).toBe(
+    const link = (file: unknown, env: Record<string, string> = {}) =>
+      linkClientUrl(devAddresses(loadSettings({ flags: {}, env: {}, file }), env, () => {}).clientUrl)
+    expect(link({ relayUrl: 'ws://127.0.0.1:4600', clientUrl: 'https://saved.example' })).toBe('https://saved.example')
+    expect(link({ relayUrl: 'ws://127.0.0.1:4600' }, { CLIENT_URL: 'ftp://nope' })).toBe('http://127.0.0.1:4600')
+    expect(link({ relayUrl: 'ws://127.0.0.1:4600' }, { SERVER_URL: 'wss://relay.example.com' })).toBe(
       'https://relay.example.com',
     )
-    expect(linkClientUrl({}, null)).toBe('https://orch.example.com')
+    expect(link(null)).toBe('https://orch.example.com')
+  })
+
+  test('a relay address opens a tunnel by itself only with autoEnable, from the dev host SERVER_URL', () => {
+    const fromFlag = loadSettings({ flags: { '--relay-url': 'ws://127.0.0.1:4600' }, env: {}, file: null })
+    const fromEnv = loadSettings({ flags: {}, env: { CORCH_RELAY_URL: 'ws://127.0.0.1:4600' }, file: null })
+    const off = { enabled: false, serverUrl: 'ws://127.0.0.1:4600', clientUrl: null }
+    for (const addresses of [fromFlag, fromEnv, undefined]) {
+      setup(off, {}, { autoEnable: false, addresses })
+      expect(service.status()).toMatchObject({ enabled: false, serverUrl: 'ws://127.0.0.1:4600', tunnel: 'off' })
+      service.shutdown()
+    }
+    setup(off, { SERVER_URL: 'wss://relay.example.com' }, { autoEnable: false })
+    expect(service.status()).toMatchObject({ enabled: false, serverUrlSetBy: 'SERVER_URL' })
+    expect(tunnels).toHaveLength(0)
+    service.shutdown()
+
+    setup(off, { SERVER_URL: 'wss://relay.example.com' })
+    expect(tunnels.map((t) => t.options.url)).toEqual(['wss://relay.example.com/tunnel'])
   })
 
   test('a missing or invalid setting file leaves remote access off, and an invalid one is logged and kept', async () => {
@@ -96,33 +122,46 @@ describe('RemoteAccessService', () => {
     expect(existsSync(machineKeyFile())).toBe(false)
   })
 
-  test('update saves the setting and opens, keeps, moves or closes the tunnel to match', () => {
-    setup()
+  test('update saves addresses to config.json for the next start and applies only the flag at once', () => {
+    setup({ enabled: false, serverUrl: 'ws://127.0.0.1:4600', clientUrl: null })
+    // Written while the host runs: update rereads the file, so this key survives.
+    writeFileSync(configFile(), JSON.stringify({ relayUrl: 'ws://127.0.0.1:4600', logLevel: 'debug' }))
     service.update({ enabled: true, serverUrl: 'ws://127.0.0.1:4600', clientUrl: null })
-    expect(JSON.parse(readFileSync(settingsFile(), 'utf8'))).toEqual({
+    expect(JSON.parse(readFileSync(settingsFile(), 'utf8'))).toEqual({ enabled: true })
+    expect(tunnels.map((t) => [t.options.url, t.status])).toEqual([['ws://127.0.0.1:4600/tunnel', 'connecting']])
+
+    const moved = service.update({ enabled: true, serverUrl: 'ws://localhost:4700', clientUrl: 'https://orch.example' })
+    expect(JSON.parse(readFileSync(configFile(), 'utf8'))).toEqual({
+      relayUrl: 'ws://localhost:4700',
+      logLevel: 'debug',
+      clientUrl: 'https://orch.example',
+    })
+    expect(JSON.parse(readFileSync(settingsFile(), 'utf8'))).toEqual({ enabled: true })
+    expect(readdirSync(dir).filter((name) => name.endsWith('.tmp'))).toEqual([])
+    expect(tunnels.map((t) => [t.options.url, t.status])).toEqual([['ws://127.0.0.1:4600/tunnel', 'connecting']])
+    expect(moved).toMatchObject({
       enabled: true,
       serverUrl: 'ws://127.0.0.1:4600',
-      clientUrl: null,
+      savedServerUrl: 'ws://localhost:4700',
+      savedClientUrl: 'https://orch.example',
+      restartNeeded: true,
     })
-    expect(tunnels).toHaveLength(1)
 
-    service.update({ enabled: true, serverUrl: 'ws://127.0.0.1:4600', clientUrl: 'https://orch.example' })
-    expect(tunnels).toHaveLength(1)
-
-    const moved = service.update({ enabled: true, serverUrl: 'ws://localhost:4700', clientUrl: null })
-    expect(tunnels.map((t) => [t.options.url, t.status])).toEqual([
-      ['ws://127.0.0.1:4600/tunnel', 'off'],
-      ['ws://localhost:4700/tunnel', 'connecting'],
-    ])
-    expect(moved).toMatchObject({ enabled: true, serverUrl: 'ws://localhost:4700', tunnel: 'connecting' })
-
-    const off = service.update({ enabled: false, serverUrl: 'ws://localhost:4700', clientUrl: null })
-    expect(tunnels[1]?.status).toBe('off')
+    const off = service.update({ enabled: false, serverUrl: 'ws://localhost:4700', clientUrl: 'https://orch.example' })
     expect(off).toMatchObject({ enabled: false, tunnel: 'off' })
-    expect(JSON.parse(readFileSync(settingsFile(), 'utf8'))).toMatchObject({ enabled: false })
+    expect(JSON.parse(readFileSync(settingsFile(), 'utf8'))).toEqual({ enabled: false })
+    // Only turning it off tells the server so.
+    expect(tunnels.map((t) => t.stops)).toEqual([[{ remoteOff: true }]])
+    service.shutdown()
 
-    // Only turning it off tells the server so; moving to another address does not.
-    expect(tunnels.map((t) => t.stops)).toEqual([[undefined], [{ remoteOff: true }]])
+    setup()
+    expect(service.status()).toMatchObject({
+      enabled: false,
+      serverUrl: 'ws://localhost:4700',
+      clientUrl: 'https://orch.example',
+      savedServerUrl: 'ws://localhost:4700',
+      restartNeeded: false,
+    })
   })
 
   test('shutdown stops the tunnel without telling the server remote access is off', () => {
@@ -134,7 +173,7 @@ describe('RemoteAccessService', () => {
   test('an address the host refuses gets a 400, and nothing is saved or changed', async () => {
     const saved = { enabled: true, serverUrl: 'ws://127.0.0.1:4600', clientUrl: null }
     const app = setup(saved)
-    const before = readFileSync(settingsFile(), 'utf8')
+    const before = [readFileSync(settingsFile(), 'utf8'), readFileSync(configFile(), 'utf8')]
     for (const body of [
       { enabled: true, serverUrl: 'ws://example.com', clientUrl: null },
       { enabled: true, serverUrl: 'https://x', clientUrl: null },
@@ -147,19 +186,19 @@ describe('RemoteAccessService', () => {
       })
       expect(response.status).toBe(400)
     }
-    expect(readFileSync(settingsFile(), 'utf8')).toBe(before)
+    expect([readFileSync(settingsFile(), 'utf8'), readFileSync(configFile(), 'utf8')]).toEqual(before)
     expect(tunnels.map((t) => t.status)).toEqual(['connecting'])
   })
 
-  test('rotate follows the setting: a link on the default, then on the saved or derived client address', async () => {
-    const app = setup()
-    const rotate = () => localRequest(app, routes.access.rotate.path, { method: 'POST' })
-    const fallback = (await (await rotate()).json()) as RotateAccessResponse
+  test('rotate follows the addresses in use: a link on the default, then on the saved or derived client address', async () => {
+    const rotate = (app: ReturnType<typeof setup>) => localRequest(app, routes.access.rotate.path, { method: 'POST' })
+    const fallback = (await (await rotate(setup())).json()) as RotateAccessResponse
     expect(fallback.link).toStartWith('https://orch.example.com/#machine=')
+    service.shutdown()
 
-    service.update({ enabled: true, serverUrl: 'ws://127.0.0.1:4600', clientUrl: null })
+    const onLoopback = setup({ enabled: true, serverUrl: 'ws://127.0.0.1:4600', clientUrl: null })
     const revoked = storedKeys().map((k) => k.id)
-    const derived = (await (await rotate()).json()) as RotateAccessResponse
+    const derived = (await (await rotate(onLoopback)).json()) as RotateAccessResponse
     expect(derived.link).toBe(
       `http://127.0.0.1:4600/#machine=${derived.machineId}&key=${derived.key}&fp=${machineFingerprint(derived.machineId)}`,
     )
@@ -170,9 +209,10 @@ describe('RemoteAccessService', () => {
     )
     // Account sockets stay open across a rotation.
     expect(closed?.revoked({ kind: 'account', accountId, deviceId: 'd1', ticketExp: 0 })).toBe(false)
+    service.shutdown()
 
-    service.update({ enabled: true, serverUrl: 'ws://127.0.0.1:4600', clientUrl: 'https://orch.example' })
-    const saved = (await (await rotate()).json()) as RotateAccessResponse
+    const withClient = setup({ enabled: true, serverUrl: 'ws://127.0.0.1:4600', clientUrl: 'https://orch.example' })
+    const saved = (await (await rotate(withClient)).json()) as RotateAccessResponse
     expect(saved.link).toBe(
       `https://orch.example/#machine=${saved.machineId}&key=${saved.key}&fp=${machineFingerprint(saved.machineId)}`,
     )
@@ -182,14 +222,22 @@ describe('RemoteAccessService', () => {
     setup()
     service.update({ enabled: true, serverUrl: '', clientUrl: null })
     expect(tunnels.map((t) => t.options.url)).toEqual(['wss://orch.example.com/tunnel'])
-    expect(service.status()).toMatchObject({ serverUrl: DEFAULT_SERVER_URL, serverUrlIsDefault: true })
+    expect(service.status()).toMatchObject({
+      serverUrl: DEFAULT_SERVER_URL,
+      serverUrlIsDefault: true,
+      restartNeeded: false,
+    })
 
+    // The default with a trailing slash is still the default, so nothing waits for a restart.
     service.update({ enabled: true, serverUrl: 'wss://orch.example.com/', clientUrl: null })
-    expect(service.status().serverUrlIsDefault).toBe(true)
+    expect(service.status()).toMatchObject({ savedServerUrl: 'wss://orch.example.com/', restartNeeded: false })
     service.update({ enabled: true, serverUrl: 'ws://127.0.0.1:4600', clientUrl: null })
-    expect(service.status()).toMatchObject({ serverUrl: 'ws://127.0.0.1:4600', serverUrlIsDefault: false })
+    expect(service.status()).toMatchObject({ serverUrl: DEFAULT_SERVER_URL, restartNeeded: true })
     service.shutdown()
 
+    setup()
+    expect(service.status()).toMatchObject({ serverUrl: 'ws://127.0.0.1:4600', serverUrlIsDefault: false })
+    service.shutdown()
     setup(undefined, { SERVER_URL: 'wss://relay.example.com' })
     expect(service.status()).toMatchObject({ serverUrl: 'wss://relay.example.com', serverUrlIsDefault: false })
   })

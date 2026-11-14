@@ -19,18 +19,24 @@ export const linkedAccount = linkAccount.extend({ serverUrl: z.string(), linkedA
 export type LinkedAccount = z.infer<typeof linkedAccount>
 
 export const remoteAccessStatus = z.object({
-  /** True while remote access is on, whether the setting or `SERVER_URL` turned it on. */
+  /** True while remote access is on, whether the setting or the dev host's `SERVER_URL` turned it on. */
   enabled: z.boolean(),
-  /** The server address in use: `SERVER_URL`, else the saved one, else the built-in default. */
+  /** The server address in use since the host started: a flag or the environment, else the saved one, else the default. */
   serverUrl: z.string(),
   /** True when the server address in use is the built-in default. */
   serverUrlIsDefault: z.boolean(),
-  /** The client address for connect links: `CLIENT_URL`, else the saved one. Null means it is derived from `serverUrl`. */
+  /** The client address for connect links in use. Null means it is derived from `serverUrl`. */
   clientUrl: z.string().nullable(),
-  /** True when `SERVER_URL` sets the server address, so the saved one is not used. */
-  serverUrlFromEnv: z.boolean(),
-  /** True when `CLIENT_URL` sets the client address, so the saved one is not used. */
-  clientUrlFromEnv: z.boolean(),
+  /** The flag or environment variable that sets the server address, such as `SERVER_URL`. Null means none does. */
+  serverUrlSetBy: z.string().nullable(),
+  /** The flag or environment variable that sets the client address, such as `CLIENT_URL`. Null means none does. */
+  clientUrlSetBy: z.string().nullable(),
+  /** The server address saved in the host's settings file. Null means none is saved, so the default is used. */
+  savedServerUrl: z.string().nullable(),
+  /** The client address saved in the host's settings file. Null means none is saved, so it is derived. */
+  savedClientUrl: z.string().nullable(),
+  /** True when a saved address that nothing overrides differs from the one in use, so it applies from the host's next start. */
+  restartNeeded: z.boolean(),
   /** The id the server knows this machine by. Null until a machine key exists. */
   machineId: z.string().nullable(),
   /** `machineFingerprint(machineId)`, which the owner compares with the one the client shows. Null exactly when `machineId` is. */

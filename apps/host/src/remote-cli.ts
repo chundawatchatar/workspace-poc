@@ -12,17 +12,26 @@ import {
   type RemoteAccessStatus,
   routes,
 } from '@orch/shared'
+import {
+  devAddresses,
+  enteredServerUrl,
+  type RemoteAccessEnv,
+  type RemoteAddresses,
+} from './modules/remote-access/addresses.service'
 import { LinkedAccountRepository, linkedAccountPath } from './modules/remote-access/linked-account.repository'
 import {
   RemoteAccessRepository,
-  type RemoteAccessSettings,
   remoteAccessPath,
+  type StoredRemoteAccess,
 } from './modules/remote-access/remote-access.repository'
+import { DEFAULT_SERVER_URL } from './modules/remote-access/remote-access.service'
 import {
-  DEFAULT_SERVER_URL,
-  enteredServerUrl,
-  type RemoteAccessEnv,
-} from './modules/remote-access/remote-access.service'
+  migrateRemoteAccessAddresses,
+  readSettingsFile,
+  saveAddresses,
+  settingsPath,
+} from './modules/settings/settings.repository'
+import { loadSettings, SETTINGS_DEFAULTS } from './modules/settings/settings.service'
 import { loadOrCreateMachineKey, machineKeyFile } from './modules/tunnel/tunnel.repository'
 import { parseServerUrl } from './modules/tunnel/tunnel.service'
 import {
@@ -41,6 +50,7 @@ import { parseSessionsArgs, type SessionsCommand, sessionsFromFile, sessionsThro
 // running host is the one owner of the setting, so every command goes through
 // its local-only endpoints; only a host that refuses the connection is treated
 // as stopped, and then the files in the data folder are read and written directly.
+// Either way an address changes from the host's next start.
 
 /** A running host's answer: the parsed output, or the status and message of a refusal. */
 export type HostAnswer<E extends Endpoint> =
@@ -207,22 +217,21 @@ async function running(command: Command, current: RemoteAccessStatus, deps: Remo
   }
 }
 
-/** Sends one `update` that changes only what `command` names, keeping the rest of `current`. */
+/** Sends one `update` that changes only what `command` names, keeping the rest of what is saved. */
 async function updateThroughHost(command: SettingCommand, current: RemoteAccessStatus, deps: RemoteCliDeps) {
-  if (command.name === 'server' && current.serverUrlFromEnv) {
-    deps.err('SERVER_URL sets the server address; change it there')
+  if (command.name === 'server' && current.serverUrlSetBy) {
+    deps.err(`${printable(current.serverUrlSetBy)} sets the server address; change it there`)
     return 1
   }
   // The host would overwrite a setting file it could not read, so the CLI refuses first.
   if (readSettings(deps) === false) return 1
-  const keptServer = current.serverUrlIsDefault ? '' : current.serverUrl
   const answer = await deps.callHost(routes.remoteAccess.update, {
     enabled: command.name === 'server' ? current.enabled : command.name === 'on',
-    serverUrl: command.name === 'server' ? command.url : keptServer,
-    clientUrl: current.clientUrl,
+    serverUrl: command.name === 'server' ? command.url : (current.savedServerUrl ?? ''),
+    clientUrl: current.savedClientUrl,
   })
   if (!answer?.ok) return refused(answer, deps.err)
-  if (command.name === 'server') deps.out(`Server address set to ${printable(answer.data.serverUrl)}.`)
+  if (command.name === 'server') deps.out(serverSavedLine(answer.data.savedServerUrl))
   deps.out(remoteAccessLine(answer.data.enabled, answer.data.tunnel))
   if (command.name === 'on') deps.out('A newly created connect link is printed in the host log, not here.')
   return 0
@@ -281,9 +290,15 @@ function stopped(command: Command, deps: RemoteCliDeps): number {
   }
 }
 
-/** Prints `status` from the files, as the host would show it at its next start with this shell's `SERVER_URL`. */
+/**
+ * Prints `status` from the files, as the host would show it at its next start
+ * with this shell's `SERVER_URL` and `CLIENT_URL`, after migrating a folder
+ * from before the settings file.
+ */
 function statusFromFiles(deps: RemoteCliDeps): number {
-  const serverFromEnv = deps.env.SERVER_URL || undefined
+  const addresses = addressesFromFiles(deps)
+  if (!addresses) return 1
+  const { relayUrl, clientUrl } = addresses
   const settings = readSettings(deps)
   let account: LinkedAccount | null | undefined
   try {
@@ -292,14 +307,16 @@ function statusFromFiles(deps: RemoteCliDeps): number {
     deps.err(messageOf(error))
   }
   const saved = settings || null
-  const serverUrl = serverFromEnv ?? saved?.serverUrl ?? DEFAULT_SERVER_URL
   const machineId = readMachineId(deps)
   printStatus(
     {
-      serverUrl,
-      serverUrlIsDefault: isDefaultServer(serverUrl),
-      serverUrlFromEnv: serverFromEnv !== undefined,
-      enabled: settings === false ? null : Boolean(serverFromEnv) || Boolean(saved?.enabled),
+      serverUrl: relayUrl.value,
+      serverUrlIsDefault: isDefaultServer(relayUrl.value),
+      serverUrlSetBy: relayUrl.setBy,
+      clientUrl: clientUrl.source === 'derived' ? null : clientUrl.value,
+      clientUrlSetBy: clientUrl.setBy,
+      restartNeeded: false,
+      enabled: settings === false ? null : relayUrl.setBy === 'SERVER_URL' || Boolean(saved?.enabled),
       tunnel: 'host not running',
       machineId,
       machineFingerprint: machineId === null ? null : machineFingerprint(machineId),
@@ -311,21 +328,28 @@ function statusFromFiles(deps: RemoteCliDeps): number {
   return settings === false || account === undefined || !devicesRead ? 1 : 0
 }
 
-/** Rewrites only the field `command` names in `remote-access.json`. A missing file counts as off with no addresses. */
+/**
+ * Saves what `command` names for the host's next start: the server address in
+ * the settings file, keeping its other keys, or the flag in `remote-access.json`.
+ * A missing `remote-access.json` counts as off. Folders from before the
+ * settings file are migrated first.
+ */
 function saveSetting(command: SettingCommand, deps: RemoteCliDeps): number {
-  const settings = readSettings(deps)
-  if (settings === false) return 1
-  const saved = settings ?? { enabled: false, serverUrl: null, clientUrl: null }
-  const next: RemoteAccessSettings =
-    command.name === 'server'
-      ? { ...saved, serverUrl: enteredServerUrl(command.url) }
-      : { ...saved, enabled: command.name === 'on' }
-  new RemoteAccessRepository(remoteAccessPath(deps.dataDir)).save(next)
-  deps.out(
-    command.name === 'server'
-      ? `Server address saved: ${printable(next.serverUrl ?? '')}. The host uses it from its next start.`
-      : `Remote access turned ${command.name}. The change applies when the host next starts.`,
-  )
+  if (!migrate(deps)) return 1
+  if (command.name === 'server') {
+    const relayUrl = enteredServerUrl(command.url)
+    try {
+      saveAddresses(settingsPath(deps.dataDir), { relayUrl })
+    } catch (error) {
+      deps.err(messageOf(error))
+      return 1
+    }
+    deps.out(serverSavedLine(relayUrl))
+  } else {
+    if (readSettings(deps) === false) return 1
+    new RemoteAccessRepository(remoteAccessPath(deps.dataDir)).save({ enabled: command.name === 'on' })
+    deps.out(`Remote access turned ${command.name}. The change applies when the host next starts.`)
+  }
   if (deps.env.SERVER_URL && command.name !== 'on') {
     deps.out('SERVER_URL is set in this shell: a host started with it uses that address and turns remote access on.')
   }
@@ -336,7 +360,13 @@ function saveSetting(command: SettingCommand, deps: RemoteCliDeps): number {
 interface StatusView {
   serverUrl: string
   serverUrlIsDefault: boolean
-  serverUrlFromEnv: boolean
+  /** The flag or environment variable that sets the server address. Null means none does. */
+  serverUrlSetBy: string | null
+  /** The client address in use. Null means it is derived from the server address. */
+  clientUrl: string | null
+  clientUrlSetBy: string | null
+  /** True when a saved address applies only from the host's next start. */
+  restartNeeded: boolean
   /** Null when the setting file could not be read. */
   enabled: boolean | null
   tunnel: string
@@ -348,8 +378,12 @@ interface StatusView {
 }
 
 function printStatus(view: StatusView, out: (line: string) => void) {
-  const marks = [view.serverUrlIsDefault && '(default)', view.serverUrlFromEnv && '(from SERVER_URL)'].filter(Boolean)
+  const from = (setBy: string | null) => setBy !== null && `(from ${printable(setBy)})`
+  const marks = [view.serverUrlIsDefault && '(default)', from(view.serverUrlSetBy)].filter(Boolean)
   out(`Server address: ${[printable(view.serverUrl), ...marks].join(' ')}`)
+  const client = view.clientUrl === null ? 'derived from the server address' : printable(view.clientUrl)
+  out(`Client address: ${[client, from(view.clientUrlSetBy)].filter(Boolean).join(' ')}`)
+  if (view.restartNeeded) out('Saved address:  changed. The host uses the saved addresses from its next start.')
   out(view.enabled === null ? 'Remote access:  setting not readable' : remoteAccessLine(view.enabled, view.tunnel))
   out(`Machine id:     ${view.machineId === null ? 'none yet' : printable(view.machineId)}`)
   out(`Machine key:    ${view.machineFingerprint === null ? 'none yet' : printable(view.machineFingerprint)}`)
@@ -376,8 +410,42 @@ function printPreview(preview: PreviewLinkResponse, out: (line: string) => void)
   out(`Fingerprint: ${printable(preview.fingerprint)} (the same 4 characters must show in the client)`)
 }
 
+/** What `server` prints once the address is saved. Null means none is saved, so the default is used. */
+function serverSavedLine(saved: string | null): string {
+  const address = saved === null ? 'the default' : printable(saved)
+  return `Server address saved: ${address}. The host uses it from its next start.`
+}
+
+/** Migrates a folder from before the settings file. False after printing why it could not. */
+function migrate(deps: RemoteCliDeps): boolean {
+  try {
+    migrateRemoteAccessAddresses(deps.dataDir)
+    return true
+  } catch (error) {
+    deps.err(messageOf(error))
+    return false
+  }
+}
+
+/**
+ * The addresses a host started now would use, from the settings file and this
+ * shell's `SERVER_URL` and `CLIENT_URL`, after migrating. Null after printing
+ * why the files could not be read.
+ */
+function addressesFromFiles(deps: RemoteCliDeps): RemoteAddresses | null {
+  if (!migrate(deps)) return null
+  try {
+    const file = readSettingsFile(settingsPath(deps.dataDir))
+    const settings = loadSettings({ flags: {}, env: {}, file, defaults: SETTINGS_DEFAULTS })
+    return devAddresses(settings, deps.env, deps.err)
+  } catch (error) {
+    deps.err(messageOf(error))
+    return null
+  }
+}
+
 /** The saved setting, null when none is saved, or false after printing why the file is not valid. */
-function readSettings(deps: RemoteCliDeps): RemoteAccessSettings | null | false {
+function readSettings(deps: RemoteCliDeps): StoredRemoteAccess | null | false {
   try {
     return new RemoteAccessRepository(remoteAccessPath(deps.dataDir)).load()
   } catch (error) {

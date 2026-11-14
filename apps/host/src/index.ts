@@ -14,12 +14,15 @@ import { AgentTrackingService } from './modules/agent-tracking/agent-tracking.se
 import { E2eSessions } from './modules/e2e/e2e.service'
 import { EventHub } from './modules/events/events.service'
 import { dataFile, LayoutRepository } from './modules/layout/layout.repository'
+import { devAddresses } from './modules/remote-access/addresses.service'
 import { AuditLogRepository, auditLogPath } from './modules/remote-access/audit-log.repository'
 import { AuditLogService } from './modules/remote-access/audit-log.service'
 import { DevicesRepository, devicesPath } from './modules/remote-access/devices.repository'
 import { LinkedAccountRepository, linkedAccountPath } from './modules/remote-access/linked-account.repository'
 import { RemoteAccessRepository, remoteAccessPath } from './modules/remote-access/remote-access.repository'
 import { RemoteAccessService } from './modules/remote-access/remote-access.service'
+import { migrateRemoteAccessAddresses, readSettingsFile, settingsPath } from './modules/settings/settings.repository'
+import { loadSettings, SETTINGS_DEFAULTS, type Settings } from './modules/settings/settings.service'
 import { daemonFactory, resendTracking, restoreTerminals } from './modules/terminals/daemon.service'
 import { daemonCommand, stopDaemonHint } from './modules/terminals/daemon-build'
 import { machineKeyFile } from './modules/tunnel/tunnel.repository'
@@ -30,6 +33,22 @@ import { loadUiSite } from './modules/ui/ui.service'
 // The dev host's folders, from `env.ts`. A packaged entry point will pass its own.
 const dataDir = devDataDir
 const projectRoot = repoRoot
+
+// Before anything starts: a folder from before `config.json` is migrated, and a settings file that can't be used
+// stops the host with a message naming the setting. Dev reads no `CORCH_*` variables and keeps `HOST_PORT`.
+let settings: Settings
+try {
+  migrateRemoteAccessAddresses(dataDir)
+  settings = loadSettings({
+    flags: {},
+    env: {},
+    file: readSettingsFile(settingsPath(dataDir)),
+    defaults: SETTINGS_DEFAULTS,
+  })
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error))
+  process.exit(1)
+}
 
 const info: HostInfo = {
   home: homedir(),
@@ -95,7 +114,10 @@ const remoteAccess = new RemoteAccessService({
   e2eSessions,
   machineKeyFile: machineKeyFile(dataDir),
   keysFile: accessKeysPath(dataDir),
-  env: { SERVER_URL: optionalEnv('SERVER_URL'), CLIENT_URL: optionalEnv('CLIENT_URL') },
+  settingsFile: settingsPath(dataDir),
+  addresses: devAddresses(settings, { SERVER_URL: optionalEnv('SERVER_URL'), CLIENT_URL: optionalEnv('CLIENT_URL') }),
+  // A packaged host turns the tunnel on only from its saved flag; `SERVER_URL` turning it on is for dev.
+  autoEnable: !packaged,
   handle: async (request, principal) => app.fetch(request, tunnelEnv(principal)),
   openSocket: (path, headers, conn, principal) => sockets.open(path, headers, conn, principal),
 })
