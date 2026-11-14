@@ -8,8 +8,8 @@ export const AUDIT_LOG_MAX_LINES = 1000
 export const AUDIT_LOG_KEEP_LINES = 500
 
 /** Where the remote access audit log is kept. */
-export function auditLogPath(hostRoot: string) {
-  return join(hostRoot, '.data', 'remote-audit.jsonl')
+export function auditLogPath(dataDir: string) {
+  return join(dataDir, 'remote-audit.jsonl')
 }
 
 /**

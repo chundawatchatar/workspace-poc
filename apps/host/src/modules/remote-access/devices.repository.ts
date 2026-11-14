@@ -11,8 +11,8 @@ export type SavedDevice = z.infer<typeof savedDevice>
 const savedDevices = z.array(savedDevice)
 
 /** Where the approved devices are kept. */
-export function devicesPath(hostRoot: string) {
-  return join(hostRoot, '.data', 'devices.json')
+export function devicesPath(dataDir: string) {
+  return join(dataDir, 'devices.json')
 }
 
 /** Loads, saves and removes the approved devices in one JSON file. It holds public keys only. */

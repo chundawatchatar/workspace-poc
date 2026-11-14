@@ -14,8 +14,8 @@ export const remoteAccessSettings = z.object({
 export type RemoteAccessSettings = z.infer<typeof remoteAccessSettings>
 
 /** Where the remote access setting is kept. */
-export function remoteAccessPath(hostRoot: string) {
-  return join(hostRoot, '.data', 'remote-access.json')
+export function remoteAccessPath(dataDir: string) {
+  return join(dataDir, 'remote-access.json')
 }
 
 /** Loads and saves the remote access setting in one JSON file. */

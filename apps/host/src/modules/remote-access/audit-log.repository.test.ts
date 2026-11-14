@@ -29,7 +29,7 @@ describe('AuditLogRepository', () => {
     expect(JSON.parse(lines.at(-1) ?? '')).toEqual(closed(AUDIT_LOG_MAX_LINES + 1))
     expect(JSON.parse(lines[0] ?? '')).toEqual(closed(AUDIT_LOG_MAX_LINES - AUDIT_LOG_KEEP_LINES + 1))
     // The rewrite went through a temp file, which is gone.
-    expect(readdirSync(join(dir, '.data'))).toEqual(['remote-audit.jsonl'])
+    expect(readdirSync(dir)).toEqual(['remote-audit.jsonl'])
 
     // A new repository on the cut file counts its lines again, so the next append just appends.
     new AuditLogRepository(file).append(closed(AUDIT_LOG_MAX_LINES + 2))

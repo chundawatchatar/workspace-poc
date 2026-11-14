@@ -20,7 +20,7 @@ export async function logThroughHost(deps: RemoteCliDeps): Promise<number> {
 export function logFromFile(deps: RemoteCliDeps): number {
   let entries: AuditLogEntry[]
   try {
-    entries = new AuditLogService(new AuditLogRepository(auditLogPath(deps.hostRoot))).recent()
+    entries = new AuditLogService(new AuditLogRepository(auditLogPath(deps.dataDir))).recent()
   } catch (error) {
     deps.err(messageOf(error))
     return 1

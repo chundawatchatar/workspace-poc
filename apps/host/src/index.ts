@@ -6,6 +6,7 @@ import type { HostInfo } from '@orch/shared'
 import { optionalEnv, requiredEnv } from '@orch/shared/env'
 import { SessionManager, shellProgram } from '@orch/terminal'
 import { createApp } from './app'
+import { devDaemonCommand, devDaemonRuntime, devDataDir, repoRoot } from './env'
 import { tunnelEnv } from './lib/principal'
 import { accessKeysPath } from './modules/access/access.repository'
 import { AgentTrackingRepository, agentTrackingPath } from './modules/agent-tracking/agent-tracking.repository'
@@ -25,8 +26,9 @@ import { loadUiSite } from './modules/ui/ui.service'
 
 // Composition root: creates the long-lived services, wires them together and starts the server.
 
-const hostRoot = resolve(import.meta.dir, '..')
-const projectRoot = resolve(hostRoot, '../..')
+// The dev host's folders, from `env.ts`. A packaged entry point will pass its own.
+const dataDir = devDataDir
+const projectRoot = repoRoot
 
 const info: HostInfo = {
   home: homedir(),
@@ -45,9 +47,14 @@ if (uiDir !== null && !ui) {
 }
 
 const hub = new EventHub()
-const layout = new LayoutRepository(dataFile(hostRoot), projectRoot)
-const agentTracking = new AgentTrackingService(new AgentTrackingRepository(agentTrackingPath(hostRoot)))
-const daemon = daemonFactory(hostRoot, () => agentTracking.tracking())
+const layout = new LayoutRepository(dataFile(dataDir), projectRoot)
+const agentTracking = new AgentTrackingService(new AgentTrackingRepository(agentTrackingPath(dataDir)))
+const daemon = daemonFactory({
+  dataDir,
+  runtime: devDaemonRuntime(),
+  daemonCommand: devDaemonCommand,
+  tracking: () => agentTracking.tracking(),
+})
 const sessions = new SessionManager(
   (session) => hub.broadcast({ type: 'session', session: session.info() }),
   (id) => hub.broadcast({ type: 'session.gone', id }),
@@ -75,13 +82,13 @@ const e2eSessions: E2eSessions = new E2eSessions({ machineKey: () => remoteAcces
 
 // The service reads `app` and `sockets` only once a tunnel carries traffic, after `createApp` has returned.
 const remoteAccess = new RemoteAccessService({
-  repository: new RemoteAccessRepository(remoteAccessPath(hostRoot)),
-  linkedAccounts: new LinkedAccountRepository(linkedAccountPath(hostRoot)),
-  devices: new DevicesRepository(devicesPath(hostRoot)),
-  audit: new AuditLogService(new AuditLogRepository(auditLogPath(hostRoot))),
+  repository: new RemoteAccessRepository(remoteAccessPath(dataDir)),
+  linkedAccounts: new LinkedAccountRepository(linkedAccountPath(dataDir)),
+  devices: new DevicesRepository(devicesPath(dataDir)),
+  audit: new AuditLogService(new AuditLogRepository(auditLogPath(dataDir))),
   e2eSessions,
-  machineKeyFile: machineKeyFile(hostRoot),
-  keysFile: accessKeysPath(hostRoot),
+  machineKeyFile: machineKeyFile(dataDir),
+  keysFile: accessKeysPath(dataDir),
   env: { SERVER_URL: optionalEnv('SERVER_URL'), CLIENT_URL: optionalEnv('CLIENT_URL') },
   handle: async (request, principal) => app.fetch(request, tunnelEnv(principal)),
   openSocket: (path, headers, conn, principal) => sockets.open(path, headers, conn, principal),

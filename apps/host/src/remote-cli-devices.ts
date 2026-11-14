@@ -109,7 +109,7 @@ export function devicesFromFile(command: DevicesCommand, deps: RemoteCliDeps): n
   }
   const found = findDevice({ pending: [], approved }, command.fingerprint, deps)
   if (!found) return 1
-  new DevicesRepository(devicesPath(deps.hostRoot)).save(saved.filter((device) => device.id !== found.device.id))
+  new DevicesRepository(devicesPath(deps.dataDir)).save(saved.filter((device) => device.id !== found.device.id))
   deps.out(`Revoked ${printable(found.device.fingerprint)}. The host uses the change from its next start.`)
   return 0
 }
@@ -135,7 +135,7 @@ export function fileDevicesLine(deps: RemoteCliDeps): boolean {
 /** The approved devices in `devices.json`, or null after printing why the file is not valid. Never creates it. */
 function readDevices(deps: RemoteCliDeps): SavedDevice[] | null {
   try {
-    return new DevicesRepository(devicesPath(deps.hostRoot)).load()
+    return new DevicesRepository(devicesPath(deps.dataDir)).load()
   } catch (error) {
     deps.err(messageOf(error))
     return null

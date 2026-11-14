@@ -1,5 +1,4 @@
 import { createConnection } from 'node:net'
-import { resolve } from 'node:path'
 import { type AppState, listPanes } from '@orch/shared'
 import {
   type AgentTracking,
@@ -114,15 +113,18 @@ export function resendTracking(sessions: TerminalSession[]) {
   for (const session of sessions) if (session instanceof DaemonSession) session.resendTracking()
 }
 
-/** Creates the one persistent daemon and the terminals that attach to it. `tracking` reads the trust answers. */
-export function daemonFactory(hostRoot: string, tracking?: () => AgentTracking) {
-  const repository = new DaemonRepository(hostRoot)
-  const shared = new SharedDaemon(
-    repository,
-    [process.execPath, resolve(hostRoot, '../ptyd-bun/src/main.ts')],
-    shellProgram(),
-    tracking,
-  )
+/**
+ * Creates the one persistent daemon and the terminals that attach to it. The entry point gives the data folder, the
+ * daemon's runtime folder and the command that starts the daemon; `tracking` reads the trust answers.
+ */
+export function daemonFactory(options: {
+  dataDir: string
+  runtime: string
+  daemonCommand: string[]
+  tracking?: () => AgentTracking
+}) {
+  const repository = new DaemonRepository({ dataDir: options.dataDir, runtime: options.runtime })
+  const shared = new SharedDaemon(repository, options.daemonCommand, shellProgram(), options.tracking)
   return {
     repository,
     shared,

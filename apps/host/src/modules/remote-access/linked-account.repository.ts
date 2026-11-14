@@ -17,8 +17,8 @@ const savedLinkedAccount = linkedAccount
 export type SavedLinkedAccount = z.infer<typeof savedLinkedAccount>
 
 /** Where the account this machine is linked to is kept. */
-export function linkedAccountPath(hostRoot: string) {
-  return join(hostRoot, '.data', 'linked-account.json')
+export function linkedAccountPath(dataDir: string) {
+  return join(dataDir, 'linked-account.json')
 }
 
 /** Loads, saves and removes the linked account in one JSON file. It holds the account, never an enrollment key. */

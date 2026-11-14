@@ -9,7 +9,7 @@ const dirs: string[] = []
 function tempFile() {
   const dir = mkdtempSync(join(tmpdir(), 'orch-store-'))
   dirs.push(dir)
-  return join(dir, '.data', 'state.json')
+  return join(dir, 'data', 'state.json')
 }
 
 afterEach(() => {

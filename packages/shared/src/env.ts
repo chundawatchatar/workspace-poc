@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 // Server-side only: this file uses `node:fs`, so it is published as `@orch/shared/env` and kept out of `index.ts`,
@@ -9,6 +10,12 @@ import { fileURLToPath } from 'node:url'
  * `import.meta.url`, so it also works where Node runs it: the Vite and Astro configs.
  */
 export const rootEnvPath = fileURLToPath(new URL('../../../.env', import.meta.url))
+
+/**
+ * The repo's root folder, found the same way as `rootEnvPath`, with no trailing slash. Only dev entry points use it; a packaged host has no
+ * repo and gets its folders another way.
+ */
+export const repoRoot = resolve(fileURLToPath(new URL('../../..', import.meta.url)))
 
 /**
  * Parses `.env` text into key/value pairs. Supports blank lines, `#` comments,
