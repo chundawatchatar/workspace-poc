@@ -17,8 +17,8 @@ export function unanswered(): AgentTrackingStatus {
 }
 
 /** Where the trust answers are kept. */
-export function agentTrackingPath(hostRoot: string) {
-  return join(hostRoot, '.data', 'agent-tracking.json')
+export function agentTrackingPath(dataDir: string) {
+  return join(dataDir, 'agent-tracking.json')
 }
 
 /** Loads and saves the user's trust answers in one private JSON file. */

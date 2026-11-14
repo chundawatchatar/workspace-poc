@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -59,7 +59,7 @@ class FakeRemoteAccess extends NoRemoteSessions {
   linkError: LinkError | null = null
   /** The host's clock, in milliseconds, which the CLI's `now` reads too. */
   clock = Date.UTC(2026, 10, 6, 12)
-  /** The real device lists, saved apart from the CLI's `.data/`, which a running host's commands never read. */
+  /** The real device lists, saved apart from the CLI's data folder, which a running host's commands never read. */
   devices = new DevicesService(new DevicesRepository(join(dir, 'host-devices.json')), () => this.clock)
 
   status() {
@@ -115,7 +115,6 @@ let server: ReturnType<typeof Bun.serve> | null
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'orch-remote-cli-'))
-  mkdirSync(join(dir, '.data'))
   host = new FakeRemoteAccess()
   server = null
 })
@@ -152,7 +151,7 @@ async function run(
   const lines: string[] = []
   const code = await runRemote(args, {
     callHost: createHostCaller(baseUrl),
-    hostRoot: dir,
+    dataDir: dir,
     env: options.env ?? {},
     prompt: async (question) => {
       lines.push(question)
@@ -385,9 +384,10 @@ describe('host:remote with the host stopped', () => {
     expect(existsSync(machineKeyFile(dir))).toBe(false)
     expect(existsSync(accessKeysPath(dir))).toBe(false)
 
-    writeFileSync(machineKeyFile(dir), machineKey.pem)
-    writeFileSync(remoteAccessPath(dir), JSON.stringify({ enabled: true, serverUrl: 'wss://host', clientUrl: null }))
-    writeFileSync(linkedAccountPath(dir), JSON.stringify(linked))
+    writeFileSync(join(dir, 'machine-key'), machineKey.pem)
+    const settings = { enabled: true, serverUrl: 'wss://host', clientUrl: null }
+    writeFileSync(join(dir, 'remote-access.json'), JSON.stringify(settings))
+    writeFileSync(join(dir, 'linked-account.json'), JSON.stringify(linked))
     const saved = await run(url, ['status'])
     expect(saved.text).toContain('Server address: wss://host\n')
     expect(saved.text).toContain('on, tunnel host not running')
@@ -399,7 +399,7 @@ describe('host:remote with the host stopped', () => {
   test('server, on and off rewrite only their field, and leave a broken file alone', async () => {
     const url = stoppedHost()
     expect((await run(url, ['server', ' wss://host '])).code).toBe(0)
-    expect(JSON.parse(readFileSync(remoteAccessPath(dir), 'utf8'))).toEqual({
+    expect(JSON.parse(readFileSync(join(dir, 'remote-access.json'), 'utf8'))).toEqual({
       enabled: false,
       serverUrl: 'wss://host',
       clientUrl: null,

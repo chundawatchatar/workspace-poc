@@ -47,6 +47,7 @@ export class LayoutRepository {
   }
 }
 
-export function dataFile(hostRoot: string) {
-  return join(hostRoot, '.data', 'state.json')
+/** Where the layout state is kept. */
+export function dataFile(dataDir: string) {
+  return join(dataDir, 'state.json')
 }

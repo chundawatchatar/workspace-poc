@@ -1,6 +1,6 @@
 import '../apps/host/src/env'
-import { resolve } from 'node:path'
 import { requiredEnv } from '@orch/shared/env'
+import { devDaemonRuntime, devDataDir } from '../apps/host/src/env'
 import { DaemonRepository } from '../apps/host/src/modules/terminals/daemon.repository'
 import { stopDaemon } from '../apps/host/src/modules/terminals/daemon.service'
 
@@ -24,7 +24,7 @@ if (await hostRunning()) {
   process.exit(1)
 }
 
-const repository = new DaemonRepository(resolve(import.meta.dir, '../apps/host'))
+const repository = new DaemonRepository({ dataDir: devDataDir, runtime: devDaemonRuntime() })
 const result = await stopDaemon(repository)
 // Records are kept: the next host offers to resume their agents and reopens shells in their folders, and ends
 // the records of terminals no longer in its layout.

@@ -40,7 +40,7 @@ async function run(args: string[], answer: HostAnswer<typeof routes.remoteAccess
   const lines: string[] = []
   const code = await runRemote(args, {
     callHost,
-    hostRoot: '/nonexistent',
+    dataDir: '/nonexistent',
     env: {},
     prompt: async () => null,
     out: (line) => lines.push(line),

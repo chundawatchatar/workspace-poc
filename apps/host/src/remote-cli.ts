@@ -40,7 +40,7 @@ import { parseSessionsArgs, type SessionsCommand, sessionsFromFile, sessionsThro
 // `bun run host:remote <command>`: the Remote access dialog for a terminal. A
 // running host is the one owner of the setting, so every command goes through
 // its local-only endpoints; only a host that refuses the connection is treated
-// as stopped, and then the files in `.data/` are read and written directly.
+// as stopped, and then the files in the data folder are read and written directly.
 
 /** A running host's answer: the parsed output, or the status and message of a refusal. */
 export type HostAnswer<E extends Endpoint> =
@@ -52,8 +52,8 @@ export type CallHost = <E extends Endpoint>(endpoint: E, input: EndpointInput<E>
 
 export interface RemoteCliDeps {
   callHost: CallHost
-  /** The host's folder, holding `.data/`. */
-  hostRoot: string
+  /** The host's data folder, holding its files directly. */
+  dataDir: string
   /** The CLI's own environment. With the host stopped it only changes what `status` prints and adds hints. */
   env: RemoteAccessEnv
   /** Asks a question and answers the line typed. Null means the input ended. */
@@ -247,7 +247,7 @@ async function linkThroughHost(command: Extract<Command, { name: 'link' }>, deps
   return 0
 }
 
-/** The commands with the host stopped, reading and writing `.data/` for its next start. */
+/** The commands with the host stopped, reading and writing the data folder for its next start. */
 function stopped(command: Command, deps: RemoteCliDeps): number {
   switch (command.name) {
     case 'status':
@@ -268,7 +268,7 @@ function stopped(command: Command, deps: RemoteCliDeps): number {
     case 'log':
       return logFromFile(deps)
     case 'unlink': {
-      const file = linkedAccountPath(deps.hostRoot)
+      const file = linkedAccountPath(deps.dataDir)
       if (!existsSync(file)) {
         deps.out('No account is linked')
         return 0
@@ -287,7 +287,7 @@ function statusFromFiles(deps: RemoteCliDeps): number {
   const settings = readSettings(deps)
   let account: LinkedAccount | null | undefined
   try {
-    account = new LinkedAccountRepository(linkedAccountPath(deps.hostRoot)).load()
+    account = new LinkedAccountRepository(linkedAccountPath(deps.dataDir)).load()
   } catch (error) {
     deps.err(messageOf(error))
   }
@@ -320,7 +320,7 @@ function saveSetting(command: SettingCommand, deps: RemoteCliDeps): number {
     command.name === 'server'
       ? { ...saved, serverUrl: enteredServerUrl(command.url) }
       : { ...saved, enabled: command.name === 'on' }
-  new RemoteAccessRepository(remoteAccessPath(deps.hostRoot)).save(next)
+  new RemoteAccessRepository(remoteAccessPath(deps.dataDir)).save(next)
   deps.out(
     command.name === 'server'
       ? `Server address saved: ${printable(next.serverUrl ?? '')}. The host uses it from its next start.`
@@ -379,16 +379,16 @@ function printPreview(preview: PreviewLinkResponse, out: (line: string) => void)
 /** The saved setting, null when none is saved, or false after printing why the file is not valid. */
 function readSettings(deps: RemoteCliDeps): RemoteAccessSettings | null | false {
   try {
-    return new RemoteAccessRepository(remoteAccessPath(deps.hostRoot)).load()
+    return new RemoteAccessRepository(remoteAccessPath(deps.dataDir)).load()
   } catch (error) {
     deps.err(messageOf(error))
     return false
   }
 }
 
-/** The machine id from an existing machine key. Never creates one, so `status` leaves `.data/` as it was. */
+/** The machine id from an existing machine key. Never creates one, so `status` leaves the data folder as it was. */
 function readMachineId(deps: RemoteCliDeps): string | null {
-  const file = machineKeyFile(deps.hostRoot)
+  const file = machineKeyFile(deps.dataDir)
   if (!existsSync(file)) return null
   try {
     return loadOrCreateMachineKey(file).machineId

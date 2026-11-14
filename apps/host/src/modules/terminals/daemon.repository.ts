@@ -9,8 +9,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs'
-import { join, resolve } from 'node:path'
-import { optionalEnv } from '@orch/shared/env'
+import { basename, join, resolve } from 'node:path'
 import { agentSocketPath } from '@orch/terminal'
 import { z } from 'zod'
 
@@ -37,6 +36,19 @@ const recordSchema = z.object({
  */
 export type DaemonRecord = z.infer<typeof recordSchema>
 
+/**
+ * The daemon's runtime folder (its socket, log and agent shims), named after the data folder so each host gets its
+ * own daemon. A data folder named `.data` hashes its parent, the host folder the name was derived from before the
+ * data folder was a setting, so a dev host keeps attaching to the daemon it already runs. Any other is hashed with a
+ * `data:` prefix, which no absolute parent path starts with, so `X` and `X/.data` never share a daemon.
+ */
+export function daemonRuntimeDir(dataDir: string, uid: number | string): string {
+  const folder = resolve(dataDir)
+  const key = basename(folder) === '.data' ? resolve(folder, '..') : `data:${folder}`
+  const app = createHash('sha256').update(key).digest('hex').slice(0, 12)
+  return `/tmp/orchpty-${uid}-${app}`
+}
+
 /** Keeps one shared daemon's socket and the per-terminal credentials in private, short paths. */
 export class DaemonRepository {
   private readonly records: string
@@ -44,10 +56,10 @@ export class DaemonRepository {
   /** The single socket every terminal's connection shares. */
   readonly socket: string
 
-  constructor(hostRoot: string) {
-    this.records = join(hostRoot, '.data', 'terminal-daemons')
-    const app = createHash('sha256').update(resolve(hostRoot)).digest('hex').slice(0, 12)
-    this.runtime = optionalEnv('ORCH_PTY_RUNTIME') ?? `/tmp/orchpty-${process.getuid?.() ?? 'user'}-${app}`
+  /** `dataDir` holds the records in `terminal-daemons/`; `runtime` holds the socket, from the entry point. */
+  constructor({ dataDir, runtime }: { dataDir: string; runtime: string }) {
+    this.records = join(dataDir, 'terminal-daemons')
+    this.runtime = runtime
     this.socket = join(this.runtime, 'host.sock')
     for (const dir of [this.records, this.runtime]) {
       mkdirSync(dir, { recursive: true, mode: 0o700 })
@@ -63,7 +75,7 @@ export class DaemonRepository {
     }
     // The daemon binds its reporting channel next to this socket, under a name one byte longer.
     if (Buffer.byteLength(agentSocketPath(this.socket)) > 100)
-      throw new Error('ORCH_PTY_RUNTIME produces a socket path over 100 bytes')
+      throw new Error(`The terminal daemon's runtime folder produces a socket path over 100 bytes: ${this.runtime}`)
   }
 
   /** Reads the credential for `id`, or creates one for a terminal that has none yet. */

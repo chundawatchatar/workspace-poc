@@ -39,8 +39,8 @@ import { loadUiSite } from '../apps/host/src/modules/ui/ui.service'
  * opens the page in a real browser (`Bun.WebView`: WebKit on macOS, Chrome
  * elsewhere, found through `BUN_CHROME_PATH`) and types into a terminal until
  * the shell's output shows in the page. The host is composed here, as
- * `apps/host/src/index.ts` composes it, but rooted at a temporary folder with
- * its own daemon runtime, so it never touches the repo's `apps/host/.data` or
+ * `apps/host/src/index.ts` composes it, but with a temporary data folder and
+ * its own daemon runtime folder, so it never touches the repo's `apps/host/.data` or
  * a dev host's daemon. Run it with `bun run test:served-ui`.
  */
 
@@ -51,12 +51,11 @@ const MARKER = 'SERVED_UI_OK'
 const TIMEOUT_MS = 20_000
 
 const temp = mkdtempSync(join(tmpdir(), 'orch-served-ui-'))
-const hostRoot = join(temp, 'host')
+const dataDir = join(temp, 'data')
 const projectRoot = join(temp, 'project')
 mkdirSync(projectRoot)
-// Read by `DaemonRepository`, so the daemon's socket and log live here, not in the dev host's runtime folder.
-process.env.ORCH_PTY_RUNTIME = mkdtempSync(join(tmpdir(), 'orch-ui-pty-'))
-const runtime = process.env.ORCH_PTY_RUNTIME
+// The daemon's socket and log live here, not in the dev host's runtime folder.
+const runtime = mkdtempSync(join(tmpdir(), 'orch-ui-pty-'))
 
 let step = 'build'
 let cleanup: () => Promise<void> = async () => {}
@@ -111,9 +110,9 @@ const ui = await loadUiSite(join(webDir, 'dist'))
 if (!ui) await fail('the build has no index.html')
 
 const hub = new EventHub()
-const layout = new LayoutRepository(dataFile(hostRoot), projectRoot)
-const agentTracking = new AgentTrackingService(new AgentTrackingRepository(agentTrackingPath(hostRoot)))
-const daemons = new DaemonRepository(hostRoot)
+const layout = new LayoutRepository(dataFile(dataDir), projectRoot)
+const agentTracking = new AgentTrackingService(new AgentTrackingRepository(agentTrackingPath(dataDir)))
+const daemons = new DaemonRepository({ dataDir, runtime })
 const daemon = new SharedDaemon(daemons, [process.execPath, daemonScript], shellProgram(), () =>
   agentTracking.tracking(),
 )
@@ -124,13 +123,13 @@ const sessions = new SessionManager(
 )
 const e2eSessions: E2eSessions = new E2eSessions({ machineKey: () => remoteAccess.signingKey() })
 const remoteAccess = new RemoteAccessService({
-  repository: new RemoteAccessRepository(remoteAccessPath(hostRoot)),
-  linkedAccounts: new LinkedAccountRepository(linkedAccountPath(hostRoot)),
-  devices: new DevicesRepository(devicesPath(hostRoot)),
-  audit: new AuditLogService(new AuditLogRepository(auditLogPath(hostRoot))),
+  repository: new RemoteAccessRepository(remoteAccessPath(dataDir)),
+  linkedAccounts: new LinkedAccountRepository(linkedAccountPath(dataDir)),
+  devices: new DevicesRepository(devicesPath(dataDir)),
+  audit: new AuditLogService(new AuditLogRepository(auditLogPath(dataDir))),
   e2eSessions,
-  machineKeyFile: machineKeyFile(hostRoot),
-  keysFile: accessKeysPath(hostRoot),
+  machineKeyFile: machineKeyFile(dataDir),
+  keysFile: accessKeysPath(dataDir),
   env: {},
   handle: async () => new Response(null, { status: 404 }),
   openSocket: () => {

@@ -3,8 +3,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 /** Where the machine key is kept. The machine id is the hash of its public key, so it must never change. */
-export function machineKeyFile(hostRoot: string) {
-  return join(hostRoot, '.data', 'machine-key')
+export function machineKeyFile(dataDir: string) {
+  return join(dataDir, 'machine-key')
 }
 
 /**

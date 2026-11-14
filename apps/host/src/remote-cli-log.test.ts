@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { formatLocalDateTime, type RemoteAccessStatus } from '@orch/shared'
@@ -34,7 +34,6 @@ let dir: string
 let server: ReturnType<typeof Bun.serve> | null
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'orch-remote-cli-log-'))
-  mkdirSync(join(dir, '.data'))
   server = null
 })
 afterEach(() => {
@@ -42,7 +41,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-/** Serves the real remote access routes over an audit log kept apart from the CLI's `.data/`, and answers its base URL. */
+/** Serves the real remote access routes over an audit log kept apart from the CLI's data folder, and answers its base URL. */
 function runningHost(audit: AuditLogService): string {
   // Only `status` and `auditLog` are reached by `log`.
   const remoteAccess = { status: () => status, auditLog: () => ({ entries: audit.recent() }) }
@@ -63,7 +62,7 @@ async function log(baseUrl: string, args = ['log']) {
   const lines: string[] = []
   const code = await runRemote(args, {
     callHost: createHostCaller(baseUrl),
-    hostRoot: dir,
+    dataDir: dir,
     env: {},
     prompt: async () => null,
     out: (line) => lines.push(line),

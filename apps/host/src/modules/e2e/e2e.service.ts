@@ -46,7 +46,7 @@ export interface E2eSessionsOptions {
 
 /**
  * The end-to-end sessions browsers opened with this machine (REM-2), in
- * memory only: they are never written to `.data`, so a restart forgets them
+ * memory only: they are never written to the data folder, so a restart forgets them
  * and browsers open new ones. An account's session expires with the relay
  * ticket that opened it; a key's lives as long as a fresh ticket would. Each
  * device holds at most `MAX_SESSIONS_PER_DEVICE`, dropping its oldest.

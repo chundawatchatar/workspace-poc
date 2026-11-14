@@ -1,8 +1,7 @@
 import './env'
-import { resolve } from 'node:path'
 import { buildRequest, type RotateAccessResponse, rotateAccessResponse, routes } from '@orch/shared'
 import { optionalEnv } from '@orch/shared/env'
-import { hostUrl } from './env'
+import { devDataDir, hostUrl } from './env'
 import { AccessKeyRepository, accessKeysPath } from './modules/access/access.repository'
 import { AccessKeys, rotateAccess } from './modules/access/access.service'
 import {
@@ -17,7 +16,7 @@ import { loadOrCreateMachineKey, machineKeyFile } from './modules/tunnel/tunnel.
 // itself, so it can close the sessions of the old key; otherwise the key file is
 // rotated here, for the next start.
 
-const hostRoot = resolve(import.meta.dir, '..')
+const dataDir = devDataDir
 
 /** The running host's answer, or null when no host with remote access answers at `HOST_HOST`:`HOST_PORT`. */
 async function rotateThroughHost(): Promise<RotateAccessResponse | null> {
@@ -44,11 +43,11 @@ async function rotateThroughHost(): Promise<RotateAccessResponse | null> {
  * the saved Remote access setting.
  */
 function rotateFile(): RotateAccessResponse {
-  const { machineId } = loadOrCreateMachineKey(machineKeyFile(hostRoot))
-  const keys = new AccessKeys(new AccessKeyRepository(accessKeysPath(hostRoot)))
+  const { machineId } = loadOrCreateMachineKey(machineKeyFile(dataDir))
+  const keys = new AccessKeys(new AccessKeyRepository(accessKeysPath(dataDir)))
   let saved: RemoteAccessSettings | null = null
   try {
-    saved = new RemoteAccessRepository(remoteAccessPath(hostRoot)).load()
+    saved = new RemoteAccessRepository(remoteAccessPath(dataDir)).load()
   } catch (error) {
     console.error(`ignoring the saved setting: ${error instanceof Error ? error.message : error}`)
   }

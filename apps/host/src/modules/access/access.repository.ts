@@ -19,8 +19,8 @@ export type AccessKey = z.infer<typeof accessKey>
 const accessKeysFile = z.object({ keys: z.array(accessKey) })
 
 /** Where the access keys are kept. */
-export function accessKeysPath(hostRoot: string) {
-  return join(hostRoot, '.data', 'access-keys.json')
+export function accessKeysPath(dataDir: string) {
+  return join(dataDir, 'access-keys.json')
 }
 
 /** Loads and saves the access keys in one JSON file, readable only by this user. */

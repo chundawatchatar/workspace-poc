@@ -19,7 +19,7 @@ afterEach(() => {
 describe('loadOrCreateMachineKey', () => {
   test('creates a private key file once, then loads the same key and id without rewriting it', async () => {
     const file = machineKeyFile(root)
-    expect(file).toBe(join(root, '.data', 'machine-key'))
+    expect(file).toBe(join(root, 'machine-key'))
     const key = loadOrCreateMachineKey(file)
     expect(statSync(file).mode & 0o777).toBe(0o600)
     const content = readFileSync(file, 'utf8')
