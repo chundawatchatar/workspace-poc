@@ -21,6 +21,7 @@ import { RemoteAccessRepository, remoteAccessPath } from './modules/remote-acces
 import { RemoteAccessService } from './modules/remote-access/remote-access.service'
 import { daemonFactory, resendTracking, restoreTerminals } from './modules/terminals/daemon.service'
 import { machineKeyFile } from './modules/tunnel/tunnel.repository'
+import { loadUiSite } from './modules/ui/ui.service'
 
 // Composition root: creates the long-lived services, wires them together and starts the server.
 
@@ -32,6 +33,15 @@ const info: HostInfo = {
   shell: shellProgram(),
   platform: process.platform,
   projectRoot,
+}
+
+// The built local UI, served on the host's own port. Unset serves none; a relative path resolves from the repo root.
+const staticDir = optionalEnv('HOST_STATIC_DIR')
+const uiDir = staticDir === undefined ? null : resolve(projectRoot, staticDir)
+const ui = uiDir === null ? null : await loadUiSite(uiDir)
+if (uiDir !== null && !ui) {
+  console.error(`HOST_STATIC_DIR has no index.html: ${uiDir}`)
+  process.exit(1)
 }
 
 const hub = new EventHub()
@@ -88,6 +98,7 @@ const { app, sockets } = createApp({
   remoteAccess,
   agentTracking,
   e2eSessions,
+  ui,
 })
 // The host controls this machine's shells, so it listens on loopback only; remote access goes through the relay.
 const hostname = requiredEnv('HOST_HOST')
