@@ -4,6 +4,11 @@ import { machineKeyResponse } from './machineKey'
 
 export const healthResponse = z.object({ ok: z.boolean() })
 
+export const instanceResponse = z.object({
+  /** A random id the host process picks when it starts, so a command can check it is talking to that process. */
+  instanceId: z.string(),
+})
+
 export const daemonResponse = z.object({
   /** How long the terminal daemon has been running. Null means it is not known to be up. */
   uptimeMs: z.number().int().nonnegative().nullable(),
@@ -38,6 +43,14 @@ export const systemContract = defineContract({
     description: 'Reports the terminal daemon: its uptime, its live terminals and whether it matches this host.',
     input: z.object({}),
     output: daemonResponse,
+  },
+  instance: {
+    method: 'GET',
+    path: '/api/instance',
+    description:
+      'Answers the id this host process picked at start, which `corch` checks before it signals the process. Local only.',
+    input: z.object({}),
+    output: instanceResponse,
   },
   machineKey: {
     method: 'GET',

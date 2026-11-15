@@ -223,6 +223,7 @@ async function setUp() {
     layout,
     sessions: stub.sessions,
     info,
+    instanceId: 'test-instance',
     machinePublicKey: () => remoteAccess.machinePublicKey(),
     access: () => remoteAccess.current(),
     remoteAccess,

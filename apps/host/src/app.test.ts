@@ -70,6 +70,7 @@ async function watchedApp() {
       reached.push('daemon')
       return null
     },
+    instanceId: 'test-instance',
     machinePublicKey: () => {
       reached.push('machinePublicKey')
       return null
