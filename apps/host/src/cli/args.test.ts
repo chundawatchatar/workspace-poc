@@ -21,6 +21,24 @@ describe('parseCliArgs', () => {
     expect(parseCliArgs(['logs', '--all'])?.command).toEqual({ name: 'logs', all: true })
   })
 
+  test('reads the config subcommands, with --yes anywhere after the name', () => {
+    const action = (...argv: string[]) => {
+      const command = parseCliArgs(['config', ...argv])?.command
+      return command?.name === 'config' ? command.action : null
+    }
+    expect(action('list')).toEqual({ name: 'list' })
+    expect(action('path', '--data-dir', '/d')).toEqual({ name: 'path' })
+    expect(action('get', 'port')).toEqual({ name: 'get', key: 'port' })
+    expect(action('set', 'port', '5000')).toEqual({ name: 'set', key: 'port', value: '5000', yes: false })
+    expect(action('set', '--yes', 'relayUrl', 'wss://r')).toEqual({
+      name: 'set',
+      key: 'relayUrl',
+      value: 'wss://r',
+      yes: true,
+    })
+    expect(action('unset', 'clientUrl', '--yes')).toEqual({ name: 'unset', key: 'clientUrl', yes: true })
+  })
+
   test('names an unknown command, so the caller can say which', () => {
     expect(parseCliArgs(['frobnicate', '--port', '1'])?.command).toEqual({ name: 'unknown', given: 'frobnicate' })
   })
@@ -29,6 +47,13 @@ describe('parseCliArgs', () => {
     for (const argv of [
       ['--bogus'],
       ['logs', '--tail'],
+      ['config'],
+      ['config', 'list', 'port'],
+      ['config', 'get'],
+      ['config', 'set', 'port'],
+      ['config', 'set', 'port', '5000', '--port', '1'],
+      ['config', 'unset', 'port', 'x'],
+      ['config', 'frob'],
       ['start', '--bogus'],
       ['start', '--port'],
       ['--data-dir'],

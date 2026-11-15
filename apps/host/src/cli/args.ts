@@ -7,8 +7,16 @@ export type CliCommand =
   | { name: 'stop' | 'status' | 'terminals-stop' | 'rotate-key' | 'help' }
   | { name: 'logs'; all: boolean }
   | { name: 'remote'; args: string[] }
+  | { name: 'config'; action: ConfigAction }
   /** A command name `corch` doesn't have, so the caller can name it. */
   | { name: 'unknown'; given: string }
+
+/** A `corch config` subcommand. The key is checked when it runs, so an unknown one gets the settings' own message. */
+export type ConfigAction =
+  | { name: 'list' | 'path' }
+  | { name: 'get'; key: string }
+  | { name: 'set'; key: string; value: string; yes: boolean }
+  | { name: 'unset'; key: string; yes: boolean }
 
 /** What the arguments say: the command and the data folder they name, or null when none does. */
 export interface CliArgs {
@@ -37,13 +45,23 @@ Commands:
   terminals stop      End the terminal daemon and every shell in it
   remote <command>    Configure remote access (corch remote help lists the commands)
   rotate-key          Replace the remote access key
+  config list         Show each setting, its value and where the value comes from
+  config get <key>    Print one setting's value
+  config set <key> <value> [--yes]
+                      Save a setting in config.json; --yes turns remote access off without asking
+                      when a running host's tunnel would stay on the old relay
+  config unset <key> [--yes]
+                      Remove a setting from config.json, so its default applies
+  config path         Print where config.json is
 
 Options:
   --data-dir <dir>    The data folder (else CORCH_DATA_DIR, else the default)
   --port <port>       The port to listen on, on 127.0.0.1 (start, run, restart)
   --relay-url <url>   The relay server's address (start, run, restart)
   --client-url <url>  The client app's address (start, run, restart)
-  --log-level <level> error, warn, info or debug (start, run, restart)`
+  --log-level <level> error, warn, info or debug (start, run, restart)
+
+Settings: port, relayUrl, clientUrl, logLevel. A host reads them when it starts.`
 
 /**
  * Reads `corch`'s arguments. A flag takes its value as the next argument or after `=`. `--data-dir` is read
@@ -66,6 +84,10 @@ export function parseCliArgs(argv: string[]): CliArgs | null {
       return { command: { name, all: args.length === 1 }, dataDir }
     return null
   }
+  if (name === 'config') {
+    const action = parseConfigArgs(args)
+    return action ? { command: { name, action }, dataDir } : null
+  }
   // Bare `corch` with only flags starts the host.
   const [command, flagArgs] = name.startsWith('--') ? ['start', rest] : [name, args]
   if (command !== 'start' && command !== 'run' && command !== 'restart')
@@ -74,6 +96,20 @@ export function parseCliArgs(argv: string[]): CliArgs | null {
   if (!parsed) return null
   if (command === 'run') return { command: { name: command, ...parsed }, dataDir }
   return { command: { name: command, flags: parsed.flags }, dataDir }
+}
+
+/** The `config` subcommand, or null when the arguments don't make one. `--yes` may come anywhere after the name. */
+function parseConfigArgs(args: string[]): ConfigAction | null {
+  const [name, ...rest] = args
+  const yes = rest.includes('--yes')
+  const values = rest.filter((arg) => arg !== '--yes')
+  if (values.some((arg) => arg.startsWith('--'))) return null
+  const [key, value] = values as [string | undefined, string | undefined]
+  if ((name === 'list' || name === 'path') && rest.length === 0) return { name }
+  if (name === 'get' && rest.length === 1 && key) return { name, key }
+  if (name === 'set' && values.length === 2 && key && value !== undefined) return { name, key, value, yes }
+  if (name === 'unset' && values.length === 1 && key) return { name, key, yes }
+  return null
 }
 
 /** Takes `--data-dir` out of the arguments. Null when it has no value. */

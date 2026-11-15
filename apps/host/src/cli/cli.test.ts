@@ -236,6 +236,28 @@ describe('corch', () => {
     expect((await run('logs')).out).toBe(lines(50, 250))
     expect((await run('logs', '--all')).out).toBe(lines(0, 250))
   })
+
+  test('config set saves a new relay under a running host and turns remote access off when told to', async () => {
+    const { dataDir, port, run, typed } = await setup()
+    const relay = (spare: number) => `ws://127.0.0.1:${spare}`
+    // Spare ports nothing listens on, so the tunnel only ever retries locally.
+    const first = relay(await freePort())
+    expect((await run('config', 'set', 'relayUrl', first)).code).toBe(0)
+    expect((await run('remote', 'on')).code).toBe(0)
+    expect((await run('start')).code).toBe(0)
+
+    const next = relay(await freePort())
+    const changed = await typed('y\n', 'config', 'set', 'relayUrl', next)
+    expect(changed.code).toBe(0)
+    expect(changed.out).toContain('The running host uses the change after corch restart.')
+    expect(changed.out).toContain(`The open tunnel stays connected to ${first} until corch restart.`)
+    expect(changed.out).toContain('Turn remote access off now? [y/N]')
+    expect(changed.out).toContain('Remote access:  off, tunnel off')
+    expect(JSON.parse(readFileSync(join(dataDir, 'config.json'), 'utf8'))).toEqual({ port, relayUrl: next })
+    expect((await run('remote', 'status')).out).toContain('Remote access:  off')
+    const listed = await run('config', 'list')
+    expect(listed.out).toContain(`relayUrl   ${next}  (file)`)
+  }, 60_000)
 })
 
 describe('the packaged CLI', () => {
