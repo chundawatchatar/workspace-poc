@@ -20,3 +20,9 @@ export function printable(value: string): string {
   // biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point.
   return value.replace(/[\u0000-\u001f\u007f-\u009f]/g, '?')
 }
+
+/** As `printable`, but keeping line breaks and tabs, for a text of many lines such as a log. */
+export function printableLines(value: string): string {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point.
+  return value.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '?')
+}

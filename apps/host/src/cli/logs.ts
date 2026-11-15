@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs'
+import { printableLines } from '../remote-cli-output'
 import { logPath, previousLogPath } from './log-writer'
 
 /** How many lines `corch logs` prints without `--all`. */
@@ -19,13 +20,20 @@ export function lastLines(text: string, count: number): string {
   return lines.slice(-count).join('\n') + (ended ? '\n' : '')
 }
 
-/** `corch logs`: prints the log's last lines, or all of it with `all`. Answers the exit code. */
-export function logsCommand(dataDir: string, all = false): number {
+/**
+ * `corch logs`: writes the log's last lines, or all of it with `all`, to `out`. Control characters other than line
+ * breaks and tabs show as `?`, so the log can't send escapes to the terminal. Answers the exit code.
+ */
+export function logsCommand(
+  dataDir: string,
+  all = false,
+  out: (text: string) => void = (text) => process.stdout.write(text),
+): number {
   const text = readLogs(dataDir)
   if (text === null) {
     console.log(`There is no log yet: ${logPath(dataDir)}`)
     return 0
   }
-  process.stdout.write(all ? text : lastLines(text, LOG_TAIL_LINES))
+  out(printableLines(all ? text : lastLines(text, LOG_TAIL_LINES)))
   return 0
 }

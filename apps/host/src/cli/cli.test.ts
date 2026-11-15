@@ -1,5 +1,15 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { createServer } from 'node:net'
 import { dirname, join } from 'node:path'
 import { daemonRuntimeDir } from '../modules/terminals/daemon.repository'
@@ -99,10 +109,12 @@ async function setup(): Promise<Setup> {
   const run = (...args: string[]) => corch([...args, '--data-dir', dataDir], cwd)
   const typed = (input: string, ...args: string[]) => corch([...args, '--data-dir', dataDir], cwd, input)
   cleanups.push(async () => {
-    await run('stop')
-    await run('terminals', 'stop')
+    const stopped = await run('stop')
+    const terminals = await run('terminals', 'stop')
     rmSync(dataDir, { recursive: true, force: true })
     rmSync(cwd, { recursive: true, force: true })
+    // Checked only once both folders are gone, so a failing stop fails the test without leaving them behind.
+    expect([stopped.code, terminals.code]).toEqual([0, 0])
   })
   return { dataDir, cwd, port, run, typed }
 }
@@ -216,6 +228,33 @@ describe('corch', () => {
     expect(await instanceAt(`http://127.0.0.1:${port}`)).toBeNull()
     expect(await instanceAt(`http://127.0.0.1:${next}`)).not.toBeNull()
   }, 60_000)
+
+  test('start and run refuse a data folder other users can open, and spawn nothing', async () => {
+    const { dataDir, run } = await setup()
+    chmodSync(dataDir, 0o755)
+    for (const command of ['start', 'run']) {
+      const refused = await run(command)
+      expect([command, refused.code]).toEqual([command, 1])
+      expect(refused.err).toContain(dataDir)
+      expect(refused.err).toContain(`chmod 700 ${dataDir}`)
+    }
+    expect(statSync(dataDir).mode & 0o777).toBe(0o755)
+    expect(existsSync(lockPath(dataDir))).toBe(false)
+    chmodSync(dataDir, 0o700)
+  })
+
+  test('start refuses a symlink at corch.log and spawns nothing', async () => {
+    const { dataDir, cwd, run } = await setup()
+    const outside = join(cwd, 'outside.log')
+    writeFileSync(outside, 'untouched')
+    symlinkSync(outside, join(dataDir, 'corch.log'))
+    const started = await run('start')
+    expect(started.code).toBe(1)
+    expect(started.err).toContain(join(dataDir, 'corch.log'))
+    expect(readFileSync(outside, 'utf8')).toBe('untouched')
+    expect(pids(`run --background --data-dir ${dataDir}`)).toEqual([])
+    expect(existsSync(lockPath(dataDir))).toBe(false)
+  })
 
   test('an unknown command is named before the usage; a bad flag gets the usage alone', async () => {
     const { run } = await setup()
