@@ -64,11 +64,16 @@ export const readLock = (dataDir: string) => read(lockPath(dataDir), lockRecord)
 /** The run file, or null when there is none. */
 export const readRunFile = (dataDir: string) => read(runFilePath(dataDir), runRecord)
 
-/** Writes the run file aside and renames it into place, readable by this user only. */
+/**
+ * Writes the run file aside and renames it into place, readable by this user only. A leftover temp file is removed
+ * first (a symlink itself, never its target), and the new one is created with `wx`, so nothing is written through
+ * a link planted at its path.
+ */
 export function writeRunFile(dataDir: string, record: RunRecord) {
   const path = runFilePath(dataDir)
   const temp = `${path}.${process.pid}.tmp`
-  writeFileSync(temp, JSON.stringify(record), { mode: 0o600 })
+  rmSync(temp, { force: true })
+  writeFileSync(temp, JSON.stringify(record), { flag: 'wx', mode: 0o600 })
   renameSync(temp, path)
 }
 

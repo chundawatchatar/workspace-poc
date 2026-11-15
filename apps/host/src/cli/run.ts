@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { embeddedBuildId } from '@orch/terminal'
@@ -9,6 +9,7 @@ import { loadSettings, type SettingFlag, type Settings } from '../modules/settin
 import { daemonRuntimeDir } from '../modules/terminals/daemon.repository'
 import { daemonCommand } from '../modules/terminals/daemon-build'
 import { loadUiSite, type UiSite } from '../modules/ui/ui.service'
+import { ensureDataFolder } from './data-folder'
 import { hostState, LOCK_HELD_EXIT } from './lifecycle'
 import { CappedLog, captureConsole, logPath } from './log-writer'
 import { acquireLock, type LockRecord, removeProcessFiles, writeRunFile } from './process-files'
@@ -25,10 +26,14 @@ export interface RunOptions {
  * `corch run`: takes the data folder's lock, then loads the settings and starts the host on 127.0.0.1, and writes
  * the run file once it listens. SIGTERM and SIGINT remove both files. In the background its output goes to
  * `corch.log`; in the foreground to the terminal. Answers an exit code when it can't run, and null while the host
- * runs.
+ * runs. A data folder that isn't this user's own is refused first.
  */
 export async function run({ dataDir, flags, background }: RunOptions): Promise<number | null> {
-  mkdirSync(dataDir, { recursive: true, mode: 0o700 })
+  const refused = ensureDataFolder(dataDir)
+  if (refused) {
+    console.error(refused)
+    return 1
+  }
   if (background) captureConsole(new CappedLog(logPath(dataDir)))
 
   const lock: LockRecord = { pid: process.pid, instanceId: randomUUID(), startedAt: Date.now() }

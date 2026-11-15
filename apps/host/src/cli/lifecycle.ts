@@ -1,10 +1,12 @@
 import { spawn } from 'node:child_process'
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync } from 'node:fs'
+import { closeSync, existsSync, fstatSync, readFileSync } from 'node:fs'
 import { instanceResponse, routes } from '@orch/shared'
 import type { SettingFlag } from '../modules/settings/settings.service'
 import { createHostCaller } from '../remote-cli'
+import { printableLines } from '../remote-cli-output'
 import { BACKGROUND_FLAG, settingFlagArgs } from './args'
-import { logPath } from './log-writer'
+import { ensureDataFolder } from './data-folder'
+import { logPath, openLog } from './log-writer'
 import {
   type HostState,
   inspectHost,
@@ -50,6 +52,18 @@ async function waitWhileStarting(dataDir: string, deadline: number): Promise<Hos
   return state
 }
 
+/**
+ * Sends `signal` to `pid`. A process that is already gone (ESRCH) counts as signalled, since it has exited, as when
+ * the child ended between a check and the kill. Any other error throws.
+ */
+export function sendSignal(pid: number, signal: NodeJS.Signals) {
+  try {
+    process.kill(pid, signal)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+  }
+}
+
 const runningLine = (run: RunRecord) => `${run.url} (pid ${run.pid})`
 
 /** Reports a host that already runs. Setting flags only apply when a host starts, so it says they were not used. */
@@ -74,10 +88,15 @@ export interface StartOptions {
  * with its own instance id at the address in its run file. A host that already runs is reported instead, with a
  * note when setting flags were given, since they apply only to a host that starts. If the
  * child exits first, or doesn't answer within the start timeout, it fails with the end of the log, killing the
- * child it spawned in the second case. Answers the exit code.
+ * child it spawned in the second case. A data folder that isn't this user's own, or a log path that is a symbolic
+ * link, is refused before anything is spawned. Answers the exit code.
  */
 export async function start({ dataDir, flags, self }: StartOptions): Promise<number> {
-  mkdirSync(dataDir, { recursive: true, mode: 0o700 })
+  const refused = ensureDataFolder(dataDir)
+  if (refused) {
+    console.error(refused)
+    return 1
+  }
   const deadline = Date.now() + START_TIMEOUT_MS
   const before = await waitWhileStarting(dataDir, deadline)
   if (before.kind === 'running') {
@@ -86,7 +105,15 @@ export async function start({ dataDir, flags, self }: StartOptions): Promise<num
   }
 
   // The child's raw output goes to the log too, so a crash before its own log writer starts still shows below.
-  const log = openSync(logPath(dataDir), 'a', 0o600)
+  let log: number
+  try {
+    log = openLog(logPath(dataDir))
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    const why = code === 'ELOOP' ? 'it is a symbolic link' : `it could not be opened (${code ?? String(error)})`
+    console.error(`corch will not write its log ${logPath(dataDir)}: ${why}`)
+    return 1
+  }
   const offset = fstatSync(log).size
   const [program, ...prefix] = self as [string, ...string[]]
   const child = spawn(
@@ -126,23 +153,32 @@ export async function start({ dataDir, flags, self }: StartOptions): Promise<num
   }
 
   if (exit === undefined && child.pid !== undefined) {
-    process.kill(child.pid, 'SIGTERM')
+    sendSignal(child.pid, 'SIGTERM')
     for (let tries = 0; tries < 20 && pidAlive(child.pid); tries++) await Bun.sleep(POLL_MS)
-    if (pidAlive(child.pid)) process.kill(child.pid, 'SIGKILL')
+    if (pidAlive(child.pid)) sendSignal(child.pid, 'SIGKILL')
   }
   console.error(`corch did not answer within ${START_TIMEOUT_MS / 1000} s, so it was stopped.`)
   printLogTail(dataDir, offset)
   return 1
 }
 
-/** Prints the last lines the log got since `offset`, or the log's last lines if it was rotated since. */
-function printLogTail(dataDir: string, offset: number, lines = 20) {
+/** Prints the log's tail since `offset` to stderr. */
+function printLogTail(dataDir: string, offset: number) {
+  const tail = logTail(dataDir, offset)
+  if (tail) console.error(tail)
+}
+
+/**
+ * The last lines the log got since `offset`, or the log's last lines if it was rotated since, with control
+ * characters other than line breaks and tabs shown as `?`. Null when there are none.
+ */
+export function logTail(dataDir: string, offset: number, lines = 20): string | null {
   const path = logPath(dataDir)
-  if (!existsSync(path)) return
+  if (!existsSync(path)) return null
   const text = readFileSync(path)
   const since = text.length >= offset ? text.subarray(offset) : text
   const tail = since.toString('utf8').trimEnd().split('\n').slice(-lines).join('\n')
-  if (tail) console.error(`The log (${path}) ends with:\n${tail}`)
+  return tail ? `The log (${path}) ends with:\n${printableLines(tail)}` : null
 }
 
 /**
@@ -161,7 +197,7 @@ export async function stop(dataDir: string): Promise<number> {
     return 0
   }
   const { pid, instanceId } = state.run
-  process.kill(pid, 'SIGTERM')
+  sendSignal(pid, 'SIGTERM')
   const deadline = Date.now() + STOP_TIMEOUT_MS
   const gone = () =>
     !pidAlive(pid) &&

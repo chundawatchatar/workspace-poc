@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { parseCliArgs } from './args'
+import { parseCliArgs, settingFlagArgs } from './args'
 
 describe('parseCliArgs', () => {
   test('reads the commands, the data folder anywhere and the setting flags', () => {
@@ -64,5 +64,17 @@ describe('parseCliArgs', () => {
     ]) {
       expect([argv, parseCliArgs(argv)]).toEqual([argv, null])
     }
+  })
+})
+
+describe('settingFlagArgs', () => {
+  test('passes one --flag=value argument per flag, which parseCliArgs reads back', () => {
+    const flags = { '--port': '4700', '--relay-url': 'wss://r.example/?a=b' } as const
+    const args = settingFlagArgs(flags)
+    expect(args).toEqual(['--port=4700', '--relay-url=wss://r.example/?a=b'])
+    expect(parseCliArgs(['run', '--background', '--data-dir', '/x', ...args])).toEqual({
+      command: { name: 'run', flags, background: true },
+      dataDir: '/x',
+    })
   })
 })

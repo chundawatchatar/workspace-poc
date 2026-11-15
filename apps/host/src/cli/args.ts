@@ -151,9 +151,12 @@ function parseSettingFlags(
   return { flags, background }
 }
 
-/** The setting flags as arguments again, for the `run` that `start` spawns. */
+/**
+ * The setting flags as arguments again, for the `run` that `start` spawns: one `--flag=value` each, so a value can
+ * never be read as a flag of its own.
+ */
 export function settingFlagArgs(flags: Partial<Record<SettingFlag, string>>): string[] {
-  return Object.entries(flags).flatMap(([flag, value]) => [flag, value])
+  return Object.entries(flags).map(([flag, value]) => `${flag}=${value}`)
 }
 
 function splitFlag(arg: string): [string, string | undefined] {
