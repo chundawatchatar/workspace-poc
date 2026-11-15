@@ -52,6 +52,16 @@ async function waitWhileStarting(dataDir: string, deadline: number): Promise<Hos
 
 const runningLine = (run: RunRecord) => `${run.url} (pid ${run.pid})`
 
+/** Reports a host that already runs. Setting flags only apply when a host starts, so it says they were not used. */
+function alreadyRunning(run: RunRecord, flags: Partial<Record<SettingFlag, string>>) {
+  console.log(`corch is already running at ${runningLine(run)}`)
+  const given = Object.keys(flags)
+  if (given.length === 0) return
+  console.log(
+    `${given.join(', ')} not applied: the running host keeps its settings. Run corch restart with them instead.`,
+  )
+}
+
 /** What `start` needs: the data folder, the setting flags to pass on, and the command that runs `corch` again. */
 export interface StartOptions {
   dataDir: string
@@ -61,7 +71,8 @@ export interface StartOptions {
 
 /**
  * `corch start`: runs the host in the background, in its own session with no terminal, and returns once it answers
- * with its own instance id at the address in its run file. A host that already runs is reported instead. If the
+ * with its own instance id at the address in its run file. A host that already runs is reported instead, with a
+ * note when setting flags were given, since they apply only to a host that starts. If the
  * child exits first, or doesn't answer within the start timeout, it fails with the end of the log, killing the
  * child it spawned in the second case. Answers the exit code.
  */
@@ -70,7 +81,7 @@ export async function start({ dataDir, flags, self }: StartOptions): Promise<num
   const deadline = Date.now() + START_TIMEOUT_MS
   const before = await waitWhileStarting(dataDir, deadline)
   if (before.kind === 'running') {
-    console.log(`corch is already running at ${runningLine(before.run)}`)
+    alreadyRunning(before.run, flags)
     return 0
   }
 
@@ -96,7 +107,7 @@ export async function start({ dataDir, flags, self }: StartOptions): Promise<num
       // Another `start` won the lock: report its host once it answers.
       const other = await waitWhileStarting(dataDir, deadline)
       if (other.kind === 'running') {
-        console.log(`corch is already running at ${runningLine(other.run)}`)
+        alreadyRunning(other.run, flags)
         return 0
       }
       break

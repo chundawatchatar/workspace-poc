@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { defaultDataDir } from '../lib/dataDir'
 import { DaemonRepository, daemonRuntimeDir } from '../modules/terminals/daemon.repository'
 import { stopDaemon } from '../modules/terminals/daemon.service'
+import { printable } from '../remote-cli-output'
 import { remoteCommand } from '../remote-command'
 import { rotateKeyCommand } from '../rotate-key-command'
 import { parseCliArgs, USAGE } from './args'
@@ -43,8 +44,11 @@ export async function runCli(argv: string[], env: Record<string, string | undefi
       return stop(dataDir)
     case 'status':
       return status(dataDir)
+    case 'unknown':
+      console.error(`unknown command: ${printable(command.given)}\n${USAGE}`)
+      return USAGE_EXIT
     case 'logs':
-      return logsCommand(dataDir)
+      return logsCommand(dataDir, command.all)
     case 'terminals-stop':
       return terminalsStop(dataDir)
     case 'remote':

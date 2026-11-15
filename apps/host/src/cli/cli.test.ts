@@ -20,12 +20,12 @@ interface Run {
   err: string
 }
 
-/** Runs one `corch` command to its end, from `cwd`. */
-async function corch(args: string[], cwd: string): Promise<Run> {
+/** Runs one `corch` command to its end, from `cwd`, with `input` as its stdin. */
+async function corch(args: string[], cwd: string, input?: string): Promise<Run> {
   const child = Bun.spawn([process.execPath, '--no-env-file', '--define', 'ORCH_BUILD_ID="test-cli"', entry, ...args], {
     cwd,
     env,
-    stdin: 'ignore',
+    stdin: input === undefined ? 'ignore' : Buffer.from(input),
     stdout: 'pipe',
     stderr: 'pipe',
   })
@@ -73,6 +73,8 @@ interface Setup {
   port: number
   /** Runs `corch <args> --data-dir <dataDir>` from the working folder. */
   run: (...args: string[]) => Promise<Run>
+  /** As `run`, with `input` typed on stdin. */
+  typed: (input: string, ...args: string[]) => Promise<Run>
 }
 
 const cleanups: (() => Promise<void> | void)[] = []
@@ -95,13 +97,14 @@ async function setup(): Promise<Setup> {
     `CORCH_PORT=${await freePort()}\nCORCH_DATA_DIR=${join(cwd, 'env-data')}\nHOST_PORT=${await freePort()}\n`,
   )
   const run = (...args: string[]) => corch([...args, '--data-dir', dataDir], cwd)
+  const typed = (input: string, ...args: string[]) => corch([...args, '--data-dir', dataDir], cwd, input)
   cleanups.push(async () => {
     await run('stop')
     await run('terminals', 'stop')
     rmSync(dataDir, { recursive: true, force: true })
     rmSync(cwd, { recursive: true, force: true })
   })
-  return { dataDir, cwd, port, run }
+  return { dataDir, cwd, port, run, typed }
 }
 
 describe('corch', () => {
@@ -125,6 +128,12 @@ describe('corch', () => {
 
     const again = await run('start')
     expect([again.code, pidOf(again.out)]).toEqual([0, pid])
+    expect(again.out).not.toContain('not applied')
+    const flagged = await run('start', '--port', '5000')
+    expect([flagged.code, pidOf(flagged.out)]).toEqual([0, pid])
+    expect(flagged.out).toContain(url)
+    expect(flagged.out).toContain('--port not applied')
+    expect(flagged.out).toContain('corch restart')
     const second = await run('run')
     expect(second.code).not.toBe(0)
     expect(second.err).toContain('already running')
@@ -208,11 +217,24 @@ describe('corch', () => {
     expect(await instanceAt(`http://127.0.0.1:${next}`)).not.toBeNull()
   }, 60_000)
 
-  test('an unknown command prints the usage and exits 2', async () => {
+  test('an unknown command is named before the usage; a bad flag gets the usage alone', async () => {
     const { run } = await setup()
-    const unknown = await run('bogus')
+    const unknown = await run('frobnicate')
     expect(unknown.code).toBe(2)
-    expect(unknown.err).toContain('Usage: corch')
+    expect(unknown.err.startsWith('unknown command: frobnicate\nUsage: corch')).toBe(true)
+    const badFlag = await run('start', '--bogus')
+    expect(badFlag.code).toBe(2)
+    expect(badFlag.err.startsWith('Usage: corch')).toBe(true)
+  })
+
+  test('logs prints the last 200 lines of both log files, and --all prints them all', async () => {
+    const { dataDir, run } = await setup()
+    const lines = (from: number, to: number) =>
+      Array.from({ length: to - from }, (_, i) => `line ${from + i}\n`).join('')
+    writeFileSync(join(dataDir, 'corch.log.1'), lines(0, 150))
+    writeFileSync(join(dataDir, 'corch.log'), lines(150, 250))
+    expect((await run('logs')).out).toBe(lines(50, 250))
+    expect((await run('logs', '--all')).out).toBe(lines(0, 250))
   })
 })
 

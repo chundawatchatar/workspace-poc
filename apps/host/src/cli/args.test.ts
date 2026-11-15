@@ -17,11 +17,18 @@ describe('parseCliArgs', () => {
       dataDir: '/d',
     })
     expect(parseCliArgs(['terminals', 'stop'])?.command).toEqual({ name: 'terminals-stop' })
+    expect(parseCliArgs(['logs'])?.command).toEqual({ name: 'logs', all: false })
+    expect(parseCliArgs(['logs', '--all'])?.command).toEqual({ name: 'logs', all: true })
+  })
+
+  test('names an unknown command, so the caller can say which', () => {
+    expect(parseCliArgs(['frobnicate', '--port', '1'])?.command).toEqual({ name: 'unknown', given: 'frobnicate' })
   })
 
   test('refuses an unknown command or flag, a missing value and a setting flag on a command without settings', () => {
     for (const argv of [
-      ['bogus'],
+      ['--bogus'],
+      ['logs', '--tail'],
       ['start', '--bogus'],
       ['start', '--port'],
       ['--data-dir'],
