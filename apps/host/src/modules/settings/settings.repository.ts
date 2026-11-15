@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { RemoteAccessRepository, remoteAccessPath, writeJsonAtomic } from '../remote-access/remote-access.repository'
-import { SETTINGS_FILE_NAME, SettingsError } from './settings.service'
+import { SETTINGS_FILE_NAME, SettingsError, type SettingsFile } from './settings.service'
 
 /** Where the host's settings are kept. */
 export function settingsPath(dataDir: string) {
@@ -35,20 +35,28 @@ export interface SavedAddresses {
   clientUrl?: string | null
 }
 
+/** The settings to change. A value sets the key, null removes it, and a key left out keeps its value. */
+export type SettingsChanges = { [K in keyof SettingsFile]?: SettingsFile[K] | null }
+
 /**
- * Rereads the settings file and sets or removes only the addresses named, so
- * every other key stays as it is. Throws, writing nothing, when the file is not
- * valid. The file is replaced in one step, so a crash never leaves half of it.
+ * Rereads the settings file and sets or removes only the keys named, so every
+ * other key stays as it is. Throws, writing nothing, when the file is not JSON
+ * or not an object; the values are not checked here. The file is replaced in
+ * one step, so a crash never leaves half of it.
  */
-export function saveAddresses(path: string, addresses: SavedAddresses) {
+export function saveSettings(path: string, changes: SettingsChanges) {
   const next = { ...readSettingsFile(path) }
-  for (const key of ['relayUrl', 'clientUrl'] as const) {
-    const value = addresses[key]
+  for (const [key, value] of Object.entries(changes)) {
     if (value === undefined) continue
     if (value === null) delete next[key]
     else next[key] = value
   }
   writeJsonAtomic(path, next)
+}
+
+/** Sets or removes only the addresses named, keeping every other key, as `saveSettings` does. */
+export function saveAddresses(path: string, addresses: SavedAddresses) {
+  saveSettings(path, { relayUrl: addresses.relayUrl, clientUrl: addresses.clientUrl })
 }
 
 /**
