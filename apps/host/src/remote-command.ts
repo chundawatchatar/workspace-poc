@@ -3,7 +3,7 @@ import type { RemoteAccessEnv } from './modules/remote-access/addresses.service'
 import { type CallHost, createHostCaller, runRemote } from './remote-cli'
 
 /** Reads one line from stdin after printing `question`. Null when stdin ends first. */
-function prompt(question: string): Promise<string | null> {
+export function prompt(question: string): Promise<string | null> {
   const lines = createInterface({ input: process.stdin, output: process.stdout })
   return new Promise((done) => {
     let answered = false

@@ -61,6 +61,8 @@ export const SETTING_ENV = {
 } as const
 
 type Key = keyof Settings
+/** The name of a setting, as `config.json` keys it. */
+export type SettingKey = Key
 export type SettingFlag = (typeof SETTING_FLAGS)[Key]
 
 export interface SettingsInput {
@@ -103,6 +105,29 @@ export const settingsFile = z.strictObject({
 export type SettingsFile = z.infer<typeof settingsFile>
 
 const KEYS = Object.keys(RULES) as Key[]
+
+/** Every setting, in the order `corch config list` shows them. */
+export const SETTING_KEYS: readonly SettingKey[] = KEYS
+
+/**
+ * The setting `name` names. Throws `SettingsError` for any other name, listing
+ * the settings.
+ */
+export function settingKey(name: string): SettingKey {
+  if ((KEYS as string[]).includes(name)) return name as SettingKey
+  throw new SettingsError(`${name} is not a setting. The settings are ${KEYS.join(', ')}`)
+}
+
+/**
+ * A setting's value as `config.json` holds it, from text as a flag would give
+ * it, so a port becomes a number. Throws `SettingsError` naming the key and its
+ * rule when the value is not valid.
+ */
+export function settingFromText<K extends SettingKey>(key: K, text: string): NonNullable<SettingsFile[K]> {
+  const parsed = fromText[key].safeParse(text)
+  if (!parsed.success) throw new SettingsError(`${key} ${RULES[key]}`)
+  return parsed.data as NonNullable<SettingsFile[K]>
+}
 
 /**
  * Resolves each setting on its own: its flag, else its `CORCH_<NAME>`

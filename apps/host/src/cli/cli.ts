@@ -3,9 +3,12 @@ import { resolve } from 'node:path'
 import { defaultDataDir } from '../lib/dataDir'
 import { DaemonRepository, daemonRuntimeDir } from '../modules/terminals/daemon.repository'
 import { stopDaemon } from '../modules/terminals/daemon.service'
-import { remoteCommand } from '../remote-command'
+import { createHostCaller } from '../remote-cli'
+import { printable } from '../remote-cli-output'
+import { prompt, remoteCommand } from '../remote-command'
 import { rotateKeyCommand } from '../rotate-key-command'
 import { parseCliArgs, USAGE } from './args'
+import { runConfig } from './config'
 import { hostState, restart, start, status, stop } from './lifecycle'
 import { logsCommand } from './logs'
 import { run } from './run'
@@ -43,8 +46,22 @@ export async function runCli(argv: string[], env: Record<string, string | undefi
       return stop(dataDir)
     case 'status':
       return status(dataDir)
+    case 'unknown':
+      console.error(`unknown command: ${printable(command.given)}\n${USAGE}`)
+      return USAGE_EXIT
     case 'logs':
-      return logsCommand(dataDir)
+      return logsCommand(dataDir, command.all)
+    case 'config': {
+      const url = await runningUrl(dataDir)
+      return runConfig(command.action, {
+        dataDir,
+        env,
+        callHost: url === null ? null : createHostCaller(url),
+        prompt,
+        out: (line) => console.log(line),
+        err: (line) => console.error(line),
+      })
+    }
     case 'terminals-stop':
       return terminalsStop(dataDir)
     case 'remote':

@@ -393,7 +393,7 @@ function printStatus(view: StatusView, out: (line: string) => void) {
   out(`Account:        ${view.linkedAccount === undefined ? 'not readable' : accountLine(view.linkedAccount)}`)
 }
 
-function remoteAccessLine(enabled: boolean, tunnel: string): string {
+export function remoteAccessLine(enabled: boolean, tunnel: string): string {
   return `Remote access:  ${enabled ? 'on' : 'off'}, tunnel ${tunnel}`
 }
 
