@@ -12,19 +12,11 @@ export const DAEMON_SUBCOMMAND = '__daemon'
 export type DaemonContact = { type: 'status'; build: string | undefined } | { type: 'refused'; protocol: number }
 
 /**
- * The command that starts the terminal daemon. A packaged host is one executable, so it runs itself with the daemon
- * subcommand; from source it runs `dev`, the daemon's own entry file.
+ * The command that starts the terminal daemon. A packaged host is one executable, so it runs `self`, the command
+ * that re-runs it, with the daemon subcommand; from source it runs `dev`, the daemon's own entry file.
  */
-export function daemonCommand({
-  packaged,
-  execPath,
-  dev,
-}: {
-  packaged: boolean
-  execPath: string
-  dev: string[]
-}): string[] {
-  return packaged ? [execPath, DAEMON_SUBCOMMAND] : dev
+export function daemonCommand({ packaged, self, dev }: { packaged: boolean; self: string[]; dev: string[] }): string[] {
+  return packaged ? [...self, DAEMON_SUBCOMMAND] : dev
 }
 
 /** The command a user runs to stop the daemon, so the next host start launches one that matches it. */

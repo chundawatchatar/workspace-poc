@@ -4,6 +4,7 @@ import { createConnection } from 'node:net'
 import { join } from 'node:path'
 import { repoRoot } from '@orch/shared/env'
 import { DAEMON_PROTOCOL, DaemonDecoder, daemonBuild, daemonMessage, encodeControlFrame } from '@orch/terminal'
+import { selfCommand } from './cli/self'
 import { DAEMON_SUBCOMMAND, daemonCommand } from './modules/terminals/daemon-build'
 
 const cleanups: (() => void)[] = []
@@ -56,6 +57,12 @@ test('the daemon subcommand runs the terminal daemon from the host entry point, 
 
 test('a packaged host runs itself with the daemon subcommand, and one run from source runs the dev command', () => {
   const dev = ['/usr/bin/bun', '/repo/apps/ptyd-bun/src/main.ts']
-  expect(daemonCommand({ packaged: true, execPath: '/x/corch', dev })).toEqual(['/x/corch', '__daemon'])
-  expect(daemonCommand({ packaged: false, execPath: '/x/corch', dev })).toBe(dev)
+  expect(daemonCommand({ packaged: true, self: ['/x/corch'], dev })).toEqual(['/x/corch', '__daemon'])
+  expect(daemonCommand({ packaged: false, self: ['/x/corch'], dev })).toBe(dev)
+})
+
+test('the self command is the executable when compiled, and keeps the runtime flags and entry from source', () => {
+  expect(selfCommand({ execPath: '/x/corch', execArgv: [], main: '/$bunfs/root/corch' })).toEqual(['/x/corch'])
+  const fromSource = { execPath: '/usr/bin/bun', execArgv: ['--no-env-file'], main: '/repo/apps/host/src/main.ts' }
+  expect(selfCommand(fromSource)).toEqual(['/usr/bin/bun', '--no-env-file', '/repo/apps/host/src/main.ts'])
 })

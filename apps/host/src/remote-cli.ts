@@ -72,6 +72,8 @@ export interface RemoteCliDeps {
   err: (line: string) => void
   /** The current time in milliseconds, for the ages `devices` prints. */
   now: () => number
+  /** The command the usage names, `bun run host:remote` unless given. */
+  program?: string
 }
 
 /** A caller for the host at `baseUrl`, such as `http://127.0.0.1:4599`. Answers are parsed with the output schemas. */
@@ -108,7 +110,8 @@ async function refusal(response: Response): Promise<string> {
   return text || `the host answered ${response.status}`
 }
 
-const USAGE = `Usage: bun run host:remote <command>
+/** The usage text, naming `program`. */
+const usage = (program: string) => `Usage: ${program} <command>
 
   status                                Show the server address, remote access, the machine id, the linked
                                         account and the devices
@@ -161,7 +164,7 @@ function parseArgs(args: string[]): Command | null {
 export async function runRemote(args: string[], deps: RemoteCliDeps): Promise<number> {
   const command = parseArgs(args)
   if (!command) {
-    deps.err(USAGE)
+    deps.err(usage(deps.program ?? 'bun run host:remote'))
     return 1
   }
   // Refused before anything is sent, so a mistyped key or address never reaches the host.
