@@ -161,6 +161,7 @@ export function setup(
   service.start()
   const { app } = createApp({
     access: () => service.current(),
+    instanceId: 'test-instance',
     machinePublicKey: () => service.machinePublicKey(),
     remoteAccess: service,
   } as unknown as AppDeps)

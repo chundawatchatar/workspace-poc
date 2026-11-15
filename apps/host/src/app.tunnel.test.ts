@@ -245,12 +245,12 @@ describe('tunneled sockets', () => {
     expect(body(1)).not.toContain(machineKey.privateKey)
   })
 
-  test('every remote access route answers 403 through the tunnel and leaves the setting and tunnel alone, but works locally', async () => {
+  test('every remote access route and the instance id answer 403 through the tunnel and leaves the setting and tunnel alone, but works locally', async () => {
     const conn = await welcomed()
     const saved = readFileSync(settingsFile, 'utf8')
     const { status, update } = routes.remoteAccess
     const e2e = await openE2eSession(conn, 1)
-    for (const [index, endpoint] of Object.values(routes.remoteAccess).entries()) {
+    for (const [index, endpoint] of [...Object.values(routes.remoteAccess), routes.system.instance].entries()) {
       const reply = await sealedRequest(conn, e2e, index + 2, endpoint.method, endpoint.path)
       expect([endpoint.path, reply.status]).toEqual([endpoint.path, 403])
     }
@@ -259,6 +259,8 @@ describe('tunneled sockets', () => {
     expect(clients).toHaveLength(1)
     expect(clients[0]?.status).toBe('connected')
 
+    const instance = await fetch(`http://127.0.0.1:${local.port}${routes.system.instance.path}`)
+    expect(await instance.json()).toEqual({ instanceId: 'test-instance' })
     const near = await fetch(`http://127.0.0.1:${local.port}${status.path}`)
     const text = await near.text()
     expect(remoteAccessStatus.parse(JSON.parse(text))).toEqual({
