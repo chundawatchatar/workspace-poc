@@ -4,7 +4,7 @@ import { join, relative, resolve } from 'node:path'
 // Builds the host as one standalone executable for this platform, for the packaging spike
 // (`docs/packaging-spike.md`). The terminal daemon is the same executable, run with the host's daemon subcommand.
 // It only builds: running it outside the repo is the manual step the document describes, so a binary that
-// misbehaves at runtime never fails this script. It reads no settings and no `.env`.
+// misbehaves at runtime never fails this script. It reads no settings and no `.env`, and neither does the binary.
 
 const root = resolve(import.meta.dir, '..')
 const outDir = join(root, 'dist', 'spike')
@@ -26,11 +26,13 @@ mkdirSync(outDir, { recursive: true })
 const built: string[] = []
 for (const { name, entry } of targets) {
   const outfile = join(outDir, name)
-  // Bun's defaults are kept on purpose, including the `.env` and `bunfig.toml` autoload, so the spike records what
-  // a plain `--compile` does. The packaging job chooses the flags.
+  // A compiled executable loads the working folder's `.env` and `bunfig.toml` by default (finding 10), so a folder
+  // could set the host's variables or preload code into it. Both are turned off, as the build job will.
   const args = [
     'build',
     '--compile',
+    '--no-compile-autoload-dotenv',
+    '--no-compile-autoload-bunfig',
     entry,
     '--outfile',
     outfile,
