@@ -20,7 +20,6 @@
     "terminals:stop": "bun scripts/stop-terminals.ts",
     "test:bun-daemon": "bun scripts/verify-bun-daemon.ts",
     "test:served-ui": "bun scripts/verify-served-ui.ts",
-    "spike:compile": "bun scripts/spike-compile.ts",
     "package:host": "bun scripts/package-host.ts",
     "test:package": "bun scripts/smoke-package.ts",
     "typecheck": "bun run --filter '*' typecheck",
