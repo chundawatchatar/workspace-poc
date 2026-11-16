@@ -9,11 +9,64 @@ JSON control messages and binary terminal output.
 ## Starting and stopping
 
 The host starts the daemon on demand and reattaches to it after a restart. To
-stop the daemon and every session it owns, stop `bun run dev` first, then run
-`bun run terminals:stop`. It refuses while a host is listening, because that host
-would start the daemon again for its open tabs. Each terminal's record is kept,
-so the next host reopens shells in their folders and offers to resume agents
-(see below); it ends the records of terminals no longer in its layout.
+stop the daemon and every session it owns, stop the host first, then end the
+daemon:
+
+| | Stop the host | End the daemon |
+| --- | --- | --- |
+| Dev | stop `bun run dev` | `bun run terminals:stop` |
+| `corch` | `corch stop` | `corch terminals stop` |
+
+Ending the daemon is refused while a host runs, because that host would start
+the daemon again for its open tabs. Each terminal's record is kept, so the next
+host reopens shells in their folders and offers to resume agents (see below);
+it ends the records of terminals no longer in its layout. `corch stop` alone,
+like stopping `bun run dev`, leaves the daemon and its shells running. How
+`corch` is installed and run is in [the `corch` guide](corch.md).
+
+### Where the daemon runs from
+
+A dev host starts the daemon from its source, `apps/ptyd-bun/src/main.ts`, on
+the host's Bun. The packaged `corch` is one executable, so it starts the daemon
+by running itself again with the `__daemon` subcommand (`daemonCommand` in
+`apps/host/src/modules/terminals/daemon-build.ts`); the daemon needs nothing
+from the repo.
+
+Each data folder gets its own daemon, with its socket, `agent.sock`, its log
+and the agent shims in a runtime folder of its own,
+`/tmp/orchpty-<uid>-<hash>`, named after the data folder (`daemonRuntimeDir`).
+So two `corch` hosts with different data folders never share a daemon. The dev
+data folder, `apps/host/.data/`, keeps the folder name it had before the data
+folder was a setting, so a dev host still attaches to the daemon it runs, and
+`ORCH_PTY_RUNTIME` overrides it in dev only.
+
+### Which build a daemon runs
+
+The daemon never reloads, so the host compares the build it runs with its own:
+
+- A packaged host and the daemons it starts carry the build id compiled into
+  the executable, `<version>+<commit>` (with `.dirty` for a build from a
+  working tree with changes).
+- From source, the build is a hash of every non-test `.ts` file in
+  `apps/ptyd-bun/src` and `packages/terminal/src`, so a daemon still running
+  code from before an edit or a branch switch is noticed.
+
+The host reports the daemon as one of these states, in `corch status`, in the
+local UI's daemon line (at the bottom of the Keyboard shortcuts dialog) and,
+when it changes, in the host's log:
+
+- `current`: the daemon runs this host's build.
+- `outdated`: it runs another build of the same protocol (`DAEMON_PROTOCOL` in
+  `packages/terminal/src/daemon-protocol.ts`), or one from before builds were
+  reported. Its terminals work, but changes to the daemon reach them only once
+  it is replaced. The UI says "out of date".
+- `incompatible`: it speaks another protocol and refused the host's `hello`.
+  The host leaves it and its shells running, untouched, and attaches no
+  terminal; each terminal says so.
+
+Neither state ever ends the daemon. Replacing it is the user's choice, because
+it ends the shells: stop the host, end the daemon (the table above), and start
+the host again, which starts a new daemon of its own build.
 
 ## How it fits together
 
@@ -40,9 +93,11 @@ browser ──ws──> host (apps/host)  ── unix socket ──> daemon (app
 ## Restoring after the daemon restarts
 
 The daemon keeps shells alive across host restarts, but it can still go away: a
-change to its code (it never reloads), a crash, `terminals:stop` or a reboot.
+change to its code (it never reloads), a crash, `terminals:stop` (or
+`corch terminals stop`) or a reboot.
 So that this does not silently lose work, the host keeps more than the
-credential in each terminal's record under `.data/terminal-daemons/`:
+credential in each terminal's record under `terminal-daemons/` in the data
+folder:
 
 - `cwd`: the idle shell's working directory, saved whenever it changes.
 - `agent`: the coding agent in the foreground and its own conversation id,
@@ -109,7 +164,7 @@ always there while an agent runs. The whole design is in
   its hook state. The daemon's status carries the last hook event as
   `agentHook`.
 - **The switch in the record.** A terminal the user stopped tracking has
-  `agentTracking: false` in its record under `.data/terminal-daemons/`; absent
+  `agentTracking: false` in its record under `terminal-daemons/`; absent
   means on. The host reads it before `hello`.
 - **Hook state lives in memory.** It survives a host restart, but a daemon
   restart loses it with the sessions, and a resumed agent starts from terminal
@@ -117,7 +172,8 @@ always there while an agent runs. The whole design is in
 - **Editing tracking code changes `daemonBuild`.** The channel and shims live in
   `packages/terminal/src`, whose top-level sources the build hash covers along
   with the daemon's `main.ts`. A running daemon keeps the old code, and the
-  host warns about it, until `bun run terminals:stop`, which ends its shells.
+  host reports it as `outdated`, until `bun run terminals:stop`, which ends its
+  shells.
 
 ## Why output is binary
 
@@ -166,10 +222,11 @@ resumed). For a local tool that is worth the memory.
   core tracks and re-applies them. A test checks every mode a full-screen program
   sets against a terminal restored from the snapshot.
 - **A daemon running old code is reported.** The daemon never reloads, so a fix
-  to it reaches its terminals only after a restart. Its status carries a hash of
-  its code, and the host logs a warning when that differs from the code on disk.
-  Newer hosts only send requests an older daemon understands, and the daemon
-  ignores request types it does not know.
+  to it reaches its terminals only after a restart. Its status carries its
+  build, and the host reports it as `outdated` when that differs from its own
+  (see "Which build a daemon runs" above). Newer hosts only send requests an
+  older daemon understands, and the daemon ignores request types it does not
+  know.
 
 ## Differences to be aware of
 
@@ -179,9 +236,7 @@ resumed). For a local tool that is worth the memory.
 - **Restarting the daemon still ends programs.** Agents can be resumed, but a
   turn in progress is cut off, and other programs and their scrollback are lost.
 - **Idle cost.** The daemon stays resident (about 44 MB) while the host runs,
-  even if every tab is closed, until `terminals:stop`.
-- **Packaging.** The daemon runs as TypeScript on the host's Bun; it is not yet
-  bundled into a release artifact.
+  even if every tab is closed, until `terminals:stop` or `corch terminals stop`.
 
 ## Verification
 

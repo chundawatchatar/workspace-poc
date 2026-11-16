@@ -57,21 +57,45 @@ no server address set, the host uses its built-in default (section 5).
 The host accepts `ws://` only for a loopback host (`127.0.0.1`, `[::1]` or
 `localhost`). Any other server needs `wss://`.
 
-The other way is to set the addresses in the host's environment, by uncommenting
-`SERVER_URL` and `CLIENT_URL` in `.env` and giving them the same values:
+The dialog saves the addresses in the host's settings file, `config.json` in
+its data folder, as `relayUrl` and `clientUrl`; the packaged `corch` reads the
+same keys (see [the `corch` guide](corch.md#settings-and-corch-config)). A host
+reads its addresses once, when it starts:
+
+- A changed relay or client address, from the setting, `corch config set` or
+  `host:remote server`, applies from the next start. Until then an open tunnel
+  stays on the old relay, and `host:remote status` says
+  `Saved address:  changed. The host uses the saved addresses from its next start.`
+- Turning remote access off applies at once: the tunnel and every remote
+  session close. Turning it on applies at once too, with the addresses in use.
+
+An older data folder that kept the addresses in `remote-access.json` has them
+moved into `config.json` once, when a host starts with it or a command
+changes its remote access settings.
+
+The other way, in dev only, is to set the addresses in the host's environment,
+by uncommenting `SERVER_URL` and `CLIENT_URL` in `.env` and giving them the same
+values:
 
 ```bash
 SERVER_URL=ws://<SERVER_HOST>:<SERVER_PORT>
 CLIENT_URL=http://<CLIENT_HOST>:<CLIENT_PORT>
 ```
 
-`SERVER_URL` and `CLIENT_URL` override the saved setting, and `SERVER_URL` turns
-the tunnel on at start whatever the setting says.
+`SERVER_URL` and `CLIENT_URL` override the saved addresses, and `SERVER_URL`
+still turns the tunnel on at start whatever the switch says. A packaged host
+reads neither, and never turns the tunnel on just because a relay address is
+set: only the saved switch turns it on. It takes its addresses from
+`--relay-url` and `--client-url`, the `CORCH_RELAY_URL` and `CORCH_CLIENT_URL`
+variables, or `config.json`, in that order.
 
-The host keeps its remote access files in `apps/host/.data/` (gitignored):
+The host keeps its remote access files in its data folder, `apps/host/.data/`
+in dev (gitignored) and `~/.corch` or `~/.local/share/corch` for `corch` (see
+[the `corch` guide](corch.md#the-data-folder)):
 
-- `remote-access.json`: the saved setting, so every later start reconnects on
-  its own.
+- `config.json`: the saved addresses, among the host's other settings.
+- `remote-access.json`: whether remote access is on, so every later start
+  reconnects on its own.
 - `machine-key`: the machine's Ed25519 private key (PKCS#8 PEM, readable only
   by you). It never leaves the machine: the host signs the server's challenge
   with it, and the machine id is the hash of its public key. Keep it: deleting
@@ -81,10 +105,18 @@ The host keeps its remote access files in `apps/host/.data/` (gitignored):
 - `linked-account.json`: the account this machine is linked to, if any
   (section 5).
 
+The host itself stays local. It listens on a loopback address only
+(`127.0.0.1` for `corch`), and answers only
+`Host` headers of `127.0.0.1:<port>`, `localhost:<port>` and `[::1]:<port>`. An
+`/etc/hosts` alias or a local reverse proxy gets 403. Requests that come
+through the tunnel are checked by their access key or ticket instead, so the
+tunnel is the only way in from another machine.
+
 ## 3. Open it from a browser
 
 The first time remote access is on, the host creates an access key and prints
-the connect link once, in the host's log (the terminal running `bun run dev`):
+the connect link once, in the host's log: the terminal running `bun run dev`,
+or `corch logs` for a `corch` running in the background:
 
 ```text
 <client>/#machine=<id>&key=<key>&fp=<fingerprint>
@@ -117,16 +149,17 @@ and opens no terminal socket. Check the fingerprint with
 until you know why. A relinked machine with a new key has a new id, so it gets a
 new pin rather than this warning.
 
-The `<client>` part is picked in this order:
+The `<client>` part is the client address the host started with, picked in
+this order:
 
-1. `CLIENT_URL`.
-2. The saved client address.
+1. `CLIENT_URL` in dev; `--client-url`, then `CORCH_CLIENT_URL`, for `corch`.
+2. The saved client address (`clientUrl` in `config.json`).
 3. The server address, with `ws` swapped for `http` (and `wss` for `https`).
 
 The trap: with `bun run dev:client` and no client address, the link points at
 `http://<SERVER_HOST>:<SERVER_PORT>`, which serves the app only after a client build. Enter
-`http://<CLIENT_HOST>:<CLIENT_PORT>` as the client address, press "Save", and make a new connect
-link (section 4).
+`http://<CLIENT_HOST>:<CLIENT_PORT>` as the client address, press "Save", restart the host so it
+uses the new address, and make a new connect link (section 4).
 
 ## 4. Rotate the key
 
@@ -134,7 +167,7 @@ Lost the link, or want to cut everyone off? Press "New connect link" in the
 dialog, or run:
 
 ```bash
-bun run host:rotate-key
+bun run host:rotate-key    # corch rotate-key for an installed corch
 ```
 
 Both print a new link. With a running host that has remote access, both also
@@ -152,10 +185,11 @@ and press "Preview". Linking needs remote access on and the tunnel connected,
 since the key is checked over the tunnel; the host never opens a tunnel just
 to check one.
 
-The server address the key is checked with is the host's own: `SERVER_URL`,
-else the saved "Server address", else the built-in default
-(`DEFAULT_SERVER_URL` in `apps/host/src/modules/remote-access/remote-access.service.ts`,
-a placeholder until there is a real deploy). Nothing in the key can change it,
+The server address the key is checked with is the one the host started with:
+`SERVER_URL` in dev (`--relay-url` or `CORCH_RELAY_URL` for `corch`), else the
+saved "Server address", else the built-in default (`DEFAULT_SERVER_URL` in
+`apps/host/src/modules/settings/settings.service.ts`, a placeholder until there
+is a real deploy). Nothing in the key can change it,
 and the host refuses a link when the address changed after the preview.
 
 Before anything is used, the dialog shows three values to check:
@@ -169,7 +203,7 @@ Before anything is used, the dialog shows three values to check:
 "Link" redeems the key, so it can't be used again. The host then saves the
 account (name, masked email, server address, when it was linked, the
 account's user id and the server's relay public keys, never the key) in
-`apps/host/.data/linked-account.json`, and the dialog shows it with an "Unlink"
+`linked-account.json` in the data folder, and the dialog shows it with an "Unlink"
 button. The user id and the public keys stay on the machine: the dialog and the
 status never show them. A linked machine must unlink before it links again.
 
@@ -221,7 +255,7 @@ mistyped) approves nothing and gets `No browser with the fingerprint <typed> is
 waiting. Open this machine in your own browser and type the fingerprint it
 shows.`, and one that more than one waiting browser shares approves none of
 them. Type it from your own browser, never from the list. Approved devices are
-kept in `apps/host/.data/devices.json` (public keys only; delete it to approve
+kept in `devices.json` in the data folder (public keys only; delete it to approve
 again); Revoke takes one away and closes what it has open. Every browser must
 be approved once, and an older page, which sends no proof, is refused.
 
@@ -302,15 +336,23 @@ bun run host:remote devices                         # waiting and approved devic
 bun run host:remote devices approve <fingerprint>   # add --yes to skip the question
 bun run host:remote devices remove <fingerprint>    # dismiss a waiting device, or revoke an approved one
 bun run host:remote sessions                        # approved devices with tunneled sockets open
+bun run host:remote log                             # who opened this machine through the tunnel, and who was refused
 ```
+
+An installed `corch` has the same commands as `corch remote <command>`
+(`corch remote help` lists them), acting on its own data folder, and
+`corch config set relayUrl <url>` saves the server address as `server` does.
+See [the `corch` guide](corch.md#remote-access).
 
 With the host running, every command goes through its local-only Remote access
 endpoints, so the host stays the one owner of the setting. `link` prints the
 server address (with the warning), the account and the fingerprint, then asks
 `Link this machine to <name>? [y/N]`; `--yes` skips the question but still
 prints them. `on` makes the host print a new connect link in its own log, as
-the switch does. A host started with `SERVER_URL` refuses `server`: change the
-variable instead.
+the switch does, and `off` closes the tunnel at once. `server` saves the
+address in `config.json` for the host's next start; the running tunnel keeps
+the address it has. A host whose server address comes from `SERVER_URL`,
+`--relay-url` or `CORCH_RELAY_URL` refuses `server`: change that instead.
 
 `devices` lists each device by its fingerprint, such as `ABCD-EFGH-JKMN-PQRS`,
 with `waiting, seen 3 min ago` or `approved 2 days ago`, and `status` adds a
@@ -328,8 +370,9 @@ open. The commands print fingerprints only, never a device's id or public key.
 key laptop  3 sockets  since <local time>`, or `No remote sessions are open`;
 with the host stopped it says no host is running, so none are open, and exits 0.
 
-With the host stopped, the command reads and writes `apps/host/.data/` itself,
-and the host picks the change up at its next start. `status` shows the tunnel as
+With the host stopped, the command reads and writes the data folder itself
+(`config.json` for `server`, `remote-access.json` for `on` and `off`), and the
+host picks the change up at its next start. `status` shows the tunnel as
 "host not running", and `SERVER_URL` in the command's own environment only
 changes what `status` shows. `link` needs the running host, and so does
 `devices approve`, since waiting devices live only in the running host's memory.
@@ -347,7 +390,7 @@ accepted risk.
 ### Relinking after the machine key change
 
 A machine used to prove itself with a random secret in
-`apps/host/.data/machine-secret`, which the server hashed into its id. It now
+`machine-secret` in the data folder (`apps/host/.data/` in dev), which the server hashed into its id. It now
 has a machine key instead (section 2), and its id is the hash of the key's
 public half, so a machine set up before the change comes back under a new id.
 The account's list and the old connect link still name the old id, so do this
@@ -355,7 +398,7 @@ once, in this order:
 
 1. Unlink the machine from the client's home page.
 2. On the machine, run `bun run host:remote unlink`.
-3. Delete `apps/host/.data/machine-secret`. The host no longer reads it.
+3. Delete `machine-secret` from the data folder. The host no longer reads it.
 4. Link the machine again with a new enrollment key (above).
 5. Get a new connect link with `bun run host:rotate-key` (section 4), because
    the old link names the old id.
