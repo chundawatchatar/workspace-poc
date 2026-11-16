@@ -7,7 +7,7 @@ import { type AppDeps, createApp } from '../../app'
 import { localRequest } from '../../app.testing'
 import { tunnelEnv } from '../../lib/principal'
 import { SANDBOX_CSP } from './ui.routes'
-import { loadUiSite, resolveUi } from './ui.service'
+import { loadEmbeddedUiSite, loadUiSite, resolveUi, type UiSite } from './ui.service'
 
 const indexHtml = '<!doctype html><html><head><script>boot()</script></head><body></body></html>'
 const script = new Uint8Array([0x63, 0x6f, 0x6e, 0x73, 0x74, 0xff, 0x00])
@@ -33,13 +33,33 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true })
 })
 
-// The UI routes under test only need the health route beside them, which reads nothing.
-async function setup(withUi = true) {
-  const ui = withUi ? await loadUiSite(dir) : null
-  return createApp({ sessions: { list: () => [] } as unknown as SessionManager, ui } as AppDeps).app
+/**
+ * The same files as a folder site and as an embedded one. The embedded map lists `/.env` too, to show that a dotfile
+ * is refused even when a site has one; it has no symlinks, since an executable's files have none.
+ */
+const sites: Record<UiSite['kind'], () => Promise<UiSite | null>> = {
+  folder: () => loadUiSite(dir),
+  embedded: () =>
+    loadEmbeddedUiSite({
+      '/index.html': join(dir, 'index.html'),
+      '/assets/index-abc.js': join(dir, 'assets', 'index-abc.js'),
+      '/.env': join(dir, '.env'),
+    }),
 }
 
-describe('UI routes', () => {
+describe.each(Object.keys(sites) as UiSite['kind'][])('UI routes, %s site', (kind) => {
+  async function loadSite() {
+    const site = await sites[kind]()
+    if (!site) throw new Error('no site')
+    return site
+  }
+
+  // The UI routes under test only need the health route beside them, which reads nothing.
+  async function setup(withUi = true) {
+    const ui = withUi ? await loadSite() : null
+    return createApp({ sessions: { list: () => [] } as unknown as SessionManager, ui } as AppDeps).app
+  }
+
   test('without a site no UI is served and the API is unchanged', async () => {
     const app = await setup(false)
     expect((await localRequest(app, '/', { headers: html })).status).toBe(404)
@@ -75,16 +95,20 @@ describe('UI routes', () => {
 
   test('paths that leave the folder, other methods and API paths never get a file or the page', async () => {
     const app = await setup()
-    const site = await loadUiSite(dir)
-    if (!site) throw new Error('no site')
-    const leaving = ['/../secret.txt', '/assets/%2e%2e/%2e%2e/secret.txt', '/%2e%2e%2fsecret.txt', '/.env', '/leak.txt']
+    const site = await loadSite()
+    const leaving = ['/../secret.txt', '/assets/%2e%2e/%2e%2e/secret.txt', '/%2e%2e%2fsecret.txt', '/.env', '/%2eenv']
     for (const path of leaving) {
       // The URL parser resolves dot segments before the app sees them, so the raw path is checked on its own too.
       expect({ path, target: await resolveUi(site, path, true) }).toEqual({ path, target: { kind: 'not-found' } })
       expect({ path, status: (await localRequest(app, path)).status }).toEqual({ path, status: 404 })
       expect(await (await localRequest(app, path, { headers: html })).text()).not.toContain('secret')
     }
-    expect((await localRequest(app, '/leak.txt', { headers: html })).status).toBe(404)
+    // A symlink out of the folder is refused outright, even for HTML. An embedded site has no symlinks.
+    if (kind === 'folder') {
+      expect(await resolveUi(site, '/leak.txt', true)).toEqual({ kind: 'not-found' })
+      expect((await localRequest(app, '/leak.txt')).status).toBe(404)
+      expect((await localRequest(app, '/leak.txt', { headers: html })).status).toBe(404)
+    }
     for (const method of ['POST', 'PUT', 'DELETE']) {
       expect((await localRequest(app, '/', { method, headers: html })).status).toBe(404)
     }
