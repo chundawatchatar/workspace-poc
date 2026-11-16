@@ -23,6 +23,8 @@
     "spike:compile": "bun scripts/spike-compile.ts",
     "package:host": "bun scripts/package-host.ts",
     "test:package": "bun scripts/smoke-package.ts",
+    "release:check": "bun scripts/release-check.ts",
+    "release:publish": "bun scripts/publish-host.ts",
     "typecheck": "bun run --filter '*' typecheck",
     "lint": "biome check .",
     "format": "biome check --write .",
