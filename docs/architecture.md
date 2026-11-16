@@ -19,7 +19,7 @@ web (apps/web)                            client (apps/client)
         ▼                                         ▼
 host (apps/host) ── the product: terminals, files, git, secrets, connectors, flows
    │
-   └─ terminal daemon (apps/ptyd-bun), the user's repos, .data/
+   └─ terminal daemon (apps/ptyd-bun), the user's repos, the data folder
 ```
 
 | App | What it is | Runs where |
@@ -28,6 +28,47 @@ host (apps/host) ── the product: terminals, files, git, secrets, connectors,
 | `apps/web` | The local app. No accounts. Talks to the host on `127.0.0.1`. | The user's browser, same machine |
 | `apps/client` | The global app (Orchestrator): sign-in, the list of linked machines and whether they're online (REM-1, REM-4), and opening any of them from any browser. | Any browser |
 | `apps/server` | The cloud server. Relays traffic between browsers and machines over the tunnel, and later serves `apps/client` and its accounts API. | The cloud |
+
+### The packaged host (`corch`)
+
+Users install the host as `corch` (the guide is [corch.md](corch.md)): one executable per platform that holds the
+host, the terminal daemon and the built local UI. Its one entry point, `apps/host/src/main.ts`, picks the program:
+
+- `__daemon` as the first argument runs the terminal daemon (`apps/ptyd-bun`), so the host starts its daemon by
+  running its own executable again.
+- A build id compiled in (`ORCH_BUILD_ID`, through `--define`) runs the `corch` command (`apps/host/src/cli/`):
+  `start`, `run`, `stop`, `config`, `service` and the rest. `run` starts the host with `startHost` (`host.ts`), the
+  same composition root the dev host uses.
+- Anything else is the dev host, `apps/host/src/index.ts`, which loads the root `.env`.
+
+The build id is `<version>+<commit>`. The daemon reports its build, so a host can tell a daemon running other code
+(`outdated`) from one speaking another protocol (`incompatible`); the dev host uses a hash of the daemon's sources
+instead ([terminal daemon](terminal-daemon.md)). The local UI is embedded in the executable and served on the host's
+own port.
+
+Every file the host keeps is in its data folder: `~/.corch` on macOS and `$XDG_DATA_HOME/corch` (or
+`~/.local/share/corch`) on Linux, unless `--data-dir` or `CORCH_DATA_DIR` names another, and `apps/host/.data/` in
+dev. The entry point resolves it and passes it in: nothing resolves a path from `import.meta.dir`, which is
+`/$bunfs/root` inside the executable. `corch` refuses a data folder that isn't the user's own and private (0700).
+Settings (`port`, `relayUrl`, `clientUrl`, `logLevel`) are loaded once at start from `config.json` in that folder,
+under the setting flags and the `CORCH_*` variables (`modules/settings/`); a packaged host reads no `.env`,
+`bunfig.toml`, `HOST_*` or `SERVER_URL`. Building and smoke-testing it is described in
+[corch.md](corch.md#packaging).
+
+### The host answers only this machine
+
+The host starts shells, so it listens on a loopback address only (`startHost` throws for any other), and `app.ts`
+checks every local request and socket upgrade twice before any route runs (SEC-1):
+
+- **`Host`.** It must be `127.0.0.1:<port>`, `localhost:<port>` or `[::1]:<port>`, in any case, with the port the
+  server listens on (`lib/localHost.ts`); anything else gets 403 `forbidden`. This stops DNS rebinding: a page on
+  `evil.example` that later resolves to `127.0.0.1` makes same-origin requests with no `Origin`, but they still say
+  `Host: evil.example:<port>`. The cost is that an `/etc/hosts` alias or a local reverse proxy gets 403 too.
+- **`Origin`.** A request with one must come from a page on `localhost`, `127.0.0.1` or `[::1]` (`lib/localOrigin.ts`);
+  one with none, such as `curl` or the CLI, passes.
+
+Tunneled requests skip both: the tunnel has already authorized them by key or ticket and device proof, the relay
+dropped their `Host`, and they are marked by a symbol in the request env, never by a header.
 
 ## Two apps, one page: `packages/terminal-ui`
 
@@ -268,7 +309,7 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   Dismiss but no Approve button, and `approveDevice` takes `{ fingerprint }`, never an id. The host compares it with
   `fingerprintKey` (no case, dashes or whitespace) against the pending list, approves the one match, answers 404 when
   none is waiting and 409 when more than one matches; `host:remote devices approve` sends the typed text the same
-  way. Approved devices are saved in `apps/host/.data/devices.json` as
+  way. Approved devices are saved in `devices.json` in the data folder as
   `{ id, publicKey, approvedAt }`. Revoking one closes its sockets, those opened with a key and through the account, and unlinking the account
   forgets every device. The key is checked first and alone decides which credential is used, so a wrong key is
   refused (with `auth.failed`, which counts against the server's bad-key limit) without its proof being read: a
@@ -312,7 +353,7 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   and ends at `denied`. What remains: a ticket issued before the revoke still works for up to a minute, the
   operator script `sessions:revoke-user` deletes rows in a process with no registry and sends nothing, and a session
   that expires sends nothing. HTTP requests are each authorized on their own and need no frame.
-- The host keeps a local, append-only audit log of remote access in `apps/host/.data/remote-audit.jsonl`
+- The host keeps a local, append-only audit log of remote access in `remote-audit.jsonl` in the data folder
   (`modules/remote-access/audit-log.repository.ts` and `audit-log.service.ts`, created in `index.ts` and handed to the
   tunnel as a narrow `record(event)`). `TunnelChannels` gives a channel one session record when its auth message is
   accepted, a random id and the time, which the live sessions list also reads, and writes `opened` then (that id,
@@ -411,7 +452,7 @@ per-device keys, revoking a single device or linking to an account change data, 
 
 ### 6. Persistence behind repositories, on SQLite
 
-`state.json` suits the layout but not run logs, credentials or flow history. Move to `bun:sqlite` in `.data/` before
+`state.json` suits the layout but not run logs, credentials or flow history. Move to `bun:sqlite` in the data folder before
 flows or connectors land. Modules already reach storage through `<feature>.repository.ts`, so only the repositories
 change.
 
@@ -475,7 +516,7 @@ handshake (401, 403 `device_not_approved`, anything else) answers requests with 
 `CLOSE_ACCESS_DENIED`, `CLOSE_DEVICE_NOT_APPROVED` or 1006, and the next call tries again. Concurrent calls share one
 handshake.
 
-Sessions live in the host's memory only (`E2eSessions`), never in `.data`, so a restart forgets them. An account's
+Sessions live in the host's memory only (`E2eSessions`), never in the data folder, so a restart forgets them. An account's
 session expires at the `exp` of the relay ticket that opened it (the tunnel puts it on the principal as `ticketExp`),
 and a key's `RELAY_TICKET_TTL_SECONDS` after it opens, so both renew alike: the browser opens a new one 15 seconds
 before expiry, the same margin as tickets. A device holds at most 8 live sessions (tabs share a device), and a ninth
@@ -625,7 +666,7 @@ and Cloudflare Tunnel do. Polling adds up to a whole interval of delay to every 
 terminals. An idle socket costs one TCP connection and a small ping, and one small VM holds thousands of them.
 
 - **The machine proves its key, never a secret.** Each machine has an Ed25519 machine key in
-  `apps/host/.data/machine-key` (`loadOrCreateMachineKey`, PKCS#8 PEM, mode 0600, never overwritten) whose private
+  `machine-key` in the data folder (`loadOrCreateMachineKey`, PKCS#8 PEM, mode 0600, never overwritten) whose private
   half never leaves the host. When a tunnel socket opens, the server sends `challenge { nonce }` (32 fresh random
   bytes), and the host answers `hello { version, publicKey, signature }`, signing `helloSignedMessage(nonce)`: the
   context `orch-tunnel-hello`, the protocol version and the nonce. The server spends the nonce on the socket's first

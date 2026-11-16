@@ -14,7 +14,10 @@ bun install
 bun run dev
 ```
 
-Then open http://127.0.0.1:3210. The host listens on 127.0.0.1:4599.
+Then open http://127.0.0.1:3210. The host listens on 127.0.0.1:4599. Run this
+way, it keeps its files in `apps/host/.data/` (gitignored), the dev data
+folder; an installed `corch` keeps the same files in its own data folder (see
+[Install `corch`](#install-corch)).
 
 Terminals run in one shared daemon, so updating or restarting the
 host leaves shells and agents running. If the daemon itself restarts, plain
@@ -29,28 +32,30 @@ address, `wss://<server>` or `ws://127.0.0.1:4600` (any loopback host) for a
 local server, and optionally the client address, then turn it on. The host
 keeps one tunnel open to the server, and the dialog shows whether it is
 connected; turning it off closes the tunnel and every remote session at once.
-The setting is saved in `apps/host/.data/remote-access.json`, so every later
-start reconnects on its own. `SERVER_URL` and `CLIENT_URL` in the host's
-environment override the saved addresses, and `SERVER_URL` turns the tunnel on
-at start whatever the setting says. The host is identified by an Ed25519 key
-it creates in `apps/host/.data/machine-key`, which never leaves the machine: it
-signs the server's challenge when the tunnel opens, and the machine id is the
-hash of its public key. Keep that file: deleting it gives the machine a new id.
-A machine set up with the older `machine-secret` file relinks once (see
-`docs/remote-access.md`). Terminals and
+The addresses are saved as `relayUrl` and `clientUrl` in `config.json` in the
+data folder (`apps/host/.data/` in dev), and apply from the host's next start;
+the on/off switch is saved in `remote-access.json` and applies at once, so
+every later start reconnects on its own. In dev, `SERVER_URL` and `CLIENT_URL`
+in `.env` override the saved addresses, and `SERVER_URL` still turns the tunnel
+on at start whatever the switch says; the packaged `corch` reads neither. The
+host is identified by an Ed25519 key it creates in `machine-key` in the data
+folder, which never leaves the machine: it signs the server's challenge when
+the tunnel opens, and the machine id is the hash of its public key. Keep that
+file: deleting it gives the machine a new id. A machine set up with the older
+`machine-secret` file relinks once (see `docs/remote-access.md`). Terminals and
 layout sync work through the tunnel as well as the HTTP API.
 
 Every tunneled request and socket needs an access key. The first time remote
 access is on, the host creates one and prints a connect link,
 `<client>/#machine=<id>&key=<key>`, once: only the key's hash is kept, in
-`apps/host/.data/access-keys.json`. Open the link to reach the machine from the
-global app. The client address is `CLIENT_URL`, else the saved one, else the
-server address with `ws`/`wss` swapped for `http`/`https`. Lost the link, or
-want to cut everyone off? Press "New connect link" in the dialog, or run
-`bun run host:rotate-key`: either gives a new link and closes every remote
-session that used the old key.
-`bun run host:remote` sets up remote access from a terminal (`status`,
-`server <url>`, `on`, `off`, `link <key>`, `unlink`).
+`access-keys.json` in the data folder. Open the link to reach the machine from
+the global app. The client address is `CLIENT_URL` (dev only), else the saved
+one, else the server address with `ws`/`wss` swapped for `http`/`https`. Lost
+the link, or want to cut everyone off? Press "New connect link" in the dialog,
+or run `bun run host:rotate-key` (`corch rotate-key` when installed): either
+gives a new link and closes every remote session that used the old key.
+`bun run host:remote` (`corch remote`) sets up remote access from a terminal
+(`status`, `server <url>`, `on`, `off`, `link <key>`, `unlink`).
 
 The server serves the global app itself, so the connect link opens on the
 server's own origin and needs no CORS. Build the client with
@@ -66,6 +71,29 @@ from the exact origins in the optional `SERVER_ALLOWED_ORIGINS`
 blocks an IP for a while after too many rejected keys. Behind a proxy that sets
 `X-Forwarded-For`, set `SERVER_TRUST_PROXY=1` so the limits see the client's IP,
 not the proxy's.
+
+## Install `corch`
+
+The host also ships as `corch`, one executable that holds the host, the
+terminal daemon and the local UI, for macOS and Linux on x64 and arm64. It
+keeps its files in its own data folder (`~/.corch` on macOS,
+`~/.local/share/corch` on Linux), never in the repo. No release is published
+yet, so build and install it from the repo:
+
+```bash
+bun run package:host
+npm i -g --offline --ignore-scripts \
+  dist/package/tarballs/corch-<version>.tgz dist/package/tarballs/corch-<os>-<arch>-<version>.tgz
+corch start
+```
+
+Keep `--offline`: the platform packages aren't published yet, so without it npm
+would look their names up in the public registry, where anyone could claim
+them. Once a release is published, `npm i -g corch` will do. `corch` then runs the
+host in the background (`start`, `stop`, `status`, `logs`), takes its settings
+from `corch config`, and can run as a login service (`corch service install`).
+How to install, configure, upgrade and remove it is in the
+[`corch` guide](docs/corch.md).
 
 ## Layout
 
@@ -86,8 +114,8 @@ not the proxy's.
 - Terminals are real shells on the machine, started by the host.
 - Sessions belong to the host. Reload the page or switch workspace and the
   terminal comes back with its screen intact.
-- The layout is stored by the host (`apps/host/.data/state.json`) and pushed
-  to every open window, so two browser windows stay in step.
+- The layout is stored by the host (`state.json` in its data folder,
+  `apps/host/.data/` in dev) and pushed to every open window, so two browser windows stay in step.
 - A bell or a notification escape sequence marks the pane, its tab and its
   workspace until you look at it. Try, from an unfocused pane:
   `sleep 3; printf '\e]9;Build finished\a'`
@@ -117,6 +145,10 @@ not the proxy's.
 - Restarting the terminal daemon (a daemon code change, a crash, a reboot) still
   ends the running programs. Agents can be resumed on their conversation, but a
   turn in progress and other programs, such as a dev server, are lost.
-- The host has no sign-in. It binds to the loopback address and rejects
-  requests from pages on other origins, which is enough for a local demo only.
+- The host has no sign-in. It binds to the loopback address, answers only
+  loopback `Host` headers and rejects requests from pages not served from this
+  machine, which is enough for a local tool only.
+- `corch` is built and smoke-tested on four platforms but not published yet:
+  it installs from tarballs built in the repo, and `npm i -g corch` doesn't
+  work until a release is out.
 - Uses Bun's built-in pseudo-terminal support, so macOS and Linux only.

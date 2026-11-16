@@ -12,7 +12,7 @@ A free developer workspace that runs on the user's own machine or VM and is used
 - **Browser only.** No desktop app to install. The same interface works locally and, later, remotely.
 - **Free locally.** Every feature that runs on the user's machine is free. Only remote access is paid.
 - **Bring your own agent.** The product builds no agent of its own. Users run any command-line agent; the product shows what it is doing and, later, starts it on events.
-- **Sessions outlive the browser.** Closing a tab or the browser never ends a shell or an agent. Restarting the host does end them today (see TERM-8).
+- **Sessions outlive the browser.** Closing a tab or the browser never ends a shell or an agent.
 - **Keyboard first.** Every action has a shortcut, and no shortcut fights the browser or the shell, apart from the `Ctrl+B` leader key (see KEY-5).
 
 ## Workspaces and layout
@@ -38,7 +38,7 @@ A free developer workspace that runs on the user's own machine or VM and is used
 | TERM-5 | A shell that exits can be restarted in the same tab with Enter. | Done |
 | TERM-6 | Tabs are named after what the shell reports, shortened to the current folder. | Done |
 | TERM-7 | Shells started by the product do not inherit settings from the terminal or agent session the product was launched from. | Done |
-| TERM-8 | Shells and agents survive a restart of the host. | Later |
+| TERM-8 | Shells and agents survive a restart of the host. They run in a terminal daemon that outlives the host, so updating or restarting the host leaves them running. Limit: a restart of the daemon itself (a change to its code, a crash, `corch terminals stop`, a reboot) still ends the programs; shells reopen in their last folder and agents can be resumed on their conversation. | Done |
 
 ## Notifications
 
@@ -79,7 +79,7 @@ A free developer workspace that runs on the user's own machine or VM and is used
 | UI-2 | A choice of themes, each covering both the interface and the terminal colours, with one remembered for light and one for dark. | Done |
 | UI-3 | No flash of the wrong colours or sidebar width when the page loads. | Done |
 | UI-4 | Layout changes, dialogs and the sidebar animate smoothly, and all motion stops when the system asks for reduced motion. | Done |
-| UI-5 | The interface is built from a shared component package, used by both the local product and Orchestrator, so the two look and behave the same. | Next |
+| UI-5 | The interface is built from a shared component package, used by both the local product and Orchestrator, so the two look and behave the same. | Done |
 
 ## Git, issues and workflows
 
@@ -111,6 +111,7 @@ The Pull requests and Issues tabs in the prototype show sample data only.
 | PLAT-1 | Runs on macOS and Linux. | Done |
 | PLAT-2 | Runs on Windows. | Later |
 | PLAT-3 | Works in current Chrome, Edge, Safari and Firefox. Checked in Chrome only so far. | Partly |
+| PLAT-4 | Installs with one command and keeps running in the background. The host ships as `corch`, one executable per platform installed through npm, which runs in the background and, if the user wants, as a login service (see `corch.md`). Built and smoke-tested on macOS and Linux, x64 and arm64. Limit: not published yet, so today it installs from tarballs built in the repo rather than with `npm i -g corch`. | Partly |
 | SEC-1 | The local service is reachable only from the same machine, and web pages from other sites cannot use it. Other programs running on the same machine can use it. | Done |
 | SEC-2 | Signing in to the local service before it can be exposed beyond the machine. | Later |
 | SEC-3 | Nothing about the user's code, terminals or issues is sent anywhere unless the user chooses to, for example by using a cloud-based agent. | Done |
