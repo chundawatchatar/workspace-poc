@@ -1,5 +1,13 @@
 import { describe, expect, test } from 'bun:test'
-import { placeholderRelay, preflight, publishPlan, releaseVersion } from './release'
+import {
+  type PublishPlan,
+  placeholderRelay,
+  preflight,
+  publishPlan,
+  releaseVersion,
+  stepsToPublish,
+  tarballIntegrity,
+} from './release'
 
 /** The error a refusal gives, or the value. */
 const outcome = <T>(result: { ok: true; value: T } | { ok: false; error: string }) =>
@@ -114,5 +122,34 @@ describe('publishPlan', () => {
     const mixed = outcome(publishPlan([...platforms, 'corch-0.0.9.tgz'], '0.1.0'))
     expect(mixed).toContain(`missing ${launcher}`)
     expect(mixed).toContain('unexpected corch-0.0.9.tgz')
+  })
+
+  test('skips a version already published only with the same bytes, and refuses other contents before publishing', () => {
+    const plan = outcome(publishPlan(tarballs('0.1.0'), '0.1.0')) as PublishPlan
+    const bytes = (text: string) => tarballIntegrity(new TextEncoder().encode(text))
+    const integrity = Object.fromEntries(plan.steps.map((step) => [step.file, bytes(step.file)]))
+    const toPublish = (registry: Record<string, string | null>) => {
+      const steps = outcome(stepsToPublish(plan, integrity, registry))
+      return typeof steps === 'string' ? steps : steps.map((step) => step.name)
+    }
+    expect(toPublish({})).toEqual(plan.steps.map((step) => step.name))
+
+    // A re-run after the first two platform packages went out.
+    const partial = {
+      'corch-darwin-arm64': bytes('corch-darwin-arm64-0.1.0.tgz'),
+      'corch-darwin-x64': bytes('corch-darwin-x64-0.1.0.tgz'),
+    }
+    expect(toPublish(partial)).toEqual(['corch-linux-arm64', 'corch-linux-x64', 'corch'])
+
+    // Someone else's package, or an earlier build, under a name: nothing goes out, the launcher included.
+    const refusal = toPublish({ ...partial, 'corch-linux-arm64': bytes('other'), corch: '' })
+    expect(refusal).toContain('Already on the registry with other contents: corch-linux-arm64, corch.')
+    expect(refusal).toContain('Nothing was published')
+  })
+
+  test("names a tarball's integrity the way npm does", () => {
+    expect(tarballIntegrity(new TextEncoder().encode('abc'))).toBe(
+      'sha512-3a81oZNherrMQXNJriBBMRLm+k6JqX6iCp7u5ktV05ohkpkqJ0/BqDa6PCOj/uu9RU1EI2Q86A4qmslPpUyknw==',
+    )
   })
 })

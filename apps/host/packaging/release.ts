@@ -149,3 +149,34 @@ export function publishPlan(tarballNames: string[], version: string): Outcome<Pu
   }
   return { ok: true, value: { steps, distTag: version.includes('-') ? 'next' : 'latest' } }
 }
+
+/** The npm `dist.integrity` of a tarball, `sha512-<base64 digest>`: npm publishes a tarball's bytes as they are. */
+export function tarballIntegrity(bytes: Uint8Array): string {
+  return `sha512-${new Bun.CryptoHasher('sha512').update(bytes).digest('base64')}`
+}
+
+/**
+ * The steps of a plan still to publish, given each tarball's `integrity` here and what the registry already has at the
+ * release's version: null when it has none, else that version's `dist.integrity` (empty when the registry gives none).
+ * A version already there is skipped only when it holds these exact bytes, so a re-run after a partial failure
+ * finishes the release. Any other bytes, whether from an earlier build or someone else's package, refuse the whole
+ * release before anything is published, naming each package, since npm never replaces a published version.
+ */
+export function stepsToPublish(
+  plan: PublishPlan,
+  integrity: Record<string, string>,
+  registry: Record<string, string | null>,
+): Outcome<PublishStep[]> {
+  const conflicts = plan.steps.filter((step) => {
+    const published = registry[step.name] ?? null
+    return published !== null && published !== integrity[step.file]
+  })
+  if (conflicts.length > 0) {
+    const names = conflicts.map((step) => step.name).join(', ')
+    return {
+      ok: false,
+      error: `Already on the registry with other contents: ${names}. Nothing was published; a published version can't be replaced, so check who published it and release a new version.`,
+    }
+  }
+  return { ok: true, value: plan.steps.filter((step) => (registry[step.name] ?? null) === null) }
+}

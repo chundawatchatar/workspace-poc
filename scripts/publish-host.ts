@@ -1,15 +1,18 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { LauncherTemplate } from '../apps/host/packaging/platforms'
-import { publishPlan } from '../apps/host/packaging/release'
+import { publishPlan, stepsToPublish, tarballIntegrity } from '../apps/host/packaging/release'
 
 /**
  * `bun run release:publish <folder> [--dry-run]`: publishes the five `corch`
  * tarballs in a folder to npm, the four platform packages first and the
  * launcher last, at the launcher template's version. It refuses the folder
- * unless it holds exactly those five. A package whose version is already on
- * the registry is skipped, so a re-run after a partial failure finishes the
- * release. The token comes only from `NODE_AUTH_TOKEN`, through the `.npmrc`
+ * unless it holds exactly those five. Before publishing anything it asks the
+ * registry for each version: one already there is skipped only when its
+ * `dist.integrity` is this tarball's, so a re-run after a partial failure
+ * finishes the release, and any other contents (an earlier build, or someone
+ * else's package under the name) stop it with nothing published. The token
+ * comes only from `NODE_AUTH_TOKEN`, through the `.npmrc`
  * that `actions/setup-node` writes; it is never an argument. `--dry-run` runs
  * `npm publish --dry-run` for every tarball instead, needs no token and asks
  * the registry nothing.
@@ -36,28 +39,43 @@ if (!plan.ok) fail(plan.error)
 if (!dryRun && !process.env.NODE_AUTH_TOKEN) fail('NODE_AUTH_TOKEN is not set')
 
 /**
- * True when `name@version` is on the registry. `npm view` prints nothing for a version the package doesn't have, and
- * fails with E404 for a package that doesn't exist yet; any other failure stops the release.
+ * The `dist.integrity` the registry has for `name@version`: null when it has no such version, and empty when it has
+ * one but gives no integrity. `npm view` fails with E404 for a missing package or version (older npm prints nothing
+ * for a missing version); any other failure stops the release.
  */
-function published(name: string): boolean {
-  const view = Bun.spawnSync(['npm', 'view', `${name}@${version}`, 'version'], {
+function registryIntegrity(name: string): string | null {
+  const view = Bun.spawnSync(['npm', 'view', `${name}@${version}`, 'version', 'dist.integrity', '--json'], {
     cwd: folder,
     stdout: 'pipe',
     stderr: 'pipe',
   })
-  if (view.exitCode === 0) return view.stdout.toString().trim() !== ''
+  const stdout = view.stdout.toString().trim()
+  if (view.exitCode === 0) {
+    if (stdout === '') return null
+    const found = JSON.parse(stdout) as { version?: string; 'dist.integrity'?: string }
+    return found.version === version ? (found['dist.integrity'] ?? '') : null
+  }
   const stderr = view.stderr.toString()
-  if (stderr.includes('E404')) return false
+  if (stderr.includes('E404')) return null
   console.error(stderr)
   fail(`checking the registry for ${name}@${version} failed (exit ${view.exitCode})`)
 }
 
 console.log(`${dryRun ? 'Dry run: publishing' : 'Publishing'} corch ${version} with dist-tag ${plan.value.distTag}`)
-for (const step of plan.value.steps) {
-  if (!dryRun && published(step.name)) {
-    console.log(`${step.name}@${version} is already on the registry; skipping it`)
-    continue
+let steps = plan.value.steps
+if (!dryRun) {
+  const integrity = Object.fromEntries(
+    steps.map((step) => [step.file, tarballIntegrity(readFileSync(join(folder, step.file)))]),
+  )
+  const registry = Object.fromEntries(steps.map((step) => [step.name, registryIntegrity(step.name)]))
+  const remaining = stepsToPublish(plan.value, integrity, registry)
+  if (!remaining.ok) fail(remaining.error)
+  for (const step of steps.filter((candidate) => !remaining.value.includes(candidate))) {
+    console.log(`${step.name}@${version} is already on the registry with these exact contents; skipping it`)
   }
+  steps = remaining.value
+}
+for (const step of steps) {
   const tarball = join(folder, step.file)
   const command = ['npm', 'publish', tarball, '--access', 'public', '--tag', plan.value.distTag, '--ignore-scripts']
   if (dryRun) command.push('--dry-run')
