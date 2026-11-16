@@ -9,7 +9,16 @@
 #   The preflight refuses a tag that doesn't match the template's version, and refuses every tag while
 #   DEFAULT_SERVER_URL in apps/host/src/modules/settings/settings.service.ts is still a placeholder: set it to the
 #   production wss:// address first. A version with a prerelease part (`0.2.0-beta.1`) goes to the `next` dist-tag.
-#   A failed publish can be re-run; packages already on the registry are skipped.
+#   A failed publish can be re-run: a version already on the registry is skipped when it holds the same bytes, and
+#   any other contents stop the release before anything is published.
+#
+# Before the first tag:
+#   - Reserve all five npm names, `corch` and `corch-{darwin,linux}-{arm64,x64}`, under the maintainers' npm account
+#     (or organization), for example with a `0.0.0` placeholder of each. Anyone could otherwise publish one of the
+#     platform packages first, and the launcher would install their code.
+#   - Add a tag ruleset (Settings > Rules) that lets only maintainers create, update or delete `v*` tags. A tag run
+#     uses the tagged commit's own copy of this file, with every secret below.
+#   - Give the `release` environment a required reviewer, so each release waits for a maintainer to approve it.
 #
 # The `release` environment (Settings > Environments) holds every secret, and its deployment rule allows only tags
 # `v*`, so no branch or pull request run can read them. Only tag runs name the environment. Its secrets:
