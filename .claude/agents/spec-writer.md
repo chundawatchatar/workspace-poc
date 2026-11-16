@@ -13,10 +13,6 @@ and nothing else. Don't edit code, and don't touch git.
 - `README.md` and `docs/REQUIREMENTS.md`: what the product is and how far it has got.
 - The code the feature touches. Find it with Grep/Glob before you decide anything.
 
-The repo is a Bun workspaces monorepo in TypeScript: `apps/web` (TanStack Start, React, Tailwind), `apps/host`
-(Bun + Hono, feature modules), `apps/ptyd-bun`, and `packages/{shared,terminal,ui}`. Tests use `bun run test`, with
-`*.test.ts` files next to the source.
-
 ## spec.md
 
 ```markdown

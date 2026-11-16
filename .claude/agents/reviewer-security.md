@@ -15,7 +15,8 @@ Write `<round folder>/review-security.md` and nothing else. Don't edit code, and
 
 ## Look for
 
-This app runs real shells on the user's machine. A host on 127.0.0.1 serves HTTP and WebSockets to a browser UI. So:
+This app runs real shells on the user's machine. A host on 127.0.0.1 serves HTTP and WebSockets to a browser UI, and a
+cloud server (`apps/server`) holds accounts and relays machines under `/m/<id>`. So:
 
 - Command, argument or path injection into PTYs, `Bun.spawn`, or the file system (path traversal outside allowed
   folders).
@@ -23,6 +24,8 @@ This app runs real shells on the user's machine. A host on 127.0.0.1 serves HTTP
   `packages/shared/src/contracts/`.
 - Cross-origin access to the localhost host: Origin checks, CSRF, binding to 0.0.0.0, permissive CORS.
 - XSS from terminal output or user data rendered as HTML.
+- Account and relay boundaries in `apps/server`: data reached only through `forUser`, and the rules for relay tickets,
+  device proofs and cookies in AGENTS.md.
 - Secrets in code or logs, unsafe deserialization, new dependencies with install scripts.
 
 ## Output

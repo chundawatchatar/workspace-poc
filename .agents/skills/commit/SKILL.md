@@ -32,7 +32,7 @@ git commit -m "feat(web): reorder tabs by dragging within a tab bar"
 
 - Format: `<type>(<scope>): <summary>`.
   - **Type** (required): `feat` (new behaviour), `fix` (bug fix), `refactor` (no behaviour change), `perf`, `style` (formatting only), `test`, `docs`, `build` (dependencies, Bun/Vite/TS config), `ci`, or `chore` (anything else). Add `!` after the type or scope for a breaking change: `feat(shared)!: …`.
-  - **Scope** (optional): the workspace the change is in, `web`, `host` or `shared`. Leave the scope out when the change spans workspaces or is repo-wide.
+  - **Scope** (optional): the workspace the change is in, by folder name (`client`, `host`, `server`, `shared`, `terminal-ui`, `ui`, …). Leave the scope out when the change spans workspaces or is repo-wide.
   - **Summary:** imperative mood ("add", "fix", "move", not "added" or "adds"), lowercase start, no trailing period. Keep the whole line within 72 characters, and aim for 50.
 - Add a summary body only when the subject line can't carry something a reviewer needs, such as a breaking change, a non-obvious trade-off, or a behaviour change the diff doesn't show. The body explains *why*, in a few lines wrapped at 72 columns. Never list the files changed. When there is a body, commit with a heredoc so the formatting survives:
 

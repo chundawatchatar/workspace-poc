@@ -21,8 +21,8 @@ folder. Write `<round folder>/review-ui.md` and nothing else. Don't edit code, a
   theme still looks right, light and dark.
 - It is consistent with the existing components: reuse `Modal`, `Icon` and the rest instead of near-copies. Icons come
   from `@orch/ui/icons`.
-- `packages/ui` components stay presentational: they take props and callbacks and never import from an app. App
-  wiring lives in `apps/web/src/components`.
+- `packages/ui` components stay presentational: they take props and callbacks and never import from an app, and
+  `packages/terminal-ui` never imports from an app either. App wiring lives in `apps/web` and `apps/client`.
 - Alignment, typography scale, hover, focus and active states, and how it behaves in narrow panes and splits.
 
 If the change has no visual part, say so and pass.

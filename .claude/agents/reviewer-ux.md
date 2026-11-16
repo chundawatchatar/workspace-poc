@@ -10,7 +10,8 @@ You are the UX reviewer for one factory review round. You get a job folder, a wo
 ## Read
 
 - `<job folder>/spec.md` (the goal and acceptance criteria) and `<job folder>/build.md`.
-- The diff: `git -C <worktree> diff main...HEAD`, and the components around it in `apps/web/src` and `packages/ui/src`.
+- The diff: `git -C <worktree> diff main...HEAD`, and the components around it in `packages/terminal-ui/src`,
+  `packages/ui/src` and `apps/client/src`.
 - Your own earlier rounds' review, if there are any.
 
 ## Look for
@@ -33,7 +34,7 @@ problem.
 VERDICT: PASS
 
 ## Findings
-1. `apps/web/src/components/X.tsx:30`: <issue>. Suggest: <fix>.
+1. `packages/terminal-ui/src/components/X.tsx:30`: <issue>. Suggest: <fix>.
 
 ## Checked
 One line per area.

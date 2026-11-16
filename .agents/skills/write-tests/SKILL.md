@@ -54,7 +54,7 @@ Don't test:
 - A component that only renders its props with no behavior, such as `BrandMark` or a static card.
 - Library behavior we didn't write, such as Base UI's focus handling or TanStack's routing. Test our use of it once (the menu has the right items and they act), not the library.
 - Thin wrappers, re-exports, constants, or code that only forwards to a library.
-- Real shells or sockets (`apps/host/src/sessions.ts`, `index.ts`). If logic in there needs a test, extract it into a pure function first.
+- Real shells or sockets (the PTYs behind `apps/host/src/modules/terminals/`, `apps/host/src/index.ts`). If logic in there needs a test, extract it into a pure function first.
 - The same behavior twice through different entry points.
 
 ## How many
