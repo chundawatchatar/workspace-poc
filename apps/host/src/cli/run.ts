@@ -1,15 +1,14 @@
 import { randomUUID } from 'node:crypto'
-import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
 import { embeddedBuildId } from '@orch/terminal'
 import { startHost } from '../host'
 import { migrateRemoteAccessAddresses, readSettingsFile, settingsPath } from '../modules/settings/settings.repository'
 import { loadSettings, type SettingFlag, type Settings } from '../modules/settings/settings.service'
 import { daemonRuntimeDir } from '../modules/terminals/daemon.repository'
 import { daemonCommand } from '../modules/terminals/daemon-build'
-import { loadUiSite, type UiSite } from '../modules/ui/ui.service'
+import { loadEmbeddedUiSite, type UiSite } from '../modules/ui/ui.service'
 import { ensureDataFolder } from './data-folder'
+import { embeddedUi } from './embedded-ui'
 import { hostState, LOCK_HELD_EXIT } from './lifecycle'
 import { CappedLog, captureConsole, logPath } from './log-writer'
 import { acquireLock, type LockRecord, removeProcessFiles, writeRunFile } from './process-files'
@@ -100,12 +99,12 @@ async function takeLock(dataDir: string, lock: LockRecord): Promise<boolean> {
 }
 
 /**
- * The UI to serve: a built `apps/web` in a `ui` folder next to the executable, or none. Run from source the
- * executable is Bun, so there is none. The build job replaces this with files embedded in the executable.
+ * The UI to serve: the built `apps/web` compiled into the executable, or none. Run from source nothing is compiled
+ * in, so there is none. It never reads a folder on disk.
  */
 async function packagedUi(): Promise<UiSite | null> {
-  const dir = join(dirname(process.execPath), 'ui')
-  const ui = existsSync(dir) ? await loadUiSite(dir) : null
+  const files = embeddedUi()
+  const ui = files ? await loadEmbeddedUiSite(files) : null
   if (!ui) console.log('This host has no local UI; open it from the client app')
   return ui
 }

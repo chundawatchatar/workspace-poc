@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { routes } from '@orch/shared'
+import { launcherManifest, PLATFORMS, platformManifest } from '../../packaging/platforms'
 import { SETTING_FLAGS } from '../modules/settings/settings.service'
 import { runCli } from './cli'
 import { lockPath, readRunFile, removeProcessFiles, runFilePath, writeRunFile } from './process-files'
@@ -438,10 +439,11 @@ describe('corch service', () => {
   })
 })
 
-describe('the workspaces', () => {
+describe('the workspaces and the npm packages', () => {
   test('have no install scripts, so installing a package never registers the service', () => {
     const repo = join(import.meta.dir, '../../../..')
-    const manifests = [
+    const read = (path: string) => JSON.parse(readFileSync(path, 'utf8'))
+    const workspaces = [
       join(repo, 'package.json'),
       ...['apps', 'packages'].flatMap((folder) =>
         readdirSync(join(repo, folder))
@@ -449,11 +451,20 @@ describe('the workspaces', () => {
           .filter((path) => existsSync(path)),
       ),
     ]
-    expect(manifests.length).toBeGreaterThan(10)
-    for (const path of manifests) {
-      const scripts = Object.keys(JSON.parse(readFileSync(path, 'utf8')).scripts ?? {})
+    expect(workspaces.length).toBeGreaterThan(10)
+    const launcherPath = join(repo, 'apps/host/packaging/npm/corch/package.json')
+    const template = read(launcherPath)
+    // What `package:host` writes for the launcher and for each platform.
+    const generated = [launcherManifest(template), ...PLATFORMS.map((target) => platformManifest(target, template))]
+    const manifests: [string, Record<string, unknown>][] = [
+      ...workspaces.map((path): [string, Record<string, unknown>] => [path, read(path)]),
+      [launcherPath, template],
+      ...generated.map((manifest): [string, Record<string, unknown>] => [String(manifest.name), manifest]),
+    ]
+    for (const [name, manifest] of manifests) {
+      const scripts = Object.keys(manifest.scripts ?? {})
       const hooks = scripts.filter((script) => ['preinstall', 'install', 'postinstall'].includes(script))
-      expect([path, hooks]).toEqual([path, []])
+      expect([name, hooks]).toEqual([name, []])
     }
   })
 })

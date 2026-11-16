@@ -20,8 +20,8 @@ const UI_HEADERS = {
 }
 
 /**
- * Serves the built local UI: its files byte for byte, and `index.html` for
- * the UI's own routes. Mounted last, so every API and socket route wins. It
+ * Serves the built local UI, from a folder or embedded in the executable: its
+ * files byte for byte, and `index.html` for the UI's own routes. Mounted last, so every API and socket route wins. It
  * answers only local requests: one the tunnel authorized gets 404, so the
  * local UI is never served through `/m/<id>`. Every method but GET and HEAD
  * gets 404 too.
@@ -44,7 +44,7 @@ export function createUiRoutes(site: UiSite) {
     }
     // Only the page runs as the host's origin; any other file opened on its own (an SVG, say) is sandboxed.
     const headers: Record<string, string> = { ...UI_HEADERS, 'Content-Security-Policy': SANDBOX_CSP }
-    if (target.path.slice(site.root.length).startsWith('/assets/')) headers['Cache-Control'] = IMMUTABLE
+    if (target.sitePath.startsWith('/assets/')) headers['Cache-Control'] = IMMUTABLE
     return new Response(Bun.file(target.path), { headers })
   })
 }
