@@ -13,6 +13,18 @@ import { hostState, restart, start, status, stop } from './lifecycle'
 import { logsCommand } from './logs'
 import { run } from './run'
 import { selfCommand } from './self'
+import {
+  flagsRefused,
+  installedService,
+  installService,
+  restartService,
+  type ServiceDeps,
+  serviceDeps,
+  serviceLine,
+  startService,
+  stopService,
+  uninstallService,
+} from './service'
 
 // The packaged `corch` command. It never reads the repo's `.env` or the dev `HOST_*` and `SERVER_URL` variables:
 // its data folder comes from `--data-dir`, `CORCH_DATA_DIR` or the platform default, and its settings from that
@@ -21,8 +33,15 @@ import { selfCommand } from './self'
 /** The exit code for arguments that make no command. */
 export const USAGE_EXIT = 2
 
-/** Runs one `corch` command. Answers its exit code, or null for `run`, whose host keeps the process alive. */
-export async function runCli(argv: string[], env: Record<string, string | undefined> = process.env) {
+/**
+ * Runs one `corch` command. Answers its exit code, or null for `run`, whose host keeps the process alive. Tests pass
+ * `service` to keep the service's unit file out of the user's own folders.
+ */
+export async function runCli(
+  argv: string[],
+  env: Record<string, string | undefined> = process.env,
+  service: Partial<ServiceDeps> = {},
+) {
   const args = parseCliArgs(argv)
   if (!args) {
     console.error(USAGE)
@@ -32,20 +51,38 @@ export async function runCli(argv: string[], env: Record<string, string | undefi
   const dataDir = resolve(
     args.dataDir || env.CORCH_DATA_DIR || defaultDataDir({ platform: process.platform, home: homedir(), env }),
   )
+  const deps = serviceDeps(dataDir, env, service)
   switch (command.name) {
     case 'help':
       console.log(USAGE)
       return 0
     case 'start':
-      return start({ dataDir, flags: command.flags, self: selfCommand() })
-    case 'restart':
-      return restart({ dataDir, flags: command.flags, self: selfCommand() })
+    case 'restart': {
+      const installed = installedService(deps)
+      if (!installed) {
+        const options = { dataDir, flags: command.flags, self: selfCommand() }
+        return command.name === 'start' ? start(options) : restart(options)
+      }
+      const given = Object.keys(command.flags)
+      if (given.length > 0) {
+        deps.err(flagsRefused(given))
+        return 1
+      }
+      return command.name === 'start' ? startService(deps, installed) : restartService(deps, installed)
+    }
     case 'run':
       return run({ dataDir, flags: command.flags, background: command.background })
-    case 'stop':
-      return stop(dataDir)
-    case 'status':
-      return status(dataDir)
+    case 'stop': {
+      const installed = installedService(deps)
+      return installed ? stopService(deps, installed) : stop(dataDir)
+    }
+    case 'status': {
+      const code = await status(dataDir)
+      deps.out(await serviceLine(installedService(deps)))
+      return code
+    }
+    case 'service':
+      return command.action === 'install' ? installService(deps) : uninstallService(deps)
     case 'unknown':
       console.error(`unknown command: ${printable(command.given)}\n${USAGE}`)
       return USAGE_EXIT
