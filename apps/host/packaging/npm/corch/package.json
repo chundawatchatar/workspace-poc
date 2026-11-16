@@ -1,0 +1,15 @@
+{
+  "name": "corch",
+  "version": "0.1.0",
+  "description": "The Orchestrator host: your agents, your machine, any browser",
+  "license": "MIT",
+  "bin": {
+    "corch": "bin/corch.js"
+  },
+  "files": [
+    "bin/corch.js"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

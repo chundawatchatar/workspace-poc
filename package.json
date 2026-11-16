@@ -21,6 +21,7 @@
     "test:bun-daemon": "bun scripts/verify-bun-daemon.ts",
     "test:served-ui": "bun scripts/verify-served-ui.ts",
     "spike:compile": "bun scripts/spike-compile.ts",
+    "package:host": "bun scripts/package-host.ts",
     "typecheck": "bun run --filter '*' typecheck",
     "lint": "biome check .",
     "format": "biome check --write .",
