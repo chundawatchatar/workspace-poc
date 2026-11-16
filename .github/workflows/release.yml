@@ -1,0 +1,207 @@
+# Releases corch to npm. A pushed tag `v<version>` builds the four platform packages on native runners, signs the
+# macOS executables with a Developer ID and notarizes them, smoke-tests every signed build, and publishes the four
+# platform packages and then the `corch` launcher. Every pull request (and a manual run) does the same as a dry run:
+# ad-hoc signing, no notarization, `npm publish --dry-run`, and no secret or environment at all.
+#
+# Cutting a release:
+#   1. Bump `version` in apps/host/packaging/npm/corch/package.json and merge it to main.
+#   2. Tag that commit `v<version>` and push the tag: `git tag v0.1.0 && git push origin v0.1.0`.
+#   The preflight refuses a tag that doesn't match the template's version, and refuses every tag while
+#   DEFAULT_SERVER_URL in apps/host/src/modules/settings/settings.service.ts is still a placeholder: set it to the
+#   production wss:// address first. A version with a prerelease part (`0.2.0-beta.1`) goes to the `next` dist-tag.
+#   A failed publish can be re-run: a version already on the registry is skipped when it holds the same bytes, and
+#   any other contents stop the release before anything is published.
+#
+# Before the first tag:
+#   - Reserve all five npm names, `corch` and `corch-{darwin,linux}-{arm64,x64}`, under the maintainers' npm account
+#     (or organization), for example with a `0.0.0` placeholder of each. Anyone could otherwise publish one of the
+#     platform packages first, and the launcher would install their code.
+#   - Add a tag ruleset (Settings > Rules) that lets only maintainers create, update or delete `v*` tags. A tag run
+#     uses the tagged commit's own copy of this file, with every secret below.
+#   - Give the `release` environment a required reviewer, so each release waits for a maintainer to approve it.
+#
+# The `release` environment (Settings > Environments) holds every secret, and its deployment rule allows only tags
+# `v*`, so no branch or pull request run can read them. Only tag runs name the environment. Its secrets:
+#   NPM_TOKEN                        An npm automation token that may publish `corch` and `corch-*`.
+#   APPLE_DEVELOPER_ID_P12_BASE64    The Developer ID Application certificate and its key, as a base64 .p12.
+#   APPLE_DEVELOPER_ID_P12_PASSWORD  The .p12's password.
+#   APPLE_CODESIGN_IDENTITY          The identity's full name, `Developer ID Application: <name> (<team id>)`; the build
+#                                    checks the signature against that team id.
+#   APPLE_NOTARY_KEY_P8              An App Store Connect API key (Developer access), the .p8 file's contents.
+#   APPLE_NOTARY_KEY_ID              That key's id.
+#   APPLE_NOTARY_ISSUER_ID           The issuer id of the account's API keys.
+# Never add them as repository secrets: pull requests from this repository would get those.
+#
+# Runner labels for macOS Intel and Linux arm64 change over time, so check them when a job can't start.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A dry run gives way to a newer one on the same ref. A tag run has a group of its own, so nothing ever cancels it.
+concurrency:
+  group: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) && format('release-{0}', github.run_id) || format('release-dry-run-{0}', github.ref) }}
+  cancel-in-progress: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.0
+          no-cache: true
+      - run: bun install --frozen-lockfile
+      - name: Check the tag and the relay address
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        run: bun run release:check --tag "$GITHUB_REF"
+      - name: Check the relay address (dry run)
+        if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) }}
+        run: bun run release:check --dry-run
+
+  build:
+    name: build ${{ matrix.target }}
+    needs: preflight
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    environment: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) && 'release' || '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            runner: macos-15
+          - target: darwin-x64
+            runner: macos-15-intel
+          - target: linux-x64
+            runner: ubuntu-24.04
+            launcher: true
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.0
+          no-cache: true
+      # `test:package` installs the tarballs with npm.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - run: bun install --frozen-lockfile
+
+      - name: Build (signed ad hoc on darwin)
+        if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && startsWith(matrix.target, 'darwin-')) }}
+        run: bun run package:host --target "$TARGET"
+
+      # A keychain of its own under RUNNER_TEMP, with a random password, on the search list so codesign finds the
+      # identity. `security import` takes the .p12's password only as an argument; the runner is a fresh VM that runs
+      # nothing but this job, and the log masks it.
+      - name: Import the Developer ID certificate
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && startsWith(matrix.target, 'darwin-')
+        env:
+          P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+        run: |
+          umask 077
+          keychain="$RUNNER_TEMP/corch-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          printf '%s' "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/corch-signing.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/corch-signing.p12" -k "$keychain" -f pkcs12 -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | xargs)
+          rm -f "$RUNNER_TEMP/corch-signing.p12"
+
+      - name: Build, signed with the Developer ID
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && startsWith(matrix.target, 'darwin-')
+        env:
+          CORCH_CODESIGN_IDENTITY: ${{ secrets.APPLE_CODESIGN_IDENTITY }}
+        run: |
+          if [ -z "$CORCH_CODESIGN_IDENTITY" ]; then echo '::error::APPLE_CODESIGN_IDENTITY is not set'; exit 1; fi
+          bun run package:host --target "$TARGET"
+
+      # Runs the tarballs `package:host` just packed, so on a tag it proves the hardened-runtime build still starts.
+      - run: bun run test:package
+
+      - name: Notarize
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && startsWith(matrix.target, 'darwin-')
+        env:
+          APPLE_NOTARY_KEY_P8: ${{ secrets.APPLE_NOTARY_KEY_P8 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: bun scripts/notarize-host.ts --target "$TARGET"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tarball-${{ matrix.target }}
+          path: dist/package/tarballs/corch-${{ matrix.target }}-*.tgz
+          if-no-files-found: error
+          retention-days: 7
+      - if: matrix.launcher
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tarball-launcher
+          path: dist/package/tarballs/corch-[0-9]*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove the signing keychain and the notary key
+        if: always() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && startsWith(matrix.target, 'darwin-')
+        run: |
+          security delete-keychain "$RUNNER_TEMP/corch-signing.keychain-db" 2> /dev/null || true
+          rm -f "$RUNNER_TEMP/corch-signing.p12" "$RUNNER_TEMP/corch-notary-key.p8"
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) && 'release' || '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.0
+          no-cache: true
+      # Writes an .npmrc that reads the token from NODE_AUTH_TOKEN, so it never appears in a command.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: tarball-*
+          merge-multiple: true
+          path: release-tarballs
+      - name: Publish (dry run)
+        if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) }}
+        run: bun run release:publish release-tarballs --dry-run
+      - name: Publish to npm
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: bun run release:publish release-tarballs

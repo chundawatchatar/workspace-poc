@@ -1,15 +1,19 @@
 import { describe, expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   buildIdFor,
   chooseTargets,
+  codesignArgs,
   compileArgs,
+  ENTITLEMENTS_FILE,
+  identityTeam,
   type LauncherTemplate,
   launcherManifest,
   PLATFORMS,
   platformKey,
   platformManifest,
+  signatureProblems,
 } from './platforms'
 
 const template = JSON.parse(readFileSync(join(import.meta.dir, 'npm/corch/package.json'), 'utf8')) as LauncherTemplate
@@ -90,5 +94,67 @@ describe('npm packages', () => {
       expect(manifest.bin).toBeUndefined()
       expect(manifest.scripts).toBeUndefined()
     }
+  })
+})
+
+describe('darwin signing', () => {
+  const entitlements = join(import.meta.dir, ENTITLEMENTS_FILE)
+  const identity = 'Developer ID Application: Example Ltd (ABCDE12345)'
+
+  test('is ad hoc without an identity, and a hardened, timestamped Developer ID signature with one', () => {
+    expect(codesignArgs({ file: '/b/corch', identity: null, entitlements })).toEqual([
+      '--force',
+      '--sign',
+      '-',
+      '/b/corch',
+    ])
+    expect(codesignArgs({ file: '/b/corch', identity: '', entitlements })).toEqual([
+      '--force',
+      '--sign',
+      '-',
+      '/b/corch',
+    ])
+    expect(codesignArgs({ file: '/b/corch', identity, entitlements })).toEqual([
+      '--force',
+      '--sign',
+      identity,
+      '--options',
+      'runtime',
+      '--timestamp',
+      '--entitlements',
+      entitlements,
+      '/b/corch',
+    ])
+    expect(existsSync(entitlements)).toBe(true)
+  })
+
+  test('grant the JIT entitlements only', () => {
+    const keys = [...readFileSync(entitlements, 'utf8').matchAll(/<key>([^<]+)<\/key>\s*<true\/>/g)].map((m) => m[1])
+    expect(keys.sort()).toEqual([
+      'com.apple.security.cs.allow-jit',
+      'com.apple.security.cs.allow-unsigned-executable-memory',
+      'com.apple.security.cs.disable-executable-page-protection',
+    ])
+  })
+
+  test("are checked for the hardened runtime, a timestamp and the identity's team", () => {
+    expect(identityTeam(identity)).toBe('ABCDE12345')
+    expect(identityTeam('Developer ID Application: Example Ltd')).toBeNull()
+    const display = [
+      'Executable=/b/corch',
+      'CodeDirectory v=20500 size=124207 flags=0x10000(runtime) hashes=3871+7 location=embedded',
+      `Authority=${identity}`,
+      'Timestamp=16 Nov 2026 at 10:00:00',
+      'TeamIdentifier=ABCDE12345',
+    ].join('\n')
+    expect(signatureProblems(display, 'ABCDE12345')).toEqual([])
+    const adHoc =
+      'CodeDirectory v=20500 size=129360 flags=0x2(adhoc) hashes=4031+7 location=embedded\nTeamIdentifier=not set'
+    expect(signatureProblems(adHoc, 'ABCDE12345')).toEqual([
+      'it has no hardened runtime',
+      'it is ad hoc',
+      'it has no secure timestamp',
+      "its team is not the identity's team",
+    ])
   })
 })

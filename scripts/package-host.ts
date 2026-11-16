@@ -4,13 +4,17 @@ import { collectUiFiles, embeddedEntrySource } from '../apps/host/packaging/embe
 import {
   buildIdFor,
   chooseTargets,
+  codesignArgs,
   compileArgs,
+  ENTITLEMENTS_FILE,
+  identityTeam,
   LAUNCHER_NAME,
   type LauncherTemplate,
   launcherManifest,
   type Platform,
   platformKey,
   platformManifest,
+  signatureProblems,
   uiHashesName,
 } from '../apps/host/packaging/platforms'
 
@@ -21,8 +25,13 @@ import {
  * `corch-<os>-<arch>` package per platform, each packed into
  * `dist/package/tarballs/`. It builds this machine's platform, or the ones
  * named with `--target <os>-<arch>` (repeatable) or `--all`. A darwin
- * executable is signed ad hoc and checked, so one is never shipped unsigned;
- * Bun's own darwin output is signed invalidly. The executables never read a
+ * executable is signed and checked, so one is never shipped unsigned; Bun's
+ * own darwin output is signed invalidly. The signature is ad hoc unless
+ * `CORCH_CODESIGN_IDENTITY` names a Developer ID identity in a keychain on the
+ * search list, as `Developer ID Application: <name> (<team id>)`; then it has
+ * the hardened runtime, a secure timestamp and `entitlements.plist`, and the
+ * build fails unless the signature shows all three with that team. The
+ * identity is never printed. The executables never read a
  * `.env` or `bunfig.toml`. Cross-compiling downloads Bun's runtime for the
  * target, so it needs the network.
  */
@@ -52,6 +61,12 @@ function output(what: string, command: string[], cwd = root): string {
 
 const choice = chooseTargets(process.argv.slice(2), process)
 if (!choice.ok) fail(choice.error)
+
+const identity = process.env.CORCH_CODESIGN_IDENTITY || null
+const team = identity === null ? null : identityTeam(identity)
+if (identity !== null && team === null) {
+  fail('CORCH_CODESIGN_IDENTITY must be the full name of the identity, ending in its team id: "<name> (<team id>)"')
+}
 
 const template = JSON.parse(readFileSync(join(packaging, 'npm/corch/package.json'), 'utf8')) as LauncherTemplate
 const commit = output('reading the git commit', ['git', 'rev-parse', '--short', 'HEAD'])
@@ -96,6 +111,19 @@ layOut(launcherDir, launcherManifest(template))
 copyFileSync(join(packaging, 'npm/corch/bin/corch.js'), join(launcherDir, 'bin/corch.js'))
 chmodSync(join(launcherDir, 'bin/corch.js'), 0o755)
 
+/** Signs a darwin executable, ad hoc or with the Developer ID identity, and checks the signature. */
+function sign(target: Platform, file: string) {
+  const entitlements = join(packaging, ENTITLEMENTS_FILE)
+  run(`signing ${platformKey(target)}`, ['codesign', ...codesignArgs({ file, identity, entitlements })])
+  run(`checking the signature of ${platformKey(target)}`, ['codesign', '--verify', '--strict', file])
+  if (team === null) return
+  // `--display` writes to stderr, and its `Authority` lines name the identity, so it is read here and never printed.
+  const display = Bun.spawnSync(['codesign', '--display', '--verbose=2', file], { stdout: 'pipe', stderr: 'pipe' })
+  if (display.exitCode !== 0) fail(`reading the signature of ${platformKey(target)} failed (exit ${display.exitCode})`)
+  const problems = signatureProblems(display.stderr.toString(), team)
+  if (problems.length > 0) fail(`the signature of ${platformKey(target)} is unusable: ${problems.join('; ')}`)
+}
+
 /** Compiles, signs where needed and lays out the package for `target`. Answers its folder. */
 function buildPlatform(target: Platform): string {
   const dir = join(npm, target.npmName)
@@ -104,10 +132,7 @@ function buildPlatform(target: Platform): string {
   console.log(`\nCompiling ${platformKey(target)} (${buildId})`)
   run(`compiling ${platformKey(target)}`, [process.execPath, ...compileArgs({ target, entry, outfile, buildId })])
   chmodSync(outfile, 0o755)
-  if (target.os === 'darwin') {
-    run(`signing ${platformKey(target)}`, ['codesign', '--force', '--sign', '-', outfile])
-    run(`checking the signature of ${platformKey(target)}`, ['codesign', '--verify', '--strict', outfile])
-  }
+  if (target.os === 'darwin') sign(target, outfile)
   writeFileSync(join(out, 'build', uiHashesName(target)), `${JSON.stringify(uiHashes, null, 2)}\n`)
   return dir
 }

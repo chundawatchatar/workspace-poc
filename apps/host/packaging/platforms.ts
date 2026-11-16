@@ -138,3 +138,53 @@ export function platformManifest(target: Platform, template: LauncherTemplate): 
     files: ['bin/corch'],
   }
 }
+
+/**
+ * The file beside this one holding the entitlements a Developer ID signature
+ * gives `corch` under the hardened runtime: the JIT, unsigned executable
+ * memory and no executable page protection, which Bun's JavaScript engine
+ * needs to start. Bun's codesign guide also lists
+ * `disable-library-validation` and `allow-dyld-environment-variables`; `corch`
+ * loads no native addon and needs no `DYLD_*` variable, and either would let
+ * other code load into a process that holds the machine key.
+ */
+export const ENTITLEMENTS_FILE = 'entitlements.plist'
+
+/**
+ * The arguments after `codesign` that sign a darwin executable. With no identity the signature is ad hoc, which is
+ * enough to run on the machine that built it and in CI. With a Developer ID identity it is the one notarization
+ * accepts: the hardened runtime, a secure timestamp and the committed entitlements, which let Bun's JavaScript engine
+ * compile code at run time.
+ */
+export function codesignArgs({
+  file,
+  identity,
+  entitlements,
+}: {
+  file: string
+  identity: string | null
+  entitlements: string
+}): string[] {
+  if (!identity) return ['--force', '--sign', '-', file]
+  return ['--force', '--sign', identity, '--options', 'runtime', '--timestamp', '--entitlements', entitlements, file]
+}
+
+/** The team id in a Developer ID identity such as `Developer ID Application: Name (ABCDE12345)`; null when it has none. */
+export function identityTeam(identity: string): string | null {
+  return identity.match(/\(([A-Z0-9]{10})\)\s*$/)?.[1] ?? null
+}
+
+/**
+ * What is wrong with a Developer ID signature, from what `codesign --display --verbose=2` writes about it: it must have
+ * the hardened runtime, a secure timestamp and `team`'s id. Empty when it has all three. The problems never quote the
+ * signature, so they name no identity.
+ */
+export function signatureProblems(display: string, team: string): string[] {
+  const flags = display.match(/^CodeDirectory .*\bflags=0x[0-9a-f]+\(([^)]*)\)/m)?.[1]?.split(',') ?? []
+  const problems: string[] = []
+  if (!flags.includes('runtime')) problems.push('it has no hardened runtime')
+  if (flags.includes('adhoc')) problems.push('it is ad hoc')
+  if (!/^Timestamp=/m.test(display)) problems.push('it has no secure timestamp')
+  if (display.match(/^TeamIdentifier=(.*)$/m)?.[1] !== team) problems.push("its team is not the identity's team")
+  return problems
+}
