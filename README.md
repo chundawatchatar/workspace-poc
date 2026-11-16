@@ -82,11 +82,14 @@ yet, so build and install it from the repo:
 
 ```bash
 bun run package:host
-npm i -g dist/package/tarballs/corch-<version>.tgz dist/package/tarballs/corch-<os>-<arch>-<version>.tgz
+npm i -g --offline --ignore-scripts \
+  dist/package/tarballs/corch-<version>.tgz dist/package/tarballs/corch-<os>-<arch>-<version>.tgz
 corch start
 ```
 
-Once a release is published, `npm i -g corch` will do. `corch` then runs the
+Keep `--offline`: the platform packages aren't published yet, so without it npm
+would look their names up in the public registry, where anyone could claim
+them. Once a release is published, `npm i -g corch` will do. `corch` then runs the
 host in the background (`start`, `stop`, `status`, `logs`), takes its settings
 from `corch config`, and can run as a login service (`corch service install`).
 How to install, configure, upgrade and remove it is in the
@@ -143,8 +146,8 @@ How to install, configure, upgrade and remove it is in the
   ends the running programs. Agents can be resumed on their conversation, but a
   turn in progress and other programs, such as a dev server, are lost.
 - The host has no sign-in. It binds to the loopback address, answers only
-  loopback `Host` headers and rejects requests from pages on other origins,
-  which is enough for a local tool only.
+  loopback `Host` headers and rejects requests from pages not served from this
+  machine, which is enough for a local tool only.
 - `corch` is built and smoke-tested on four platforms but not published yet:
   it installs from tarballs built in the repo, and `npm i -g corch` doesn't
   work until a release is out.

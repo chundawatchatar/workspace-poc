@@ -23,16 +23,19 @@ No release is published yet, so today you build the npm packages from the repo a
 ```sh
 bun install
 bun run package:host
-npm i -g dist/package/tarballs/corch-<version>.tgz dist/package/tarballs/corch-<os>-<arch>-<version>.tgz
+npm i -g --offline --ignore-scripts \
+  dist/package/tarballs/corch-<version>.tgz dist/package/tarballs/corch-<os>-<arch>-<version>.tgz
 ```
 
 `package:host` builds this machine's platform and prints the two tarball names, such as `corch-0.1.0.tgz` and
 `corch-darwin-arm64-0.1.0.tgz`. The first is the launcher, the `corch` command; the second holds the executable for
 this platform. The launcher runs that executable with the same arguments and terminal, and exits as it did.
 
-The launcher lists all four platform packages as optional dependencies, so npm still asks its registry for the other
-three. To keep npm off the registry entirely, give it an address where nothing listens, as `bun run test:package`
-does: add `--registry=http://127.0.0.1:9`.
+Keep `--offline`. The launcher lists all four `corch-<os>-<arch>` packages as optional dependencies, and none is
+published yet, so without it npm asks the public registry for those names, this platform's included. Anyone could
+publish a package under one of them, and npm would install it and run its install scripts; one under this
+platform's name could even be run as `corch` in place of the one you built. With `--offline` npm installs the two tarballs, skips the other platforms' packages and never looks a name up.
+`--ignore-scripts` is a second guard: neither package has scripts.
 
 Once a release is published, installing will be one command, and npm will pick the platform package itself:
 
@@ -382,6 +385,8 @@ reboot clear `/tmp`.
   log can hold a connect link, which carries an access key, so don't paste it anywhere.
 - `corch` reads no `.env` or `bunfig.toml`, so a folder you start it from can't change its settings or run code in it.
 - The service runs as your user, never as root.
+- Until a release is published, install only with `--offline`, as in [Install](#install), so npm never fetches an
+  unpublished `corch-<os>-<arch>` name from the public registry.
 
 ## Packaging
 
