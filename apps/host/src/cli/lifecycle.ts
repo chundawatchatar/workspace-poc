@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { closeSync, existsSync, fstatSync, readFileSync } from 'node:fs'
+import { closeSync, existsSync, fstatSync, readFileSync, statSync } from 'node:fs'
 import { instanceResponse, routes } from '@orch/shared'
 import type { SettingFlag } from '../modules/settings/settings.service'
 import { createHostCaller } from '../remote-cli'
@@ -43,7 +43,7 @@ export async function instanceAt(url: string): Promise<string | null> {
 export const hostState = (dataDir: string) => inspectHost(dataDir, instanceAt)
 
 /** The host state once no host is starting, or at `deadline`, whichever comes first. */
-async function waitWhileStarting(dataDir: string, deadline: number): Promise<HostState> {
+export async function waitWhileStarting(dataDir: string, deadline: number): Promise<HostState> {
   let state = await hostState(dataDir)
   while (state.kind === 'starting' && Date.now() < deadline) {
     await Bun.sleep(POLL_MS)
@@ -64,7 +64,46 @@ export function sendSignal(pid: number, signal: NodeJS.Signals) {
   }
 }
 
-const runningLine = (run: RunRecord) => `${run.url} (pid ${run.pid})`
+/**
+ * The host the run file names, when `accept` takes it, its pid is alive and its instance id answers at its address.
+ * Null otherwise. This is how `start` knows a host is ready, whether it spawned the host or a service manager did.
+ */
+export async function readyHost(dataDir: string, accept: (run: RunRecord) => boolean = () => true) {
+  const run = readRunFile(dataDir)?.record
+  if (!run || !accept(run) || !pidAlive(run.pid)) return null
+  return (await instanceAt(run.url)) === run.instanceId ? run : null
+}
+
+/** Waits for `readyHost` to answer a host, until `deadline`. Null when none was ready by then. */
+export async function waitForHost(
+  dataDir: string,
+  deadline: number,
+  accept: (run: RunRecord) => boolean = () => true,
+): Promise<RunRecord | null> {
+  for (;;) {
+    const run = await readyHost(dataDir, accept)
+    if (run || Date.now() >= deadline) return run
+    await Bun.sleep(POLL_MS)
+  }
+}
+
+/**
+ * Waits until the host `run` names has exited and its process files are gone or belong to another host, until
+ * `deadline`. True once it has.
+ */
+export async function waitForExit(dataDir: string, { pid, instanceId }: RunRecord, deadline: number) {
+  const gone = () =>
+    !pidAlive(pid) &&
+    readRunFile(dataDir)?.record?.instanceId !== instanceId &&
+    !(existsSync(lockPath(dataDir)) && readFileSync(lockPath(dataDir), 'utf8').includes(instanceId))
+  while (!gone() && Date.now() < deadline) await Bun.sleep(POLL_MS)
+  return gone()
+}
+
+/** The log's size now, so a failure can show only what was written after it. */
+export const logSize = (dataDir: string) => statSync(logPath(dataDir), { throwIfNoEntry: false })?.size ?? 0
+
+export const runningLine = (run: RunRecord) => `${run.url} (pid ${run.pid})`
 
 /** Reports a host that already runs. Setting flags only apply when a host starts, so it says they were not used. */
 function alreadyRunning(run: RunRecord, flags: Partial<Record<SettingFlag, string>>) {
@@ -144,8 +183,8 @@ export async function start({ dataDir, flags, self }: StartOptions): Promise<num
       printLogTail(dataDir, offset)
       return 1
     }
-    const run = readRunFile(dataDir)?.record
-    if (run && run.pid === child.pid && (await instanceAt(run.url)) === run.instanceId) {
+    const run = await readyHost(dataDir, (found) => found.pid === child.pid)
+    if (run) {
       console.log(`corch is running at ${runningLine(run)}`)
       return 0
     }
@@ -196,15 +235,9 @@ export async function stop(dataDir: string): Promise<number> {
     console.log('corch is not running')
     return 0
   }
-  const { pid, instanceId } = state.run
+  const { pid } = state.run
   sendSignal(pid, 'SIGTERM')
-  const deadline = Date.now() + STOP_TIMEOUT_MS
-  const gone = () =>
-    !pidAlive(pid) &&
-    readRunFile(dataDir)?.record?.instanceId !== instanceId &&
-    !(existsSync(lockPath(dataDir)) && readFileSync(lockPath(dataDir), 'utf8').includes(instanceId))
-  while (!gone() && Date.now() < deadline) await Bun.sleep(POLL_MS)
-  if (!gone()) {
+  if (!(await waitForExit(dataDir, state.run, Date.now() + STOP_TIMEOUT_MS))) {
     console.error(`corch (pid ${pid}) did not stop within ${STOP_TIMEOUT_MS / 1000} s`)
     return 1
   }

@@ -8,6 +8,7 @@ export type CliCommand =
   | { name: 'logs'; all: boolean }
   | { name: 'remote'; args: string[] }
   | { name: 'config'; action: ConfigAction }
+  | { name: 'service'; action: 'install' | 'uninstall' }
   /** A command name `corch` doesn't have, so the caller can name it. */
   | { name: 'unknown'; given: string }
 
@@ -53,6 +54,9 @@ Commands:
   config unset <key> [--yes]
                       Remove a setting from config.json, so its default applies
   config path         Print where config.json is
+  service install     Run the host as a service of your user (launchd or systemd), so it starts at login
+                      and again after a crash; start, stop, restart and status then act through it
+  service uninstall   Remove the service; the host stops and the terminals keep running
 
 Options:
   --data-dir <dir>    The data folder (else CORCH_DATA_DIR, else the default)
@@ -73,21 +77,9 @@ export function parseCliArgs(argv: string[]): CliArgs | null {
   if (!taken) return null
   const { dataDir, rest } = taken
   const [name = 'start', ...args] = rest
-  const alone = (command: CliCommand) => (args.length === 0 ? { command, dataDir } : null)
   if (name === 'remote') return { command: { name, args }, dataDir }
-  if (name === 'terminals')
-    return args.length === 1 && args[0] === 'stop' ? { command: { name: 'terminals-stop' }, dataDir } : null
-  if (name === 'help' || name === '--help' || name === '-h') return alone({ name: 'help' })
-  if (name === 'stop' || name === 'status' || name === 'rotate-key') return alone({ name })
-  if (name === 'logs') {
-    if (args.length === 0 || (args.length === 1 && args[0] === '--all'))
-      return { command: { name, all: args.length === 1 }, dataDir }
-    return null
-  }
-  if (name === 'config') {
-    const action = parseConfigArgs(args)
-    return action ? { command: { name, action }, dataDir } : null
-  }
+  const fixed = parseFixedArgs(name, args)
+  if (fixed !== undefined) return fixed && { command: fixed, dataDir }
   // Bare `corch` with only flags starts the host.
   const [command, flagArgs] = name.startsWith('--') ? ['start', rest] : [name, args]
   if (command !== 'start' && command !== 'run' && command !== 'restart')
@@ -96,6 +88,27 @@ export function parseCliArgs(argv: string[]): CliArgs | null {
   if (!parsed) return null
   if (command === 'run') return { command: { name: command, ...parsed }, dataDir }
   return { command: { name: command, flags: parsed.flags }, dataDir }
+}
+
+/**
+ * A command whose arguments are fixed words: the command, or null when the words are wrong. Undefined for a name
+ * that takes setting flags or names no command.
+ */
+function parseFixedArgs(name: string, args: string[]): CliCommand | null | undefined {
+  const [first] = args
+  const alone = (command: CliCommand) => (args.length === 0 ? command : null)
+  if (name === 'terminals') return args.length === 1 && first === 'stop' ? { name: 'terminals-stop' } : null
+  if (name === 'help' || name === '--help' || name === '-h') return alone({ name: 'help' })
+  if (name === 'stop' || name === 'status' || name === 'rotate-key') return alone({ name })
+  if (name === 'logs')
+    return args.length === 0 || (args.length === 1 && first === '--all') ? { name, all: !!first } : null
+  if (name === 'service')
+    return args.length === 1 && (first === 'install' || first === 'uninstall') ? { name, action: first } : null
+  if (name === 'config') {
+    const action = parseConfigArgs(args)
+    return action && { name, action }
+  }
+  return undefined
 }
 
 /** The `config` subcommand, or null when the arguments don't make one. `--yes` may come anywhere after the name. */

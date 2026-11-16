@@ -19,6 +19,11 @@ describe('parseCliArgs', () => {
     expect(parseCliArgs(['terminals', 'stop'])?.command).toEqual({ name: 'terminals-stop' })
     expect(parseCliArgs(['logs'])?.command).toEqual({ name: 'logs', all: false })
     expect(parseCliArgs(['logs', '--all'])?.command).toEqual({ name: 'logs', all: true })
+    expect(parseCliArgs(['service', 'install', '--data-dir', '/d'])).toEqual({
+      command: { name: 'service', action: 'install' },
+      dataDir: '/d',
+    })
+    expect(parseCliArgs(['service', 'uninstall'])?.command).toEqual({ name: 'service', action: 'uninstall' })
   })
 
   test('reads the config subcommands, with --yes anywhere after the name', () => {
@@ -61,6 +66,10 @@ describe('parseCliArgs', () => {
       ['start', '--background'],
       ['terminals'],
       ['stop', 'now'],
+      ['service'],
+      ['service', 'start'],
+      ['service', 'install', 'now'],
+      ['service', 'install', '--port', '1'],
     ]) {
       expect([argv, parseCliArgs(argv)]).toEqual([argv, null])
     }
