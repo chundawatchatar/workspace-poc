@@ -323,7 +323,16 @@ the address before it calls the host, and refuses a malformed one without repeat
 warning when it isn't the default), the email and the key's last 4 characters, then asks
 `Connect this machine to this account? [y/N]`; any answer but y or yes sends nothing and exits 1, and `--yes` skips
 the question. The running host then saves the address as `relayUrl` in `config.json`, opens the tunnel at once and
-redeems the key. Nothing either command prints holds the key.
+sends the key, and the server holds the request until you answer it in the client. `corch connect` prints
+`Please approve this connect request in the client and check that it shows machine <fingerprint>` and the time left
+on the key, as `mm:ss`, then waits. In the client, check that the request shows the same Machine key fingerprint and
+press Accept; reject any request whose fingerprint isn't the one this machine shows.
+
+It exits 0 with `Connected to <name> (<masked email>) through <server>` once you accept, and 1 with the reason when
+you reject it, cancel it in the Remote access dialog, the key expires, the tunnel drops or the host stops. Ctrl-C,
+while it waits or while the Connect call is on its way, cancels the request, says nothing was linked and exits 1.
+`--yes` skips only the question: the command still waits for your answer. Nothing either command prints holds the
+key.
 
 `corch disconnect` asks `Disconnect this machine from <name> (<masked email>)? [y/N]` (or not, with `--yes`), asks the
 server to remove the machine from the account's list, and forgets the account on the machine either way. When the

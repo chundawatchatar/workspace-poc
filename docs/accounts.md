@@ -226,7 +226,7 @@ both on every request and socket; the server only signs tickets.
   gets 400, and the module never reads request headers.
 - Keys stay in the browser's `localStorage` (`orch-machines`), saved when a connect link is opened. Opening a connect
   link adds nothing to the account: it sends no request to the server, so the machine opens in that browser only and
-  joins the account's list once it is linked with an enrollment key. The home page lists the account's machines, each
+  joins the account's list once the owner accepts its request with an enrollment key. The home page lists the account's machines, each
   with an Open link. A machine page uses a saved key when this browser holds one;
   otherwise it opens a machine the account lists with relay tickets (`createRemoteTransport` with `relayTicket`).
 - Relay tickets: `serverRoutes.machines.relayTicket` (`POST /api/machines/:machineId/relay-ticket`, `auth: 'user'`)
@@ -275,10 +275,16 @@ both on every request and socket; the server only signs tickets.
   `apps/client/src/lib/connectCommand.ts`, which single-quotes a value holding a character a shell would read
   otherwise) and the key alone, for the machine's Remote access dialog, each with a Copy button, the key's last 4
   characters and a countdown to its expiry. The key lives only in the dialog's state, never in the query cache,
-  storage, the URL or a log, so closing the dialog forgets it and opening it again creates a new one. While it is
-  open the machines list is read every 2 seconds, and the first machine that wasn't listed when the key was created
-  is taken to be the one that redeemed it. A machine connected this way opens from any browser signed in to the
-  account.
+  storage, the URL or a log, so closing the dialog forgets it and opening it again creates a new one. The answer also
+  carries the key's `id`, which is the id of the request a machine makes with it. While the key is on screen the
+  dialog reads `serverRoutes.machines.listRequests` every 2 seconds (`requestsQuery` in
+  `apps/client/src/lib/accountMachines.ts`, an `accountQuery`), and once a request with its own `id` waits it shows
+  the machine's name, its fingerprint (`machineFingerprint(machineId)`, worked out in the browser, labelled Machine
+  key to compare with the one the machine shows) and Accept and Reject (`ConnectRequestRow`). Accept answers
+  `<name> is connected` and reads the machine list again; Reject says the machine was not connected; a request that
+  stopped waiting (`not_waiting`) says so in a toast, and nothing was linked. The home page shows every waiting
+  request above the machine list with the same row, read every 10 seconds. A machine connected this way opens from
+  any browser signed in to the account.
 - An access key still crosses the relay in clear only in the handshake and the key bootstrap, the two requests the
   host serves unsealed; every other request and socket carries it sealed. The relay never checks or stores it.
 - A machine's online state comes from the server's in-memory `MachineRegistry`, the same one the relay uses. A host
@@ -287,13 +293,34 @@ both on every request and socket; the server only signs tickets.
   in memory only, so a server restart forgets it, and with more than one server instance both would be wrong (see
   [keeping the machine connected](architecture.md#keeping-the-machine-connected)).
 
-Linking: a machine reaches an account's list only by redeeming an enrollment key over its own tunnel
-(`enroll.redeem`), together with the key owner's email, so knowing a machine's id no longer puts it on an account.
-The server matches the email in any letter case and with any spaces around it, in the same conditional `UPDATE` that
-uses the key, so a wrong email leaves the key unused and gets the same `invalid_key` as an unknown key. Someone who
-holds a key could still guess the owner's email within the machine's enrollment limit and the key's 15 minutes; the
-owner's accept step planned next closes that. The accounts API has no endpoint that links a machine by id
-(`POST /api/machines` answers `not_found`). A machine removes itself with the `unlink` frame on Disconnect: the server
-deletes the row of the account it names for the tunnel's own machine id, through that account's scoped `machines`
-repository, and answers `unlinked` whether or not there was one (`answerUnlinkFrame` in
+Linking: a machine reaches an account's list only when the owner accepts the request it makes over its own tunnel
+with an enrollment key and the key owner's email (`enroll.request`), so knowing a machine's id puts it on no account,
+and neither does holding a key. The server matches the email in any letter case and with any spaces around it, in
+one conditional `UPDATE` that records the request on the key's row (`requestMachineId` from the tunnel's proof,
+`requestName` from the frame, `requestedAt`) only while the key is unused, unexpired and asked with by no other
+machine. Anything else gets the same `invalid_key` and leaves the row as it was. It answers `enroll.waiting` with the
+key's time left, and holds the request in memory (`ConnectRequests` in
+`modules/machines/connect-requests.service.ts`: request id, tunnel, frame id, machine id and expiry, one per tunnel,
+built once in `index.ts` and shared by the tunnel side and the machines module). A request ends when its tunnel
+closes or its key expires; after that it is neither listed nor acceptable, and its key stays unused for the same
+machine to ask again. The owner answers through `serverRoutes.machines`, all `auth: 'user'` with strict inputs, through
+`data` only:
+
+- `listRequests` (`GET /api/machines/requests`) lists the caller's waiting requests (`id`, `machineId`, `name`,
+  `requestedAt`, `expiresAt`), newest first: rows of their own keys that hold a request, unused and unexpired, whose
+  request still waits on that machine's tunnel. It changes nothing.
+- `acceptRequest` (`POST /api/machines/requests/:id/accept`) uses up the key, links the machine through
+  `MachinesService.link` under the name it asked with, sends `enroll.redeemed` on the waiting tunnel (machine id, the
+  caller's `accountId`, name and masked email, relay keys) and answers the linked `ServerMachine`.
+- `rejectRequest` (`POST /api/machines/requests/:id/reject`) uses up the key, sends `enroll.failed` with `rejected`
+  and answers `{ ok: true }`.
+
+Another user's request id gets `not_found`, through the scoped repository; one that stopped waiting (tunnel closed,
+key expired, already answered) gets 409 `not_waiting`. Either way nothing is linked or sent and the key is not used.
+Once answered, the key gets `invalid_key` from any machine. Someone who holds a key and guesses the owner's email
+within the machine's enrollment limit and the key's 15 minutes now only creates a request the owner sees, with the
+fingerprint of that machine, not theirs; the owner rejects it. The accounts API has no endpoint that links a machine
+by id (`POST /api/machines` answers `not_found`). A machine removes itself with the `unlink` frame on Disconnect: the
+server deletes the row of the account it names for the tunnel's own machine id, through that account's scoped
+`machines` repository, and answers `unlinked` whether or not there was one (`answerUnlinkFrame` in
 `modules/machines/enrollment.service.ts`).
