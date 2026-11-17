@@ -53,7 +53,7 @@ startHost({
   build: daemonBuild(devDaemonSourceDir),
   ui,
   packaged,
-  addresses: { SERVER_URL: optionalEnv('SERVER_URL'), CLIENT_URL: optionalEnv('CLIENT_URL') },
+  addresses: { SERVER_URL: optionalEnv('SERVER_URL') },
   hostname: requiredEnv('HOST_HOST'),
   port: Number(requiredEnv('HOST_PORT')),
 })

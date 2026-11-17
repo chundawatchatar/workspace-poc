@@ -1,6 +1,5 @@
 import { parseServerUrl } from '@orch/shared'
 import { z } from 'zod'
-import { clientUrlFromServerUrl, parseClientUrl } from '../remote-access/addresses.service'
 
 /**
  * The server address used when nothing sets one. `orch.example.com` is a
@@ -17,8 +16,8 @@ export type LogLevel = (typeof LOG_LEVELS)[number]
 /** A setting that can't be used, or a settings file that can't be read. Its message names the setting and where it came from. */
 export class SettingsError extends Error {}
 
-/** Where a setting's value came from. `derived` is a client address worked out from the relay address in use. */
-export type SettingSource = 'flag' | 'env' | 'file' | 'default' | 'derived'
+/** Where a setting's value came from. */
+export type SettingSource = 'flag' | 'env' | 'file' | 'default'
 
 /** A resolved setting. `setBy` is the flag or environment variable that set it, and null for any other source. */
 export interface Setting<T> {
@@ -31,11 +30,10 @@ export interface Setting<T> {
 export interface Settings {
   port: Setting<number>
   relayUrl: Setting<string>
-  clientUrl: Setting<string>
   logLevel: Setting<LogLevel>
 }
 
-/** The values used when no flag, environment variable or file sets a setting. The client address is derived instead. */
+/** The values used when no flag, environment variable or file sets a setting. */
 export interface SettingsDefaults {
   port: number
   relayUrl: string
@@ -48,7 +46,6 @@ export const SETTINGS_DEFAULTS: SettingsDefaults = { port: 4599, relayUrl: DEFAU
 export const SETTING_FLAGS = {
   port: '--port',
   relayUrl: '--relay-url',
-  clientUrl: '--client-url',
   logLevel: '--log-level',
 } as const
 
@@ -56,7 +53,6 @@ export const SETTING_FLAGS = {
 export const SETTING_ENV = {
   port: 'CORCH_PORT',
   relayUrl: 'CORCH_RELAY_URL',
-  clientUrl: 'CORCH_CLIENT_URL',
   logLevel: 'CORCH_LOG_LEVEL',
 } as const
 
@@ -78,20 +74,17 @@ export interface SettingsInput {
 const RULES: Record<Key, string> = {
   port: 'must be a whole number from 1 to 65535',
   relayUrl: 'must be wss://<host>, or ws:// on 127.0.0.1, [::1] or localhost',
-  clientUrl: 'must be an http:// or https:// URL',
   logLevel: `must be one of ${LOG_LEVELS.join(', ')}`,
 }
 
 const portNumber = z.number().int().min(1).max(65535)
 const relayUrl = z.string().refine((value) => parseServerUrl(value) !== null)
-const clientUrl = z.string().refine((value) => parseClientUrl(value) !== null)
 const logLevel = z.enum(LOG_LEVELS)
 
 /** Each setting as a flag or an environment variable gives it: a string. */
 const fromText = {
   port: z.string().regex(/^\d+$/).transform(Number).pipe(portNumber),
   relayUrl,
-  clientUrl,
   logLevel,
 }
 
@@ -99,7 +92,6 @@ const fromText = {
 export const settingsFile = z.strictObject({
   port: portNumber.optional(),
   relayUrl: relayUrl.optional(),
-  clientUrl: clientUrl.optional(),
   logLevel: logLevel.optional(),
 })
 export type SettingsFile = z.infer<typeof settingsFile>
@@ -132,9 +124,8 @@ export function settingFromText<K extends SettingKey>(key: K, text: string): Non
 /**
  * Resolves each setting on its own: its flag, else its `CORCH_<NAME>`
  * variable, else the settings file, else the default. An empty flag or
- * variable counts as unset. A client address set nowhere is derived from the
- * relay address that won. Throws `SettingsError` for a bad value or an unknown
- * key in the file, naming the key and where it came from.
+ * variable counts as unset. Throws `SettingsError` for a bad value or an
+ * unknown key in the file, naming the key and where it came from.
  */
 export function loadSettings({ flags, env, file, defaults = SETTINGS_DEFAULTS }: SettingsInput): Settings {
   const saved = parseFile(file)
@@ -151,24 +142,11 @@ export function loadSettings({ flags, env, file, defaults = SETTINGS_DEFAULTS }:
     const value = saved[key]
     return value === undefined ? null : { value: value as z.output<(typeof fromText)[K]>, source: 'file', setBy: null }
   }
-  const relay = resolve('relayUrl') ?? { value: defaults.relayUrl, source: 'default', setBy: null }
   return {
     port: resolve('port') ?? { value: defaults.port, source: 'default', setBy: null },
-    relayUrl: relay,
-    clientUrl: resolve('clientUrl') ?? derivedClientUrl(relay.value),
+    relayUrl: resolve('relayUrl') ?? { value: defaults.relayUrl, source: 'default', setBy: null },
     logLevel: resolve('logLevel') ?? { value: defaults.logLevel, source: 'default', setBy: null },
   }
-}
-
-/**
- * The client address derived from a relay address: `wss:` becomes `https:` and
- * `ws:` becomes `http:`. Throws `SettingsError` for an address that is not
- * `ws(s)://`, which a resolved relay address never is.
- */
-export function derivedClientUrl(relay: string): Setting<string> {
-  const value = clientUrlFromServerUrl(relay)
-  if (value === null) throw new SettingsError(`relayUrl ${RULES.relayUrl}`)
-  return { value, source: 'derived', setBy: null }
 }
 
 /** The file's settings, checked against `settingsFile`. Null means no file, so nothing is set there. */

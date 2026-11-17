@@ -61,7 +61,7 @@ export async function run({ dataDir, flags, background }: RunOptions): Promise<n
       build,
       ui: await packagedUi(),
       packaged: true,
-      // `SERVER_URL` and `CLIENT_URL` are dev-only: the packaged host takes its addresses from its settings.
+      // `SERVER_URL` is dev-only: the packaged host takes its server address from its settings.
       addresses: {},
       hostname: '127.0.0.1',
       port: settings.port.value,

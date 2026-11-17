@@ -36,7 +36,7 @@ const why = unreachable()
 if (why) console.log(`Skipping the service tests against the real manager: ${why}`)
 
 const env = Object.fromEntries(
-  Object.entries(process.env).filter(([key]) => !/^(CORCH_|HOST_|SERVER_URL|CLIENT_URL|ORCH_PTY_RUNTIME)/.test(key)),
+  Object.entries(process.env).filter(([key]) => !/^(CORCH_|HOST_|SERVER_URL|ORCH_PTY_RUNTIME)/.test(key)),
 )
 
 async function freePort(): Promise<number> {

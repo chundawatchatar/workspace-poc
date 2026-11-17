@@ -43,7 +43,7 @@ export interface HostOptions {
   ui: UiSite | null
   /** True for the packaged `corch`, whose hints name `corch` commands. */
   packaged: boolean
-  /** The dev host's `SERVER_URL` and `CLIENT_URL`, which fix the addresses; the packaged host passes none. */
+  /** The dev host's `SERVER_URL`, which fixes the server address; the packaged host passes none. */
   addresses: RemoteAccessEnv
   /** The loopback address to listen on. */
   hostname: string

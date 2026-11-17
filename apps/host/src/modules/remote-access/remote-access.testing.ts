@@ -192,7 +192,6 @@ export interface SavedSetup {
   /** True writes `linked-account.json`, linked through `serverUrl`, or the default when it is null. */
   linked?: boolean
   serverUrl?: string | null
-  clientUrl?: string | null
 }
 
 /** The account a `linked` setup saves, linked through `serverUrl`. */
@@ -217,8 +216,7 @@ export function setup(
 ) {
   if (typeof saved === 'string') writeFileSync(linkedFile(), saved)
   else {
-    const addresses = { relayUrl: saved.serverUrl ?? undefined, clientUrl: saved.clientUrl ?? undefined }
-    if (addresses.relayUrl || addresses.clientUrl) writeFileSync(configFile(), JSON.stringify(addresses))
+    if (saved.serverUrl) writeFileSync(configFile(), JSON.stringify({ relayUrl: saved.serverUrl }))
     if (saved.linked) {
       const through = env.SERVER_URL || saved.serverUrl || DEFAULT_SERVER_URL
       writeFileSync(linkedFile(), JSON.stringify(savedAccount(through)))

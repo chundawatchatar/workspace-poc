@@ -21,7 +21,7 @@ const entry = join(import.meta.dir, '..', 'main.ts')
 // Every `corch` here is the packaged entry run from source: the build id makes it packaged, and `--no-env-file`
 // stands in for the compiled binary's build flags. Nothing reads the dev `.env`, so the dev host is never touched.
 const env = Object.fromEntries(
-  Object.entries(process.env).filter(([key]) => !/^(CORCH_|HOST_|SERVER_URL|CLIENT_URL|ORCH_PTY_RUNTIME)/.test(key)),
+  Object.entries(process.env).filter(([key]) => !/^(CORCH_|HOST_|SERVER_URL|ORCH_PTY_RUNTIME)/.test(key)),
 )
 
 interface Run {

@@ -4,8 +4,6 @@ import { join } from 'node:path'
 import { routes, startBrowserHandshake } from '@orch/shared'
 import { localRequest } from '../../app.testing'
 import type { Principal } from '../../lib/principal'
-import { loadSettings } from '../settings/settings.service'
-import { devAddresses } from './addresses.service'
 import { fingerprintOf } from './device-proof.service'
 import { testDevice } from './device-proof.testing'
 import { DevicesRepository } from './devices.repository'
@@ -86,26 +84,12 @@ describe('RemoteAccessService', () => {
     }
   })
 
-  test('SERVER_URL and CLIENT_URL override the saved addresses', () => {
-    const env = { SERVER_URL: 'wss://relay.example.com', CLIENT_URL: 'https://env.example/' }
-    setup({ linked: true, serverUrl: 'ws://127.0.0.1:4600', clientUrl: 'https://saved.example' }, env)
+  test('SERVER_URL overrides the saved server address', () => {
+    setup({ linked: true, serverUrl: 'ws://127.0.0.1:4600' }, { SERVER_URL: 'wss://relay.example.com' })
     expect(tunnels.map((t) => t.options.url)).toEqual(['wss://relay.example.com/tunnel'])
-    expect(service.status()).toMatchObject({
-      serverUrl: 'wss://relay.example.com',
-      clientUrl: 'https://env.example/',
-      serverUrlSetBy: 'SERVER_URL',
-      clientUrlSetBy: 'CLIENT_URL',
-    })
-
-    // The client address falls back from `CLIENT_URL` to the saved one, then to the server address in use.
-    const link = (file: unknown, env: Record<string, string> = {}) =>
-      devAddresses(loadSettings({ flags: {}, env: {}, file }), env, () => {}).clientUrl.value
-    expect(link({ relayUrl: 'ws://127.0.0.1:4600', clientUrl: 'https://saved.example' })).toBe('https://saved.example')
-    expect(link({ relayUrl: 'ws://127.0.0.1:4600' }, { CLIENT_URL: 'ftp://nope' })).toBe('http://127.0.0.1:4600')
-    expect(link({ relayUrl: 'ws://127.0.0.1:4600' }, { SERVER_URL: 'wss://relay.example.com' })).toBe(
-      'https://relay.example.com',
-    )
-    expect(link(null)).toBe('https://orch.example.com')
+    const status = service.status()
+    expect(status).toMatchObject({ serverUrl: 'wss://relay.example.com', serverUrlSetBy: 'SERVER_URL' })
+    expect(Object.keys(status).filter((key) => key.startsWith('client'))).toEqual([])
   })
 
   test('a linked account file that is not valid leaves the machine not connected, logged and kept', () => {

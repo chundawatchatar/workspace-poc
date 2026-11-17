@@ -62,7 +62,7 @@ describe('host:remote and config.json', () => {
 
     const status = await run(through(app), ['status'])
     expect(status.text).toContain('Server address: ws://localhost:4700\n')
-    expect(status.text).toContain('Client address: derived from the server address\n')
+    expect(status.text).not.toContain('Client address')
     expect(status.text).toContain('Connection:     connected, tunnel connected')
 
     fakeServer.unlink = () => ({ type: 'unlink.failed', id: 1, code: 'unavailable' })
@@ -79,18 +79,18 @@ describe('host:remote and config.json', () => {
     expect(existsSync(linkedFile())).toBe(false)
   })
 
-  test('with the host running, status names the variables that set the addresses', async () => {
-    const app = setup(undefined, { SERVER_URL: 'wss://relay.example.com', CLIENT_URL: 'https://env.example' })
+  test('with the host running, status names the variable that sets the server address', async () => {
+    const app = setup(undefined, { SERVER_URL: 'wss://relay.example.com' })
     const fromEnv = await run(through(app), ['status'])
     expect(fromEnv.text).toContain('Server address: wss://relay.example.com (from SERVER_URL)')
-    expect(fromEnv.text).toContain('Client address: https://env.example (from CLIENT_URL)')
   })
 
   test('with the host stopped, status migrates an old remote-access.json and reads the address from config.json', async () => {
-    const old = { enabled: true, serverUrl: 'wss://host', clientUrl: null }
+    const old = { enabled: true, serverUrl: 'wss://host', clientUrl: 'https://app.example.com' }
     writeFileSync(remoteAccessPath(dir), JSON.stringify(old))
     const status = await run(stopped, ['status'])
     expect(status.text).toContain('Server address: wss://host\n')
+    expect(status.text).not.toContain('Client address')
     // The old switch turns nothing on: only a linked account connects the machine.
     expect(status.text).toContain('Connection:     not connected, tunnel host not running')
     expect(readJson(configFile())).toEqual({ relayUrl: 'wss://host' })

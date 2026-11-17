@@ -1,16 +1,17 @@
 import { describe, expect, test } from 'bun:test'
-import { DEFAULT_SERVER_URL, loadSettings, SettingsError, type SettingsInput } from './settings.service'
+import { DEFAULT_SERVER_URL, loadSettings, type Settings, SettingsError, type SettingsInput } from './settings.service'
 
 const none = { flags: {}, env: {}, file: null }
 
 describe('loadSettings', () => {
-  test('with nothing set, every setting is its default and the client address is derived', () => {
-    expect(loadSettings(none)).toEqual({
+  test('with nothing set, every setting is its default, and CORCH_CLIENT_URL is not read', () => {
+    const defaults: Settings = {
       port: { value: 4599, source: 'default', setBy: null },
       relayUrl: { value: DEFAULT_SERVER_URL, source: 'default', setBy: null },
-      clientUrl: { value: 'https://orch.example.com', source: 'derived', setBy: null },
       logLevel: { value: 'info', source: 'default', setBy: null },
-    })
+    }
+    expect(loadSettings(none)).toEqual(defaults)
+    expect(loadSettings({ ...none, env: { CORCH_CLIENT_URL: 'https://app.example.com' } })).toEqual(defaults)
   })
 
   test('a flag beats CORCH_<NAME>, which beats the file, which beats the default, key by key', () => {
@@ -29,19 +30,6 @@ describe('loadSettings', () => {
     expect(
       loadSettings({ ...none, defaults: { port: 1, relayUrl: 'ws://127.0.0.1:1', logLevel: 'error' } }),
     ).toMatchObject({ port: { value: 1, source: 'default' }, logLevel: { value: 'error', source: 'default' } })
-  })
-
-  test('the client address is derived from whichever relay address won, unless something sets it', () => {
-    const file = { relayUrl: 'ws://127.0.0.1:4600/base/' }
-    expect(loadSettings({ flags: {}, env: {}, file }).clientUrl).toEqual({
-      value: 'http://127.0.0.1:4600/base',
-      source: 'derived',
-      setBy: null,
-    })
-    const flags = { '--relay-url': 'wss://flag.example.com' }
-    expect(loadSettings({ flags, env: {}, file }).clientUrl.value).toBe('https://flag.example.com')
-    const set = loadSettings({ flags, env: { CORCH_CLIENT_URL: 'https://app.example.com' }, file })
-    expect(set.clientUrl).toEqual({ value: 'https://app.example.com', source: 'env', setBy: 'CORCH_CLIENT_URL' })
   })
 
   test('a bad value or an unknown key throws a SettingsError naming the key and where it came from', () => {
