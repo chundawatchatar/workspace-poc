@@ -322,7 +322,11 @@ kept in `devices.json` in the data folder (public keys only; delete it to approv
 again); Revoke takes one away and closes what it has open. Every browser must
 be approved once, and an older page, which sends no proof, is refused.
 
-The setting's Sessions list shows the approved browsers with sockets open
+While the machine is connected to an account, the local page's sidebar shows
+the remote access status above its footer (Connected, Connection lost,
+Reconnecting…, read every 5 seconds), and clicking it opens Sessions and Recent
+activity in their own dialog; the Remote access setting no longer shows them.
+Sessions shows the approved browsers with sockets open
 through the tunnel right now, polled every 2 seconds: one row per browser, with
 its fingerprint, `Account` and/or `Key <name>` for what it came in with, how
 many sockets it holds and when the first one opened. Sockets still waiting for
@@ -330,9 +334,11 @@ their auth message aren't counted, and tunneled HTTP requests, which hold
 nothing open, aren't shown. End closes that browser's sockets with 4401 but
 leaves it approved, so its page stops at "access denied" and a reload opens the
 machine again; Revoke it under Devices to remove it for good. `bun run
-host:remote sessions` prints the same list. Like the rest of the setting, both
-are refused through the tunnel, and the list lives only in the running host's
-memory.
+host:remote sessions` prints the same list. Like the Remote access setting,
+both are refused through the tunnel, and the list lives only in the running
+host's memory. Recent activity, beside it, is the host's audit log (see
+[architecture](architecture.md)); while no account is linked the status isn't
+shown, so read it with `bun run host:remote log`.
 
 Anything else gets the same refusal as a wrong key. Access keys from connect
 links need the same approval: through the tunnel a request that carries a key
