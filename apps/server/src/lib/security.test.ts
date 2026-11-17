@@ -1,6 +1,8 @@
-import { describe, expect, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { createTestDomain, type TestDomain } from '@orch/domain/testing'
 import { DEVICE_PROOF_HEADER, machinePathPrefix, RELAY_TICKET_HEADER } from '@orch/shared'
 import { createApp } from '../app'
+import { accountsTestDeps } from '../modules/auth/auth.testing'
 import { ChannelBridge } from '../modules/bridge/bridge.service'
 import { HttpForwarder } from '../modules/forward/forward.service'
 import { ConnectionLimiter } from '../modules/limits/limits.service'
@@ -10,11 +12,22 @@ import { SECURITY_HEADERS } from './security'
 const host = 'orch.example'
 const allowed = 'http://127.0.0.1:3220'
 
+let domain: TestDomain
+
+beforeAll(async () => {
+  domain = await createTestDomain({ log: () => {} })
+})
+
+afterAll(async () => {
+  await domain.close()
+})
+
 /** The server's app with no machines, allowing `allowed` as a cross origin. */
 function setup() {
   const registry = new MachineRegistry()
   const app = createApp({
     registry,
+    ...accountsTestDeps(domain, registry).deps,
     forwarder: new HttpForwarder({ registry }),
     bridge: new ChannelBridge({ registry }),
     limiter: new ConnectionLimiter(),

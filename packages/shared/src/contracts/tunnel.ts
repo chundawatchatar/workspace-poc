@@ -220,8 +220,10 @@ export const enrollRedeemedFrame = z.strictObject({
  * Answers `enroll.request` when it fails. As the first answer, `invalid_key`
  * covers an unknown, used, expired and malformed key, an email that isn't the
  * key owner's and a key another machine asked with, alike; `rate_limited` and
- * `unavailable` describe the machine or the server, not the key. As the final
- * answer, `rejected` means the owner rejected the request in the client.
+ * `unavailable` describe the machine or the server, not the key, where
+ * `unavailable` means the server failed while answering, such as on a database
+ * error. As the final answer, `rejected` means the owner rejected the request
+ * in the client.
  */
 export const enrollFailedFrame = z.strictObject({
   type: z.literal('enroll.failed'),
@@ -240,7 +242,7 @@ export const unlinkFrame = z.strictObject({ type: z.literal('unlink'), id, accou
 /** Answers `unlink` with the same `id`, whether or not the account listed the machine. */
 export const unlinkedFrame = z.strictObject({ type: z.literal('unlinked'), id })
 
-/** Answers `unlink` when the server could not do it: `rate_limited`, or `unavailable` when accounts are off or it failed. */
+/** Answers `unlink` when the server could not do it: `rate_limited`, or `unavailable` when it failed while answering. */
 export const unlinkFailedFrame = z.strictObject({
   type: z.literal('unlink.failed'),
   id,

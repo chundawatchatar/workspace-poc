@@ -1,8 +1,10 @@
-import { describe, expect, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { createTestDomain, type TestDomain } from '@orch/domain/testing'
 import { defineServerContract } from '@orch/shared'
 import { z } from 'zod'
 import { type AppDeps, createApp } from './app'
 import { createServerRouter } from './lib/createServerRouter'
+import { accountsTestDeps } from './modules/auth/auth.testing'
 import { ChannelBridge } from './modules/bridge/bridge.service'
 import { HttpForwarder } from './modules/forward/forward.service'
 import { ConnectionLimiter } from './modules/limits/limits.service'
@@ -21,11 +23,22 @@ const stubContract = defineServerContract({
 
 const stubModule = () => createServerRouter(stubContract, { ping: async () => ({ pong: true }) })
 
+let domain: TestDomain
+
+beforeAll(async () => {
+  domain = await createTestDomain({ log: () => {} })
+})
+
+afterAll(async () => {
+  await domain.close()
+})
+
 function setup(deps: Partial<AppDeps> = {}) {
   const registry = new MachineRegistry()
   const site = { root: '/nonexistent-orch-site', indexHtml: new TextEncoder().encode('<!doctype html>'), csp: 'x' }
   const app = createApp({
     registry,
+    ...accountsTestDeps(domain, registry).deps,
     forwarder: new HttpForwarder({ registry }),
     bridge: new ChannelBridge({ registry }),
     limiter: new ConnectionLimiter(),
@@ -51,8 +64,7 @@ describe('server API', () => {
     expect(await (await request('/machines')).text()).toBe('<!doctype html>')
   })
 
-  test('mounts the accounts modules only when accounts are configured', async () => {
-    expect((await setup({ accounts: null })('/api/stub')).status).toBe(404)
+  test('mounts the accounts modules under `/api`', async () => {
     expect(await (await setup({ accounts: { modules: [stubModule] } })('/api/stub')).json()).toEqual({ pong: true })
   })
 })

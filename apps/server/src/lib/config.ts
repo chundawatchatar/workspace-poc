@@ -1,7 +1,7 @@
 import { parseServerUrl, type RelayKey, relayKey } from '@orch/shared'
 import { z } from 'zod'
 
-/** The settings for the accounts side: the database, Better Auth and the mailer. */
+/** The accounts settings: the database, Better Auth, the mailer, relay tickets and the tunnel address. */
 export interface AccountsConfig {
   databaseUrl: string
   /** At least 32 bytes. Never log it. */
@@ -24,8 +24,8 @@ export interface AccountsConfig {
 
 /** The server's validated settings. */
 export interface ServerConfig {
-  /** Null means accounts are off (`DATABASE_URL` is unset), so only the relay, the client and `/api/health` run. */
-  accounts: AccountsConfig | null
+  /** Every one of them is required, so a server without them refuses to start. */
+  accounts: AccountsConfig
   /** Exact origins, besides the server's own, that may send non-GET requests to the server API. */
   trustedOrigins: string[]
 }
@@ -82,10 +82,6 @@ const trustedOrigins = z
     })
   })
 
-const baseSchema = z.object({
-  SERVER_TRUSTED_ORIGINS: z.preprocess(blankAsUnset, trustedOrigins),
-})
-
 // `<kid>:<value>`, with a 1 to 32 character key id and a 32-byte value in unpadded base64url.
 const KEY_ENTRY = /^([A-Za-z0-9_-]{1,32}):([A-Za-z0-9_-]{43})$/
 
@@ -129,7 +125,8 @@ const relayExtraPublicKeys = z
     ),
   )
 
-const accountsSchema = z.object({
+const schema = z.object({
+  SERVER_TRUSTED_ORIGINS: z.preprocess(blankAsUnset, trustedOrigins),
   DATABASE_URL: z.preprocess(blankAsUnset, urlWithProtocol(['postgres:', 'postgresql:'], 'must be a postgres:// URL')),
   BETTER_AUTH_SECRET: z.preprocess(
     blankAsUnset,
@@ -150,33 +147,29 @@ const accountsSchema = z.object({
 })
 
 /**
- * Reads and checks the server's settings from `env`. Accounts are on only
- * when `DATABASE_URL` is set, and then every accounts variable is required.
- * Throws a `ServerConfigError` listing every problem.
+ * Reads and checks the server's settings from `env`. Every accounts variable
+ * is required; `RELAY_EXTRA_PUBLIC_KEYS` and `SERVER_TRUSTED_ORIGINS` are
+ * optional. Throws a `ServerConfigError` listing every problem.
  */
 export function loadServerConfig(env: Record<string, string | undefined>): ServerConfig {
-  const problems: string[] = []
-  const base = baseSchema.safeParse(env)
-  if (!base.success) problems.push(...describe(base.error))
-  const accounts = blankAsUnset(env.DATABASE_URL) !== undefined ? accountsSchema.safeParse(env) : null
-  if (accounts && !accounts.success) problems.push(...describe(accounts.error))
-  if (problems.length > 0 || !base.success) {
-    throw new ServerConfigError(`Invalid server settings:\n${problems.map((line) => `  - ${line}`).join('\n')}`)
+  const parsed = schema.safeParse(env)
+  if (!parsed.success) {
+    const problems = describe(parsed.error).map((line) => `  - ${line}`)
+    throw new ServerConfigError(`Invalid server settings:\n${problems.join('\n')}`)
   }
+  const { data } = parsed
   return {
-    trustedOrigins: base.data.SERVER_TRUSTED_ORIGINS,
-    accounts: accounts?.success
-      ? {
-          databaseUrl: accounts.data.DATABASE_URL,
-          betterAuthSecret: accounts.data.BETTER_AUTH_SECRET,
-          betterAuthUrl: accounts.data.BETTER_AUTH_URL,
-          smtpUrl: accounts.data.SMTP_URL,
-          mailFrom: accounts.data.MAIL_FROM,
-          relaySigningKey: accounts.data.RELAY_SIGNING_KEY,
-          relayExtraPublicKeys: accounts.data.RELAY_EXTRA_PUBLIC_KEYS,
-          serverTunnelUrl: accounts.data.SERVER_TUNNEL_URL,
-        }
-      : null,
+    trustedOrigins: data.SERVER_TRUSTED_ORIGINS,
+    accounts: {
+      databaseUrl: data.DATABASE_URL,
+      betterAuthSecret: data.BETTER_AUTH_SECRET,
+      betterAuthUrl: data.BETTER_AUTH_URL,
+      smtpUrl: data.SMTP_URL,
+      mailFrom: data.MAIL_FROM,
+      relaySigningKey: data.RELAY_SIGNING_KEY,
+      relayExtraPublicKeys: data.RELAY_EXTRA_PUBLIC_KEYS,
+      serverTunnelUrl: data.SERVER_TUNNEL_URL,
+    },
   }
 }
 

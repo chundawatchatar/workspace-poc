@@ -1,7 +1,7 @@
 import type { Principal } from '@orch/domain'
 import type { TestDomain } from '@orch/domain/testing'
 import type { Hono } from 'hono'
-import { createApp } from '../../app'
+import { type AppDeps, createApp } from '../../app'
 import { clientIpReader } from '../../lib/clientIp'
 import { createAccountModule } from '../account/account.routes'
 import { ChannelBridge } from '../bridge/bridge.service'
@@ -154,27 +154,44 @@ export function authTestClient({
   }
 }
 
-/** What a test may change in `accountsTestApp`. */
-export interface AccountsTestAppOptions {
+/** What a test may change in `accountsTestDeps` and `accountsTestApp`. */
+export interface AccountsTestOptions {
   /** The clock enrollment keys are created and checked by. Defaults to the current time. */
   now?: () => Date
-  /** Defaults to a limiter with the production limits. */
-  limiter?: ConnectionLimiter
   /** Passed to `createAuth`, told the user id of each session Better Auth ends. */
   onSessionEnded?: (userId: string) => unknown
 }
 
 /**
- * An app with accounts on over `domain`, as `index.ts` builds it: Better Auth,
- * the account and machines endpoints, with the real `authenticate` and
- * `forUser`, the enrollment service the tunnel answers with, the `requests`
- * it holds for the machines module to answer, and the `registry` the machines
- * module reads online state from.
+ * The enrollment service over `domain`, as `index.ts` builds it, holding its
+ * requests in `requests`.
  */
-export function accountsTestApp(
+export function testEnrollment(
   domain: TestDomain,
-  ipPrefix: string,
-  { now, limiter, onSessionEnded }: AccountsTestAppOptions = {},
+  registry: MachineRegistry,
+  { requests = new ConnectRequests(), now }: { requests?: ConnectRequests; now?: () => Date } = {},
+): EnrollmentService {
+  return new EnrollmentService({
+    byKey: () => domain.skipAuthorization(ENROLLMENT_LOOKUP_REASON),
+    forUser: (principal) => domain.forUser(principal),
+    registry,
+    requests,
+    now,
+  })
+}
+
+/**
+ * The accounts side of `createApp` over `domain`, as `index.ts` builds it: the
+ * `api` with the real `authenticate` and `forUser`, the Better Auth, account
+ * and machines modules, and the enrollment service the tunnel answers with.
+ * Also answers the capture transport the mailer sends through, the `requests`
+ * the enrollment service holds for the machines module to answer, and the
+ * relay tickets the machines module signs.
+ */
+export function accountsTestDeps(
+  domain: TestDomain,
+  registry: MachineRegistry,
+  { now, onSessionEnded }: AccountsTestOptions = {},
 ) {
   const mail = createCaptureTransport()
   const auth = createAuth({
@@ -185,27 +202,12 @@ export function accountsTestApp(
     trustedOrigins: [TEST_TRUSTED_ORIGIN],
     onSessionEnded,
   })
-  const registry = new MachineRegistry()
   const forUser = (principal: Principal) => domain.forUser(principal)
   const relayTickets = new RelayTickets({ signingKey: TEST_RELAY_SIGNING_KEY, now })
   const requests = new ConnectRequests()
-  const app = createApp({
-    registry,
-    forwarder: new HttpForwarder({ registry }),
-    bridge: new ChannelBridge({ registry }),
-    limiter: limiter ?? new ConnectionLimiter(),
-    api: {
-      trustedOrigins: [TEST_TRUSTED_ORIGIN],
-      authenticate: createAuthenticate({ auth }),
-      forUser,
-    },
-    enrollment: new EnrollmentService({
-      byKey: () => domain.skipAuthorization(ENROLLMENT_LOOKUP_REASON),
-      forUser,
-      registry,
-      requests,
-      now,
-    }),
+  const deps = {
+    api: { trustedOrigins: [TEST_TRUSTED_ORIGIN], authenticate: createAuthenticate({ auth }), forUser },
+    enrollment: testEnrollment(domain, registry, { requests, now }),
     accounts: {
       modules: [
         createAuthModule({ auth, clientIp: clientIpReader({ trustProxy: false }) }),
@@ -213,6 +215,34 @@ export function accountsTestApp(
         createMachinesModule({ registry, requests, now, relayTickets, serverTunnelUrl: TEST_SERVER_TUNNEL_URL }),
       ],
     },
+  } satisfies Pick<AppDeps, 'api' | 'enrollment' | 'accounts'>
+  return { deps, mail, requests, relayTickets }
+}
+
+/** What a test may change in `accountsTestApp`. */
+export interface AccountsTestAppOptions extends AccountsTestOptions {
+  /** Defaults to a limiter with the production limits. */
+  limiter?: ConnectionLimiter
+}
+
+/**
+ * An app over `domain`, as `index.ts` builds it, with the accounts side from
+ * `accountsTestDeps` and the `registry` the machines module reads online
+ * state from.
+ */
+export function accountsTestApp(
+  domain: TestDomain,
+  ipPrefix: string,
+  { limiter, ...options }: AccountsTestAppOptions = {},
+) {
+  const registry = new MachineRegistry()
+  const { deps, mail, requests, relayTickets } = accountsTestDeps(domain, registry, options)
+  const app = createApp({
+    registry,
+    forwarder: new HttpForwarder({ registry }),
+    bridge: new ChannelBridge({ registry }),
+    limiter: limiter ?? new ConnectionLimiter(),
+    ...deps,
   })
   return {
     app,

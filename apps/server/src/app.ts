@@ -26,13 +26,10 @@ export type AppDeps = Omit<TunnelSocketDeps, 'onFrame' | 'onClose' | 'clientIp'>
     trustProxy?: boolean
     /** What the server API's routers share: the trusted origins and the `authenticate` hook. */
     api?: ServerRouterOptions
-    /** The accounts modules of the server API. Null or missing means accounts are off, and none is mounted. */
-    accounts?: { modules: readonly ApiModule[] } | null
-    /**
-     * Answers the tunnel's `enroll.request` and `unlink` frames, and ends a closed tunnel's waiting request. Null or
-     * missing means accounts are off, and the frames get `unavailable`.
-     */
-    enrollment?: Pick<EnrollmentService, 'request' | 'unlink' | 'connectionClosed'> | null
+    /** The accounts modules of the server API: Better Auth, the account endpoints and the machines endpoints. */
+    accounts: { modules: readonly ApiModule[] }
+    /** Answers the tunnel's `enroll.request` and `unlink` frames, and ends a closed tunnel's waiting request. */
+    enrollment: Pick<EnrollmentService, 'request' | 'unlink' | 'connectionClosed'>
   }
 
 /**
@@ -85,7 +82,7 @@ export function createApp(deps: AppDeps): Hono {
         forwarder.connectionClosed(conn)
         bridge.connectionClosed(conn)
         // A request lives only as long as its tunnel, so the owner can no longer accept it.
-        deps.enrollment?.connectionClosed(conn)
+        deps.enrollment.connectionClosed(conn)
       },
     }),
   )
@@ -93,7 +90,7 @@ export function createApp(deps: AppDeps): Hono {
   app.route('/', createBridgeSocket({ ...deps, ...limits }))
   const api = deps.api ?? {}
   app.route('/', createSystemRoutes(api))
-  for (const module of deps.accounts?.modules ?? []) app.route('/', module(api))
+  for (const module of deps.accounts.modules) app.route('/', module(api))
   app.all('/api', () => serverErrorResponse(404, 'not_found'))
   app.all('/api/*', () => serverErrorResponse(404, 'not_found'))
   app.route('/', createStaticRoutes(deps))

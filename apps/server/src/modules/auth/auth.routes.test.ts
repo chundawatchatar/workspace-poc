@@ -13,7 +13,7 @@ import { type CaptureTransport, createCaptureTransport } from '../mailer/mailer.
 import { MachineRegistry } from '../tunnel/tunnel.service'
 import { createAuthModule } from './auth.routes'
 import { createAuth } from './auth.service'
-import { authTestClient, cookiePair, linkToken, sessionSetCookie, TEST_PASSWORD } from './auth.testing'
+import { authTestClient, cookiePair, linkToken, sessionSetCookie, TEST_PASSWORD, testEnrollment } from './auth.testing'
 
 const BASE = 'http://orch.example'
 const TRUSTED = 'https://app.example'
@@ -46,6 +46,7 @@ beforeAll(async () => {
     bridge: new ChannelBridge({ registry }),
     limiter: new ConnectionLimiter(),
     accounts: { modules: [createAuthModule({ auth, clientIp: clientIpReader({ trustProxy: false }) })] },
+    enrollment: testEnrollment(domain, registry),
   })
   client = authTestClient({ app, mail, base: BASE, ipPrefix: '10.0.0' })
 })

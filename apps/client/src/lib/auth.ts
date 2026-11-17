@@ -35,8 +35,8 @@ export function authClient(): ReturnType<typeof createClient> {
 }
 
 /**
- * The session: the signed-in user, or null when signed out. A server without accounts (404) also reads as signed
- * out. It refetches when the window regains focus, which is how a sign-out in another tab is noticed.
+ * The session: the signed-in user, or null when signed out (401). Any other error status, a 404 included, throws.
+ * It refetches when the window regains focus, which is how a sign-out in another tab is noticed.
  */
 export const sessionQuery = queryOptions<SessionUser | null>({
   queryKey: ['session'],
@@ -46,7 +46,7 @@ export const sessionQuery = queryOptions<SessionUser | null>({
   queryFn: async () => {
     const { data, error } = await authClient().getSession()
     if (error) {
-      if (error.status === 401 || error.status === 404) return null
+      if (error.status === 401) return null
       throw new Error(`Reading the session failed with ${error.status}.`)
     }
     if (!data?.user) return null

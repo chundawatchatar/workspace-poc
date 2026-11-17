@@ -333,6 +333,32 @@ describe('connect requests over the tunnel', () => {
     // Same IP, another machine: the bucket is per machine id.
     expect(await (await machine()).request(unknownKey(), 'a@test.example')).toMatchObject({ code: 'invalid_key' })
   })
+
+  test('a database error answers `unavailable`, never `invalid_key`, and logs no key, email or error', async () => {
+    const logs = (['log', 'info', 'warn', 'error'] as const).map((method) =>
+      spyOn(console, method).mockImplementation(() => {}),
+    )
+    const ada = await signedIn('Ada')
+    const { key } = await createKey(ada)
+    // A driver error can quote the query's parameters, so this one does.
+    const failure = () => {
+      throw new Error(`connection refused while running a query with ${key} and ${ada.email}`)
+    }
+    const broken = [
+      spyOn(domain, 'skipAuthorization').mockImplementation(failure),
+      spyOn(domain, 'forUser').mockImplementation(failure),
+    ]
+    const box = await machine()
+    expect(await box.request(key, ada.email)).toEqual({ type: 'enroll.failed', id: 1, code: 'unavailable' })
+    expect(await box.unlink(ada.userId)).toEqual({ type: 'unlink.failed', id: 2, code: 'unavailable' })
+    for (const spy of broken) spy.mockRestore()
+
+    expect((await enrollmentRow(key))?.requestMachineId).toBeNull()
+    expect(seen(logs)).toContain('account frame failed')
+    for (const line of seen(logs)) {
+      for (const secret of [key, ada.email, ada.userId, 'connection refused']) expect(line).not.toContain(secret)
+    }
+  })
 })
 
 describe("the owner's answer", () => {
