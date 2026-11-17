@@ -1,14 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import {
-  type AuditLogEntry,
-  type DevicesResponse,
-  fingerprintKey,
-  formatLocalDateTime,
-  type LinkedAccount,
-  type RemoteAccessStatus,
-  type RemoteSession,
-  routes,
-} from '@orch/shared'
+import { type DevicesResponse, fingerprintKey, type LinkedAccount, type RemoteAccessStatus, routes } from '@orch/shared'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -37,14 +28,9 @@ const notWaiting = (typed: string) =>
 
 /**
  * Renders the dialog against a fake host that answers the connect and device endpoints and records what it was sent.
- * `linked` starts it linked, with two browsers waiting and one approved. `auditLog` is what its audit log
- * holds at first, and `audit.entries` later; null makes that request fail.
+ * `linked` starts it linked, with two browsers waiting and one approved. `requested` lists every path it was asked for.
  */
-function setup({
-  linked = false,
-  auditLog = [] as AuditLogEntry[] | null,
-  address = {} as Partial<RemoteAccessStatus>,
-} = {}) {
+function setup({ linked = false, address = {} as Partial<RemoteAccessStatus> } = {}) {
   const seenAt = '2026-11-04T12:05:00.000Z'
   let devices: DevicesResponse = {
     pending: [
@@ -76,19 +62,15 @@ function setup({
   }
   // Whether the fake server removes the machine on disconnect.
   const server = { removes: true }
-  // The fake host's open sessions; a test sets them to stand for browsers connecting.
-  const live = { sessions: [] as RemoteSession[] }
-  const audit = { entries: auditLog }
   const reads: Record<string, () => Response> = {
     [routes.remoteAccess.status.path]: () => Response.json(status),
     [routes.remoteAccess.devices.path]: () => Response.json(devices),
-    [routes.remoteAccess.sessions.path]: () => Response.json(live),
-    [routes.remoteAccess.auditLog.path]: () =>
-      audit.entries ? Response.json(audit) : new Response('the host stopped', { status: 500 }),
   }
   const sent: [string, unknown][] = []
+  const requested: string[] = []
   const transport: HostTransport = {
     request: async (path, init) => {
+      requested.push(path)
       const read = reads[path]
       if (read) return read()
       const body: unknown = JSON.parse(String(init.body))
@@ -125,17 +107,11 @@ function setup({
       }
       if (path === routes.remoteAccess.removeDevice.path) {
         const { id } = body as { id: string }
-        live.sessions = live.sessions.filter((session) => session.deviceId !== id)
         devices = {
           pending: devices.pending.filter((d) => d.id !== id),
           approved: devices.approved.filter((d) => d.id !== id),
         }
         return Response.json(devices)
-      }
-      if (path === routes.remoteAccess.endSession.path) {
-        const { id } = body as { id: string }
-        live.sessions = live.sessions.filter((session) => session.deviceId !== id)
-        return Response.json(live)
       }
       throw new Error(`Unexpected request: ${path}`)
     },
@@ -155,13 +131,13 @@ function setup({
     dialog.current.unmount()
     dialog.current = open()
   }
-  return { sent, queryClient, live, audit, server, owner, reopen }
+  return { sent, requested, queryClient, server, owner, reopen }
 }
 
 describe('RemoteAccessSetting', () => {
   test('connects with the address in use after a confirm step, waits for the accept, keeps a refused attempt, and caches neither key nor email', async () => {
     const user = userEvent.setup()
-    const { sent, queryClient, owner, reopen } = setup()
+    const { sent, requested, queryClient, owner, reopen } = setup()
     expect(await screen.findByText('Not connected')).toBeInTheDocument()
     const server = screen.getByRole('textbox', { name: 'Server address' })
     await waitFor(() => expect(server).toHaveValue('wss://relay.example.com'))
@@ -210,6 +186,12 @@ describe('RemoteAccessSetting', () => {
     expect(await screen.findByRole('textbox', { name: 'Email' })).toHaveValue('')
     expect(screen.getByRole('textbox', { name: 'Key' })).toHaveValue('')
     expect(screen.getByRole('textbox', { name: 'Server address' })).toHaveValue('wss://relay.example.com')
+
+    // Sessions and Recent activity have their own dialog, so this one never asks for them.
+    expect(screen.queryByRole('region', { name: 'Sessions' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Recent activity' })).not.toBeInTheDocument()
+    expect(requested).not.toContain(routes.remoteAccess.sessions.path)
+    expect(requested).not.toContain(routes.remoteAccess.auditLog.path)
   })
 
   test('Cancel ends a waiting request, and the form comes back with why it ended', async () => {
@@ -280,37 +262,6 @@ describe('RemoteAccessSetting', () => {
     ])
   })
 
-  test('Sessions picks up a connected browser within a poll, End closes it, and Revoke drops its session', async () => {
-    const user = userEvent.setup()
-    const { sent, live } = setup({ linked: true })
-    const section = await screen.findByRole('region', { name: 'Sessions' })
-    expect(section).toHaveTextContent('No browser is connected through the tunnel.')
-
-    const session = (device: typeof deviceA): RemoteSession => ({
-      deviceId: device.id,
-      fingerprint: device.fingerprint,
-      credentials: [{ kind: 'account' }],
-      sockets: 2,
-      startedAt: '2026-11-04T12:10:00.000Z',
-    })
-    live.sessions = [session(deviceA), session(deviceC)]
-    const end = await screen.findByRole('button', { name: `End ${deviceA.fingerprint}` }, { timeout: 3000 })
-    expect(section).toHaveTextContent('Account · 2 sockets')
-
-    await user.click(end)
-    await waitFor(() =>
-      expect(screen.queryByRole('button', { name: `End ${deviceA.fingerprint}` })).not.toBeInTheDocument(),
-    )
-    await user.click(screen.getByRole('button', { name: `Revoke ${deviceC.fingerprint}` }))
-    await waitFor(() =>
-      expect(screen.queryByRole('button', { name: `End ${deviceC.fingerprint}` })).not.toBeInTheDocument(),
-    )
-    expect(sent).toEqual([
-      [routes.remoteAccess.endSession.path, { id: deviceA.id }],
-      [routes.remoteAccess.removeDevice.path, { id: deviceC.id }],
-    ])
-  })
-
   test('a fingerprint no browser is waiting with shows the host message once and keeps the typed text', async () => {
     const user = userEvent.setup()
     const { sent } = setup({ linked: true })
@@ -323,48 +274,5 @@ describe('RemoteAccessSetting', () => {
     expect(field).toHaveValue('ZZZZ-ZZZZ')
     expect(sent).toEqual([[routes.remoteAccess.approveDevice.path, { fingerprint: 'ZZZZ-ZZZZ' }]])
     expect(screen.getByRole('list', { name: 'Approved' })).not.toHaveTextContent(deviceA.fingerprint)
-    expect(screen.getByRole('region', { name: 'Recent activity' })).toHaveTextContent('No remote access recorded yet.')
-  })
-
-  test('Recent activity says when it could not load, then shows sessions and refusals within a poll', async () => {
-    const openedAt = '2026-11-04T12:00:00.000Z'
-    const closedAt = '2026-11-04T12:30:00.000Z'
-    const { audit } = setup({ auditLog: null })
-    const section = await screen.findByRole('region', { name: 'Recent activity' })
-    expect(await within(section).findByText("Couldn't load recent activity.")).toBeInTheDocument()
-    audit.entries = [
-      {
-        kind: 'refused',
-        reason: 'device_not_approved',
-        at: closedAt,
-        fingerprint: deviceA.fingerprint,
-        principal: 'account',
-      },
-      {
-        kind: 'session',
-        session: 's2',
-        principal: 'key',
-        keyId: 'k1',
-        fingerprint: deviceB.fingerprint,
-        openedAt,
-        closedAt: null,
-      },
-      {
-        kind: 'session',
-        session: 's1',
-        principal: 'account',
-        accountId: 'u1',
-        fingerprint: deviceC.fingerprint,
-        openedAt,
-        closedAt,
-      },
-    ]
-    const list = await within(section).findByRole('list', { name: 'Recent remote access' }, { timeout: 3000 })
-    const rows = within(list).getAllByRole('listitem')
-    expect(rows.map((row) => row.textContent)).toEqual([
-      `Refused: browser not approved${formatLocalDateTime(closedAt)}${deviceA.fingerprint}`,
-      `${deviceB.fingerprint}With access key k1Opened ${formatLocalDateTime(openedAt)}, still open or not recorded`,
-      `${deviceC.fingerprint}Through the accountOpened ${formatLocalDateTime(openedAt)}, closed ${formatLocalDateTime(closedAt)}`,
-    ])
   })
 })

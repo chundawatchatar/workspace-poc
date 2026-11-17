@@ -2,15 +2,14 @@ import type { RemoteAccessStatus } from '@orch/shared'
 import { useState } from 'react'
 import { Check, Copy, Link } from './icons'
 import { Modal } from './Modal'
-import { RemoteAccessActivity, type RemoteAccessActivityProps } from './RemoteAccessActivity'
 import { RemoteAccessConnect, type RemoteAccessConnectProps } from './RemoteAccessConnect'
 import { RemoteAccessDevices, type RemoteAccessDevicesProps } from './RemoteAccessDevices'
-import { RemoteAccessSessions, type RemoteAccessSessionsProps } from './RemoteAccessSessions'
 
 /** How the status dot is coloured. */
 export type RemoteAccessTone = 'good' | 'warn' | 'bad' | 'off'
 
-const TONE_CLASS: Record<RemoteAccessTone, string> = {
+/** The background class of the status dot for each tone. */
+export const REMOTE_ACCESS_TONE_CLASS: Record<RemoteAccessTone, string> = {
   good: 'bg-good',
   warn: 'bg-warn',
   bad: 'bg-bad',
@@ -44,10 +43,6 @@ interface Props {
   >
   /** The browsers approved for the connected account, and those waiting. Shown only while connected. */
   devices: Omit<RemoteAccessDevicesProps, 'busy'>
-  /** The newest remote access recorded on this machine. Shown once the status has loaded. */
-  activity: RemoteAccessActivityProps
-  /** The browsers with tunneled sockets open. Shown while connected or any session is listed. */
-  sessions?: Omit<RemoteAccessSessionsProps, 'busy'>
   error: string | null
   /** What the owner still has to do after an action that worked, such as removing the machine in the client. */
   notice: string | null
@@ -60,9 +55,10 @@ interface Props {
  * The Remote access dialog: where the connection stands, with the machine's id
  * and key fingerprint, the Connect fields, the request waiting for the owner
  * or the connected account with Disconnect, the browsers approved for the
- * account, the open sessions, the recent remote access and a button for a
- * fresh connect link. A server address set by a flag or the host's
- * environment is shown read-only.
+ * account and a button for a fresh connect link. A server address set by a
+ * flag or the host's environment is shown read-only. The open sessions and the
+ * recent remote access are not part of it: see `RemoteAccessSessions` and
+ * `RemoteAccessActivity`.
  */
 export function RemoteAccessForm(props: Props) {
   const { status, link, error, notice, busy } = props
@@ -85,7 +81,7 @@ export function RemoteAccessForm(props: Props) {
     <Modal title="Remote access" width="w-[520px] max-w-[94vw]" onClose={props.onClose}>
       <div className="space-y-3">
         <div className="flex min-w-0 items-center gap-2 text-[13px]">
-          <span className={`h-2 w-2 shrink-0 rounded-full ${TONE_CLASS[props.statusTone]}`} />
+          <span className={`h-2 w-2 shrink-0 rounded-full ${REMOTE_ACCESS_TONE_CLASS[props.statusTone]}`} />
           <span role="status">{props.statusLabel}</span>
           {status?.machineId && (
             <span className="truncate font-mono text-[11px] text-faint" title={status.machineId}>
@@ -115,10 +111,6 @@ export function RemoteAccessForm(props: Props) {
           />
         )}
         {status?.linkedAccount && <RemoteAccessDevices {...props.devices} busy={busy} />}
-        {props.sessions && (status?.linkedAccount || (props.sessions.sessions?.sessions.length ?? 0) > 0) && (
-          <RemoteAccessSessions {...props.sessions} busy={busy} />
-        )}
-        {status && <RemoteAccessActivity {...props.activity} />}
 
         {link && (
           <div>

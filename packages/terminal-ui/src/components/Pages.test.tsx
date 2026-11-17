@@ -69,6 +69,7 @@ function setup({ remoteAccessSetting }: { remoteAccessSetting: boolean }) {
               unapprovedHint: null,
               titleSuffix: 'Workspaces',
               remoteAccessSetting,
+              remoteAccessStatus: false,
             }}
           >
             <WorkspaceView workspaceId={workspace.id} />

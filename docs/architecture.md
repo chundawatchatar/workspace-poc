@@ -370,10 +370,11 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   one. A failed write is reported once with no event data and never breaks the request or socket. The owner reads the
   newest 50 entries, newest first, each `opened` merged with its `closed` into a session (`closedAt` null when none
   was recorded), through `routes.remoteAccess.auditLog` (403 through the tunnel, like every remote access route): in
-  the Remote access setting's Recent activity section, polled while it is open and saying so when it can't load, or
-  with `bun run host:remote log`, which reads the file itself when the host is stopped. Unlinking or revoking does not
-  clear it; deleting the file does. Refusals come from anyone who can reach the relay, so a flood of them can push
-  older sessions past the cap; that is accepted for now.
+  the Recent activity section of the dialog the local page's sidebar opens from its remote access status (shown only
+  while an account is linked, not in the Remote access setting), polled every 2 seconds while it is open and saying
+  so when it can't load, or with `bun run host:remote log`, which reads the file itself when the host is stopped.
+  Unlinking or revoking does not clear it; deleting the file does. Refusals come from anyone who can reach the relay,
+  so a flood of them can push older sessions past the cap; that is accepted for now.
 - Enrollment keys, with the owner's accept, are the only way to link a machine to an account. A signed-in user creates
   one with `serverRoutes.machines.createEnrollment` (`modules/machines/enrollment.service.ts`): `oek_` plus 32 random
   bytes, shown once with its last 4 characters as a fingerprint, together with its row's `id` and the server's

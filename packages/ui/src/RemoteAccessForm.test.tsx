@@ -63,7 +63,6 @@ function setup(overrides: Partial<Props> = {}) {
       onDismiss: mock(),
       onRevoke: mock(),
     },
-    activity: { entries: [], failed: false },
     error: null,
     notice: null,
     busy: false,
@@ -233,23 +232,6 @@ describe('RemoteAccessForm', () => {
     // A new connect link can still be copied.
     await user.click(screen.getByRole('button', { name: 'Copy the link' }))
     expect(await navigator.clipboard.readText()).toBe('https://app.example.com/#machine=m-1&key=k')
-  })
-
-  test('Sessions shows once an account is connected or a session is listed', () => {
-    const none = { sessions: { sessions: [] }, onEnd: mock() }
-    const { unmount } = setup({ sessions: none })
-    expect(screen.queryByRole('region', { name: 'Sessions' })).not.toBeInTheDocument()
-    unmount()
-
-    const session = {
-      deviceId: `a${'d'.repeat(42)}`,
-      fingerprint: 'ABCD-EFGH',
-      credentials: [{ kind: 'key' as const, name: 'laptop' }],
-      sockets: 1,
-      startedAt: '2026-11-06T12:00:00.000Z',
-    }
-    setup({ sessions: { ...none, sessions: { sessions: [session] } } })
-    expect(screen.getByRole('region', { name: 'Sessions' })).toHaveTextContent('Key laptop')
   })
 
   test('a waiting browser can only be dismissed, and is approved only by typing its fingerprint', async () => {
