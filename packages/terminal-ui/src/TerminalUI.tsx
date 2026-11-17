@@ -42,6 +42,12 @@ export interface TerminalUIProps {
    * is set up. Only a local page can use it: the host refuses it through the tunnel.
    */
   remoteAccessSetting?: boolean
+  /**
+   * Shows the remote access status in the sidebar while an account is linked,
+   * which opens the browsers connected through the tunnel and the recent
+   * remote access. Only a local page can use it: the host refuses it through the tunnel.
+   */
+  remoteAccessStatus?: boolean
 }
 
 /**
@@ -61,6 +67,7 @@ export function TerminalUI({
   unapprovedHint = DEFAULT_UNAPPROVED_HINT,
   titleSuffix = 'Workspaces',
   remoteAccessSetting = false,
+  remoteAccessStatus = false,
 }: TerminalUIProps) {
   // One cache per transport, so another host's answers are never shown. The host may be on loopback, which stays
   // reachable when the browser reports offline, so don't pause requests then.
@@ -75,8 +82,17 @@ export function TerminalUI({
     [workspaceId, navigate, workspaceHref],
   )
   const options = useMemo<PageOptions>(
-    () => ({ machine, header, offlineHint, deniedHint, unapprovedHint, titleSuffix, remoteAccessSetting }),
-    [machine, header, offlineHint, deniedHint, unapprovedHint, titleSuffix, remoteAccessSetting],
+    () => ({
+      machine,
+      header,
+      offlineHint,
+      deniedHint,
+      unapprovedHint,
+      titleSuffix,
+      remoteAccessSetting,
+      remoteAccessStatus,
+    }),
+    [machine, header, offlineHint, deniedHint, unapprovedHint, titleSuffix, remoteAccessSetting, remoteAccessStatus],
   )
 
   useEffect(() => connect(transport), [transport])

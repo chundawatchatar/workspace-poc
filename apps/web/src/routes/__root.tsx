@@ -89,6 +89,7 @@ function RootLayout() {
         navigate={navigate}
         workspaceHref={workspaceHref}
         remoteAccessSetting
+        remoteAccessStatus
       >
         <Outlet />
       </TerminalUI>

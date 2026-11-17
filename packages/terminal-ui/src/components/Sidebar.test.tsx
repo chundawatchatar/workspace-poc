@@ -1,12 +1,23 @@
 import { afterEach, describe, expect, mock, spyOn, test } from 'bun:test'
-import { makePane, makeSurface, makeWorkspace, routes, type ServerEvent, type SessionInfo } from '@orch/shared'
+import {
+  makePane,
+  makeSurface,
+  makeWorkspace,
+  type RemoteAccessStatus,
+  routes,
+  type ServerEvent,
+  type SessionInfo,
+} from '@orch/shared'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { apiKey } from '../lib/api'
 import { connect, getSnapshot, setOverlay, useApp } from '../lib/store'
 import { NavigationProvider } from '../navigation'
 import { PageOptionsProvider } from '../pageOptions'
 import type { HostTransport } from '../transport'
+import { TransportProvider } from '../transportContext'
+import { Overlays } from './Overlays'
 import { pendingAttention, Sidebar } from './Sidebar'
 
 let disconnect = () => {}
@@ -18,7 +29,36 @@ afterEach(() => {
   document.documentElement.style.removeProperty('--sidebar-width')
 })
 
-function setup() {
+const linkedStatus: RemoteAccessStatus = {
+  serverUrl: 'wss://relay.example.com',
+  serverUrlIsDefault: false,
+  defaultServerUrl: 'wss://orch.example.com',
+  clientUrl: null,
+  serverUrlSetBy: null,
+  clientUrlSetBy: null,
+  machineId: 'm-1',
+  machineFingerprint: 'ABCD-EFGH-JKMN-PQRS',
+  tunnel: 'connected',
+  linkedAccount: {
+    name: 'Ada Lovelace',
+    maskedEmail: 'a***@example.com',
+    serverUrl: 'wss://relay.example.com',
+    linkedAt: '2026-11-04T12:00:00.000Z',
+  },
+  connectRequest: null,
+  connectOutcome: null,
+}
+
+/**
+ * Renders the sidebar against a fake host, with the overlays when `overlays`
+ * is set. `status` is the host's remote access status; null makes that request
+ * fail as it does through the tunnel.
+ */
+function setup({
+  remoteAccessStatus = false,
+  overlays = false,
+  status = linkedStatus as RemoteAccessStatus | null,
+} = {}) {
   const terminal = makeSurface('terminal')
   const shell = makeSurface('terminal')
   const exited = makeSurface('terminal')
@@ -38,8 +78,16 @@ function setup() {
     agentTracking: true,
   }
   const socket = { readyState: 1, send: () => {}, close: () => {} } as unknown as WebSocket
+  const remote = { status }
+  const requested: string[] = []
   const transport: HostTransport = {
     request: async (path) => {
+      requested.push(path)
+      if (path === routes.remoteAccess.status.path) {
+        return remote.status ? Response.json(remote.status) : new Response('Forbidden', { status: 403 })
+      }
+      if (path === routes.remoteAccess.sessions.path) return Response.json({ sessions: [] })
+      if (path === routes.remoteAccess.auditLog.path) return Response.json({ entries: [] })
       if (!path.startsWith(routes.git.status.path)) throw new Error(`Unexpected request: ${path}`)
       return Response.json({ branch: 'feature', changes: 2 })
     },
@@ -62,26 +110,39 @@ function setup() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const view = render(
     <QueryClientProvider client={queryClient}>
-      <NavigationProvider
-        value={{ workspaceId: main.id, navigate: (target) => visited.push(target), workspaceHref: (id) => `/w/${id}` }}
-      >
-        <PageOptionsProvider
+      <TransportProvider value={transport}>
+        <NavigationProvider
           value={{
-            machine: { id: 'm1', name: 'My machine' },
-            header: <p>Account</p>,
-            offlineHint: null,
-            deniedHint: null,
-            unapprovedHint: null,
-            titleSuffix: 'Workspaces',
-            remoteAccessSetting: false,
+            workspaceId: main.id,
+            navigate: (target) => visited.push(target),
+            workspaceHref: (id) => `/w/${id}`,
           }}
         >
-          <StoreSidebar activeId={main.id} />
-        </PageOptionsProvider>
-      </NavigationProvider>
+          <PageOptionsProvider
+            value={{
+              machine: { id: 'm1', name: 'My machine' },
+              header: <p>Account</p>,
+              offlineHint: null,
+              deniedHint: null,
+              unapprovedHint: null,
+              titleSuffix: 'Workspaces',
+              remoteAccessSetting: false,
+              remoteAccessStatus,
+            }}
+          >
+            <StoreSidebar activeId={main.id} />
+            {overlays && <Overlays />}
+          </PageOptionsProvider>
+        </NavigationProvider>
+      </TransportProvider>
     </QueryClientProvider>,
   )
-  return { ...view, main, other, terminal, session, visited, queryClient }
+  /** Answers the next status poll with `next`, and runs it now instead of waiting for the interval. */
+  const poll = async (next: RemoteAccessStatus | null) => {
+    remote.status = next
+    await queryClient.refetchQueries({ queryKey: apiKey(routes.remoteAccess.status, {}) })
+  }
+  return { ...view, main, other, terminal, session, visited, queryClient, requested, poll }
 }
 
 function StoreSidebar({ activeId }: { activeId: string }) {
@@ -169,6 +230,50 @@ describe('Sidebar', () => {
     expect(handle).toHaveAttribute('aria-valuenow', '480')
     await user.dblClick(handle)
     expect(handle).toHaveAttribute('aria-valuenow', '240')
+  })
+})
+
+describe('Sidebar remote access status', () => {
+  test('shows the linked connection, follows the host within a poll, and opens Sessions and Recent activity', async () => {
+    const user = userEvent.setup()
+    const { poll } = setup({ remoteAccessStatus: true, overlays: true })
+    expect(await screen.findByRole('button', { name: 'Remote access: Connected' })).toBeInTheDocument()
+
+    await poll({ ...linkedStatus, tunnel: 'off' })
+    expect(await screen.findByRole('button', { name: 'Remote access: Connection lost' })).toBeInTheDocument()
+    await poll({ ...linkedStatus, tunnel: 'reconnecting' })
+    await user.click(await screen.findByRole('button', { name: 'Remote access: Reconnecting…' }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Remote access activity' })
+    expect(within(dialog).getByRole('region', { name: 'Sessions' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('region', { name: 'Recent activity' })).toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  test('shows nothing while no account is linked, a Connect waits, or the host refuses the status', async () => {
+    const waiting = { ...linkedStatus, linkedAccount: null, connectRequest: { expiresAt: '2026-11-04T12:15:00.000Z' } }
+    const { poll, queryClient } = setup({ remoteAccessStatus: true, status: waiting })
+    await waitFor(() =>
+      expect(queryClient.getQueryState(apiKey(routes.remoteAccess.status, {}))?.status).toBe('success'),
+    )
+    expect(screen.queryByRole('button', { name: /^Remote access/ })).not.toBeInTheDocument()
+
+    await poll(linkedStatus)
+    expect(await screen.findByRole('button', { name: 'Remote access: Connected' })).toBeInTheDocument()
+    await poll(null)
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^Remote access/ })).not.toBeInTheDocument())
+  })
+
+  test('with the option off, never asks for the status and the activity overlay renders nothing', async () => {
+    const { requested, unmount } = setup({ overlays: true })
+    expect(await screen.findAllByText('feature')).not.toHaveLength(0)
+    act(() => setOverlay('remote-access-activity'))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Remote access/ })).not.toBeInTheDocument()
+    expect(requested).not.toContain(routes.remoteAccess.status.path)
+    expect(requested).not.toContain(routes.remoteAccess.sessions.path)
+    unmount()
   })
 })
 

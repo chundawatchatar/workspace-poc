@@ -11,17 +11,19 @@ import { formatUptime } from '../lib/uptime'
 import { useGoToWorkspace } from '../navigation'
 import { usePageOptions } from '../pageOptions'
 import { CommandPalette } from './CommandPalette'
+import { RemoteAccessActivityDialog } from './RemoteAccessActivityDialog'
 import { RemoteAccessSetting } from './RemoteAccessSetting'
 import { ThemePicker } from './ThemePicker'
 
 export function Overlays() {
   const overlay = useApp((s) => s.overlay)
-  const { remoteAccessSetting } = usePageOptions()
+  const { remoteAccessSetting, remoteAccessStatus } = usePageOptions()
   if (overlay === 'help') return <ShortcutsHelp />
   if (overlay === 'new-workspace') return <NewWorkspace />
   if (overlay === 'palette') return <CommandPalette />
   if (overlay === 'themes') return <ThemePicker />
   if (overlay === 'remote-access' && remoteAccessSetting) return <RemoteAccessSetting />
+  if (overlay === 'remote-access-activity' && remoteAccessStatus) return <RemoteAccessActivityDialog />
   return null
 }
 

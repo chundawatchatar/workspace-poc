@@ -16,6 +16,8 @@ export interface PageOptions {
   titleSuffix: string
   /** True when the page offers the Remote access setting, which only a local page can change. */
   remoteAccessSetting: boolean
+  /** True when the sidebar shows the remote access status, which only a local page can read. */
+  remoteAccessStatus: boolean
 }
 
 const PageOptionsContext = createContext<PageOptions | null>(null)

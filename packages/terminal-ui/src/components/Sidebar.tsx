@@ -1,4 +1,5 @@
 import { type GitInfo, listPanes, routes, type SessionInfo, type Workspace } from '@orch/shared'
+import { REMOTE_ACCESS_TONE_CLASS } from '@orch/ui'
 import { ChevronRight, GitBranch, Keyboard, Moon, Palette, Plus, Sun, X } from '@orch/ui/icons'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
@@ -7,6 +8,8 @@ import { apiQuery } from '../lib/api'
 import { removeWorkspace, renameWorkspace } from '../lib/commands'
 import { connectionCopy } from '../lib/connection'
 import { shortPath } from '../lib/paths'
+import { PENDING_DEVICES_POLL_MS } from '../lib/pendingDevices'
+import { remoteAccessLabel } from '../lib/remoteAccess'
 import { LEADER_LABEL } from '../lib/shortcuts'
 import { SIDEBAR_WIDTH, setSidebarWidth, sidebarWidth } from '../lib/sidebarWidth'
 import { setOverlay, toggleThemeMode, useApp } from '../lib/store'
@@ -33,7 +36,7 @@ export function Sidebar({ activeId, open }: { activeId: string | undefined; open
   const workspaces = useApp((s) => s.state?.workspaces)
   const status = useApp((s) => s.status)
   const leader = useApp((s) => s.leader)
-  const { machine, header } = usePageOptions()
+  const { machine, header, remoteAccessStatus } = usePageOptions()
 
   return (
     // The shell animates between the sidebar's width and zero; the sidebar inside keeps its width and is clipped.
@@ -70,6 +73,7 @@ export function Sidebar({ activeId, open }: { activeId: string | undefined; open
           ))}
         </nav>
 
+        {remoteAccessStatus && <RemoteAccessStatusButton />}
         <div className="flex h-9 shrink-0 items-center justify-between border-t border-line px-3 text-xs text-dim">
           <span className="flex items-center gap-1.5">
             <span className={`h-1.5 w-1.5 rounded-full ${connectionCopy(status).dot}`} />
@@ -97,6 +101,35 @@ export function Sidebar({ activeId, open }: { activeId: string | undefined; open
         <ResizeHandle />
       </aside>
     </div>
+  )
+}
+
+/**
+ * Where the machine's connection to its account stands, polled at the pace of
+ * the waiting browsers. Clicking it opens the browsers connected through the
+ * tunnel and the recent remote access. Nothing shows while no account is
+ * linked, including while a Connect waits for the owner, or when the host
+ * doesn't answer; a failed poll is not retried, so a host without remote
+ * access stays quiet.
+ */
+function RemoteAccessStatusButton() {
+  const status = useQuery({
+    ...apiQuery(routes.remoteAccess.status, {}),
+    refetchInterval: PENDING_DEVICES_POLL_MS,
+    retry: false,
+  })
+  if (status.isError || !status.data?.linkedAccount) return null
+  const { label, tone } = remoteAccessLabel(status.data.tunnel, true)
+  return (
+    <button
+      type="button"
+      title="Sessions and recent activity"
+      className="mx-2 mb-1.5 flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs text-dim hover:bg-raised hover:text-ink"
+      onClick={() => setOverlay('remote-access-activity')}
+    >
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${REMOTE_ACCESS_TONE_CLASS[tone]}`} />
+      <span className="truncate">Remote access: {label}</span>
+    </button>
   )
 }
 
