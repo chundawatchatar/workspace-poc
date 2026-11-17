@@ -19,7 +19,10 @@ const keyTransport: HostTransport = {
 
 describe('VerifiedMachine', () => {
   test('the page gets a transport bound to the pinned key, and an unverified machine swaps it for the warning', async () => {
-    const { store } = memoryMachineKeyStore()
+    const pinnedAt = '2026-11-01T12:00:00.000Z'
+    const { store } = memoryMachineKeyStore({
+      [machine.id]: { publicKey: machine.publicKey, pinnedAt, source: 'confirmed' },
+    })
     const built: VerifiedTransportOptions[] = []
     const pageTransport = { ...keyTransport }
     const given: HostTransport[] = []
@@ -31,9 +34,8 @@ describe('VerifiedMachine', () => {
       <MachineKeyCheck
         machineId={machine.id}
         transport={keyTransport}
-        vouchedBy="link"
         unapprovedHint="Approve it."
-        deniedHint="Rotate the key."
+        deniedHint="Connect it again."
         store={store}
       >
         {(publicKey) => (

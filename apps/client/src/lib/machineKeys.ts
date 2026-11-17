@@ -4,14 +4,18 @@ import { withDeviceStore } from './deviceKey'
 // The machine keys this browser pinned, one per machine id, kept in IndexedDB
 // beside the device key and never in `localStorage`, a query key, a URL or a
 // log. A pin comes from the machine itself (`routes.system.machineKey`), once
-// the id it hashes to was vouched for out of band: by a connect link's `fp`, or
-// by the owner comparing the fingerprint with the machine's own screen.
+// the owner compared its fingerprint with the machine's own screen. Older
+// clients also pinned the first key a connect link vouched for; those pins
+// stay valid.
 
 /** A pinned machine key: the raw Ed25519 public key, when it was pinned, and what vouched for its id. */
 export interface MachineKeyPin {
   publicKey: string
   pinnedAt: string
-  /** `link`: a connect link whose `fp` matched the id. `confirmed`: the owner compared the fingerprint. */
+  /**
+   * `confirmed`: the owner compared the fingerprint, the only kind pinned now. `link`: pinned by an older client from
+   * a connect link whose `fp` matched the id, still read as a valid pin.
+   */
   source: 'link' | 'confirmed'
 }
 
@@ -70,18 +74,17 @@ export async function checkMachineKey(
 }
 
 /**
- * Pins `publicKey` for `machineId`, once it hashes to the id. When another tab pinned first, its pin decides:
+ * Pins `publicKey` for `machineId` as `confirmed`, once it hashes to the id. When another tab pinned first, its pin decides:
  * `pinned` when it holds the same key, else `mismatch`. Rejects when nothing could be saved.
  */
 export async function pinMachineKey(
   machineId: string,
   publicKey: string,
-  source: MachineKeyPin['source'],
   store: MachineKeyStore = machineKeyStores.default,
   now: Date = new Date(),
 ): Promise<'pinned' | 'mismatch'> {
   if (!(await machineKeyMatches(publicKey, machineId))) return 'mismatch'
-  const added = await store.add(machineId, { publicKey, pinnedAt: now.toISOString(), source }).then(
+  const added = await store.add(machineId, { publicKey, pinnedAt: now.toISOString(), source: 'confirmed' }).then(
     () => true,
     () => false,
   )
