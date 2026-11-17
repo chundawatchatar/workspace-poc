@@ -107,7 +107,7 @@ describe('TunnelHttp', () => {
     const refused: [string, string, [string, string][]][] = [
       ['GET', routes.system.health.path, good],
       ['GET', routes.system.health.path, []],
-      ['POST', routes.access.rotate.path, [[RELAY_TICKET_HEADER, 't-good'], ...good.slice(1)]],
+      ['POST', routes.remoteAccess.approveDevice.path, [[RELAY_TICKET_HEADER, 't-good'], ...good.slice(1)]],
       // The exempt paths with a query string, another method, or another spelling.
       ['GET', `${MACHINE_KEY}?probe=1`, good],
       ['POST', MACHINE_KEY, good],

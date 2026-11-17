@@ -5,7 +5,6 @@ import {
   ACCESS_KEY_HEADER,
   type AppState,
   buildSocketUrl,
-  CLOSE_ACCESS_DENIED,
   DEVICE_NOT_APPROVED_CODE,
   DEVICE_PROOF_HEADER,
   decodeFrame,
@@ -15,7 +14,6 @@ import {
   machineIdFromPublicKey,
   machineKeyResponse,
   openE2eSessionResponse,
-  type RotateAccessResponse,
   remoteAccessStatus,
   routes,
   serverFrame,
@@ -32,13 +30,11 @@ import {
   hub,
   key,
   keyHeaders,
-  keys,
   local,
   machineId,
   machineKey,
   openE2eSession,
   openLocal,
-  remoteAccess,
   sealedRequest,
   sealedSocket,
   send,
@@ -113,41 +109,18 @@ describe('tunneled sockets', () => {
     expect(conns).toHaveLength(2)
   })
 
-  test('a local rotate closes the old key channels and refuses its requests, the new key works, and a tunneled rotate gets 403', async () => {
+  test('the host issues no access key: rotate is an unknown route, locally and tunneled, and the saved key still opens', async () => {
     const conn = await welcomed()
+    const saved = readFileSync(join(dir, 'access-keys.json'), 'utf8')
     const e2e = await openE2eSession(conn, 1)
-    await sealedSocket(conn, e2e, 1, '/ws/term/t1')
-    await until(() => stub.attached.size === 1)
-
-    const rotatePath = routes.access.rotate.path
-    expect((await sealedRequest(conn, e2e, 2, 'POST', rotatePath)).status).toBe(403)
-    expect(keys.authorize(key)).not.toBeNull()
-
+    const rotatePath = '/api/access/rotate'
+    expect((await sealedRequest(conn, e2e, 2, 'POST', rotatePath)).status).toBe(404)
     const response = await fetch(`http://127.0.0.1:${local.port}${rotatePath}`, { method: 'POST' })
-    const rotated = (await response.json()) as RotateAccessResponse
-    expect(rotated.machineId).toBe(machineId)
-    expect(rotated.link).toBe(
-      `https://orch.example/#machine=${machineId}&key=${rotated.key}&fp=${machineFingerprint(machineId)}`,
-    )
-    await until(() => conn.frames.some((f) => f.type === 'ws.close'))
-    expect(conn.frames.filter((f) => f.type === 'ws.close')).toEqual([
-      { type: 'ws.close', channel: 1, code: CLOSE_ACCESS_DENIED, reason: 'key rotated' },
-    ])
-    expect(stub.attached.size).toBe(0)
+    expect(response.status).toBe(404)
+    expect(await response.text()).not.toContain('key')
 
-    // The old key's session closed with it, and the old key opens no new one.
-    expect((await sealedRequest(conn, e2e, 3, 'GET', routes.system.health.path)).status).toBe(409)
-    const { method, path } = routes.e2e.open
-    send(conn, { type: 'http.request', id: 4, method, path, headers: await keyHeaders(key, method, path) })
-    const renewed = await openE2eSession(conn, 5, { key: rotated.key })
-    const health = await sealedRequest(conn, renewed, 6, 'GET', routes.system.health.path, { as: { key: rotated.key } })
-    expect(health.status).toBe(200)
-    // The old key on the new key's session.
-    await sealedSocket(conn, renewed, 2, '/ws/term/t1')
-    await until(() => conn.frames.some((f) => f.type === 'http.response' && f.id === 4))
-    await until(() => conn.frames.some((f) => f.type === 'auth.failed' && f.channel === 2))
-    expect(conn.frames.find((f) => f.type === 'http.response' && f.id === 4)).toMatchObject({ status: 401 })
-    expect(stub.ensured).toHaveLength(1)
+    expect((await sealedRequest(conn, e2e, 3, 'GET', routes.system.health.path)).status).toBe(200)
+    expect(readFileSync(join(dir, 'access-keys.json'), 'utf8')).toBe(saved)
   })
 
   test('the agent reporting channel is out of reach: tunneled and local requests touch no session', async () => {
@@ -192,7 +165,7 @@ describe('tunneled sockets', () => {
     expect(reachesChannel).toEqual([])
   })
 
-  test('the host answers the challenge with its public key only, under the id the server, status and link all use', async () => {
+  test('the host answers the challenge with its public key only, under the id the server and status both use', async () => {
     const conn = await welcomed()
     await until(() => clients[0]?.status === 'connected')
     const hello = conn.frames.find((f) => f.type === 'hello')
@@ -206,7 +179,6 @@ describe('tunneled sockets', () => {
       machineId,
       machineFingerprint: machineFingerprint(machineId),
     })
-    expect(remoteAccess.current()?.machineId).toBe(machineId)
 
     // Neither the raw private key nor any line of the key file went over the tunnel.
     const sent = conn.raw.join('\n')

@@ -1,4 +1,4 @@
-import { type DevicesResponse, machineFingerprint, type RemoteAccessStatus, routes } from '@orch/shared'
+import { type DevicesResponse, type RemoteAccessStatus, routes } from '@orch/shared'
 import { RemoteAccessForm } from '@orch/ui'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
@@ -10,9 +10,8 @@ import { setOverlay } from '../lib/store'
 const POLL_MS = 2000
 
 /**
- * The Remote access dialog, connected to the host's `routes.remoteAccess` and
- * `routes.access.rotate`. While an account is connected it also lists the
- * browsers approved for it, polled like the status. The browsers connected
+ * The Remote access dialog, connected to the host's `routes.remoteAccess`.
+ * While an account is connected it also lists the browsers approved for it, polled like the status. The browsers connected
  * through the tunnel now and the recent remote access are in
  * `RemoteAccessActivityDialog`, opened from the sidebar. A Connect the server
  * holds for the owner shows from the status, so it is still there after the
@@ -24,7 +23,6 @@ const POLL_MS = 2000
 export function RemoteAccessSetting() {
   const queryClient = useQueryClient()
   const status = useQuery({ ...apiQuery(routes.remoteAccess.status, {}), refetchInterval: POLL_MS, retry: false })
-  const rotate = useMutation(apiMutation(routes.access.rotate))
   const disconnect = useMutation(apiMutation(routes.remoteAccess.disconnect))
   const cancelConnect = useMutation(apiMutation(routes.remoteAccess.cancelConnect))
   const linked = Boolean(status.data?.linkedAccount)
@@ -41,7 +39,6 @@ export function RemoteAccessSetting() {
   const [serverUrl, setServerUrl] = useState<string | null>(null)
   const [email, setEmail] = useState('')
   const [enrollmentKey, setEnrollmentKey] = useState('')
-  const [link, setLink] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   // The fingerprint typed into "Approve a browser", kept when the host refuses it.
@@ -61,18 +58,6 @@ export function RemoteAccessSetting() {
 
   // An address a flag or the environment sets can't be edited, so the field shows the one in use.
   const shownServer = data?.serverUrlSetBy ? data.serverUrl : (serverUrl ?? data?.serverUrl ?? '')
-
-  async function newLink() {
-    setError(null)
-    setNotice(null)
-    try {
-      const result = await rotate.mutateAsync({})
-      const fingerprint = machineFingerprint(result.machineId)
-      setLink(result.link ?? `Machine id: ${result.machineId}  Machine key: ${fingerprint}  Access key: ${result.key}`)
-    } catch (failure) {
-      setError(requestErrorMessage(failure))
-    }
-  }
 
   function showStatus(next: RemoteAccessStatus) {
     queryClient.setQueryData(apiKey(routes.remoteAccess.status, {}), next)
@@ -148,8 +133,6 @@ export function RemoteAccessSetting() {
       status={data}
       statusLabel={label}
       statusTone={tone}
-      onNewLink={newLink}
-      link={link}
       connection={{
         serverUrl: shownServer,
         email,
@@ -172,7 +155,6 @@ export function RemoteAccessSetting() {
       error={error}
       notice={notice}
       busy={
-        rotate.isPending ||
         disconnect.isPending ||
         cancelConnect.isPending ||
         approveDevice.isPending ||

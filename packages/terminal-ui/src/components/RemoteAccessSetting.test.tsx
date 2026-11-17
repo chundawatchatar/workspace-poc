@@ -192,6 +192,9 @@ describe('RemoteAccessSetting', () => {
     expect(screen.queryByRole('region', { name: 'Recent activity' })).not.toBeInTheDocument()
     expect(requested).not.toContain(routes.remoteAccess.sessions.path)
     expect(requested).not.toContain(routes.remoteAccess.auditLog.path)
+    // The host issues no access keys, so the dialog offers no connect link and never asks for one.
+    expect(screen.queryByRole('button', { name: 'New connect link' })).not.toBeInTheDocument()
+    expect(requested.filter((path) => path.startsWith('/api/access/'))).toEqual([])
   })
 
   test('Cancel ends a waiting request, and the form comes back with why it ended', async () => {

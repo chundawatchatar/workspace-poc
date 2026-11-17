@@ -4,7 +4,7 @@ import { SETTING_FLAGS, type SettingFlag } from '../modules/settings/settings.se
 export type CliCommand =
   | { name: 'start' | 'restart'; flags: Partial<Record<SettingFlag, string>> }
   | { name: 'run'; flags: Partial<Record<SettingFlag, string>>; background: boolean }
-  | { name: 'stop' | 'status' | 'terminals-stop' | 'rotate-key' | 'help' }
+  | { name: 'stop' | 'status' | 'terminals-stop' | 'help' }
   | { name: 'logs'; all: boolean }
   | { name: 'remote'; args: string[] }
   | { name: 'config'; action: ConfigAction }
@@ -50,7 +50,6 @@ Commands:
                       until you accept it there; --yes connects without asking, Ctrl-C cancels
   disconnect [--yes]  Disconnect this machine from its account; --yes disconnects without asking
   remote <command>    Configure remote access (corch remote help lists the commands)
-  rotate-key          Replace the remote access key
   config list         Show each setting, its value and where the value comes from
   config get <key>    Print one setting's value
   config set <key> <value>
@@ -105,7 +104,7 @@ function parseFixedArgs(name: string, args: string[]): CliCommand | null | undef
   const alone = (command: CliCommand) => (args.length === 0 ? command : null)
   if (name === 'terminals') return args.length === 1 && first === 'stop' ? { name: 'terminals-stop' } : null
   if (name === 'help' || name === '--help' || name === '-h') return alone({ name: 'help' })
-  if (name === 'stop' || name === 'status' || name === 'rotate-key') return alone({ name })
+  if (name === 'stop' || name === 'status') return alone({ name })
   if (name === 'logs')
     return args.length === 0 || (args.length === 1 && first === '--all') ? { name, all: !!first } : null
   if (name === 'service')

@@ -16,7 +16,7 @@ import {
 } from '@orch/shared'
 import type { Principal } from '../../lib/principal'
 import { AccessKeyRepository } from '../access/access.repository'
-import { AccessKeys, connectLink, DEFAULT_KEY_NAME, type RemoteAccess } from '../access/access.service'
+import { AccessKeys } from '../access/access.service'
 import type { E2eSessions } from '../e2e/e2e.service'
 import { DEFAULT_SERVER_URL } from '../settings/settings.service'
 import { loadOrCreateMachineKey, type MachineKey } from '../tunnel/tunnel.repository'
@@ -24,7 +24,7 @@ import { TunnelClient, type TunnelClientOptions } from '../tunnel/tunnel.service
 import type { EnrollAnswer, EnrollRequest, EnrollWaiting } from '../tunnel/tunnel-asks.service'
 import type { OpenSocket } from '../tunnel/tunnel-channels.service'
 import type { Authorization, Credentials, Refusal, TunnelHandler } from '../tunnel/tunnel-http.service'
-import { linkClientUrl, RemoteAccessAddresses, type RemoteAddresses, SERVER_URL_RULE } from './addresses.service'
+import { RemoteAccessAddresses, type RemoteAddresses, SERVER_URL_RULE } from './addresses.service'
 import type { AuditLogService } from './audit-log.service'
 import { ConnectAttempt } from './connect-attempt.service'
 import type { DevicesRepository } from './devices.repository'
@@ -147,10 +147,6 @@ export class RemoteAccessService {
       console.warn(
         `warning: this machine is connected through ${this.linked.serverUrl}, but the server address in use is ${relayUrl.value}, so its account can't open it. Disconnect, then connect again`,
       )
-    }
-    const keys = this.loadKeys()
-    if (keys && keys.size > 0) {
-      console.log('remote access is on. Lost the connect link? Run `bun run host:rotate-key` for a new one')
     }
     try {
       this.openTunnel()
@@ -421,18 +417,6 @@ export class RemoteAccessService {
     return { entries: this.options.audit.recent() }
   }
 
-  /**
-   * What rotating the key needs, or null when no valid server address is known
-   * at all. The client address follows the setting as it is now.
-   */
-  current(): RemoteAccess | null {
-    if (!this.serverTunnelUrl()) return null
-    const keys = this.loadKeys()
-    const machineId = this.machineId()
-    if (!keys || !machineId) return null
-    return { keys, machineId, clientUrl: linkClientUrl(this.addresses.inUse.clientUrl) }
-  }
-
   /** Ends a Connect on its way, closes the tunnel and writes pending key use, for shutdown. */
   shutdown() {
     if (this.attempt) this.endAttempt(this.attempt, 'failed', 'The host stopped. Nothing was linked')
@@ -447,7 +431,6 @@ export class RemoteAccessService {
     const keys = this.loadKeys()
     const machineKey = this.machineKey
     if (!keys || !machineKey) throw new Error('the machine key or the access keys could not be read')
-    this.ensureKey(keys, machineKey.machineId)
     this.stopTunnel()
     const create = this.options.createTunnel ?? ((options) => new TunnelClient(options))
     const tunnel = create({
@@ -478,37 +461,14 @@ export class RemoteAccessService {
   }
 
   /**
-   * Creates the `default` key the first time a tunnel opens, and prints
-   * its connect link. Only its hash is kept, so this is the one time it is
-   * shown. Throws when the key cannot be saved.
+   * Loads the machine key, creating it, and the access keys already saved, once. The host issues no keys, so the
+   * file is only read here. Null when either cannot be read.
    */
-  private ensureKey(keys: AccessKeys, machineId: string) {
-    if (keys.size > 0) return
-    let key: string
-    try {
-      key = keys.create(DEFAULT_KEY_NAME)
-    } catch (error) {
-      throw new Error(`the access key could not be saved (${error instanceof Error ? error.message : error})`)
-    }
-    const clientUrl = linkClientUrl(this.addresses.inUse.clientUrl)
-    const target = clientUrl
-      ? `Connect link: ${connectLink(clientUrl, machineId, key)}`
-      : `Machine id: ${machineId}\nAccess key: ${key}`
-    console.log(
-      `remote access key created. It will not be shown again; run \`bun run host:rotate-key\` for a new one.\n${target}`,
-    )
-  }
-
-  /** Loads the machine key, creating it, and the access keys, once. Null when either cannot be read. */
   private loadKeys(): AccessKeys | null {
     if (this.keys) return this.keys
     try {
       this.machineKey ??= loadOrCreateMachineKey(this.options.machineKeyFile)
-      this.keys = new AccessKeys(new AccessKeyRepository(this.options.keysFile), {
-        // The tunnel open at the time of a rotation, not the one open when the keys were loaded.
-        onRevoked: (keyIds) =>
-          this.closeAccess((principal) => principal.kind === 'key' && keyIds.includes(principal.keyId), 'key rotated'),
-      })
+      this.keys = new AccessKeys(new AccessKeyRepository(this.options.keysFile))
     } catch (error) {
       // The repositories' messages never contain the machine key, an access key or a hash.
       console.error(`no tunnel: ${error instanceof Error ? error.message : 'a key file could not be read'}`)

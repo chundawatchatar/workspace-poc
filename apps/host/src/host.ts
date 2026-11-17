@@ -116,7 +116,6 @@ export function startHost(options: HostOptions): { url: string; instanceId: stri
     daemon: () => daemon.shared.report(),
     machinePublicKey: () => remoteAccess.machinePublicKey(),
     instanceId,
-    access: () => remoteAccess.current(),
     remoteAccess,
     agentTracking,
     e2eSessions,

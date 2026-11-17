@@ -5,7 +5,7 @@ import {
   accountTicket,
   type Conn,
   credentialHeaders,
-  keys,
+  key,
   local,
   openE2eSession,
   remoteAccess,
@@ -58,7 +58,6 @@ describe('tunneled account access', () => {
     const statuses: number[] = []
     for (const [id, method, path] of [
       [4, 'GET', routes.system.health.path],
-      [5, 'POST', routes.access.rotate.path],
       [6, 'GET', routes.remoteAccess.devices.path],
       [7, 'POST', routes.remoteAccess.approveDevice.path],
       [8, 'GET', routes.remoteAccess.sessions.path],
@@ -66,7 +65,7 @@ describe('tunneled account access', () => {
     ] as const) {
       statuses.push((await sealedRequest(conn, ofFirst, id, method, path, asFirst())).status ?? 0)
     }
-    expect(statuses).toEqual([200, 403, 403, 403, 403, 403])
+    expect(statuses).toEqual([200, 403, 403, 403, 403])
 
     const ofSecond = await openE2eSession(conn, 10, { ticket: accountTicket() }, second)
     await sealedSocket(conn, ofFirst, 2, '/ws/term/t1', asFirst())
@@ -113,9 +112,8 @@ describe('tunneled account access', () => {
     await until(() => response(1) !== undefined && response(2) !== undefined)
     remoteAccess.approveDevice(fingerprintOf(first.id))
     remoteAccess.approveDevice(fingerprintOf(second.id))
-    const laptop = keys.create('laptop')
     const firstAccount = await openE2eSession(conn, 3, { ticket: accountTicket() }, first)
-    const firstLaptop = await openE2eSession(conn, 4, { key: laptop }, first)
+    const firstLaptop = await openE2eSession(conn, 4, { key }, first)
     const secondAccount = await openE2eSession(conn, 5, { ticket: accountTicket() }, second)
     const account = (who: typeof first) => ({ as: { ticket: accountTicket() }, who })
 
@@ -124,7 +122,7 @@ describe('tunneled account access', () => {
     await until(() => stub.attached.size === 1)
     const afterFirst = Date.now()
     await sealedSocket(conn, firstAccount, 2, path, account(first))
-    await sealedSocket(conn, firstLaptop, 3, path, { as: { key: laptop }, who: first })
+    await sealedSocket(conn, firstLaptop, 3, path, { as: { key }, who: first })
     await sealedSocket(conn, secondAccount, 4, path, account(second))
     // Refused as unsealed, so not counted.
     send(conn, { type: 'ws.open', channel: 5, path, headers: [] })
@@ -135,11 +133,11 @@ describe('tunneled account access', () => {
     const ofFirst = open.find((session: { deviceId: string }) => session.deviceId === first.id)
     expect(ofFirst).toMatchObject({ fingerprint: fingerprintOf(first.id), sockets: 3 })
     expect(ofFirst.credentials).toHaveLength(2)
-    expect(ofFirst.credentials).toEqual(expect.arrayContaining([{ kind: 'account' }, { kind: 'key', name: 'laptop' }]))
+    expect(ofFirst.credentials).toEqual(expect.arrayContaining([{ kind: 'account' }, { kind: 'key', name: 'default' }]))
     expect(Date.parse(ofFirst.startedAt)).toBeGreaterThanOrEqual(before)
     expect(Date.parse(ofFirst.startedAt)).toBeLessThanOrEqual(afterFirst)
     expect(open.find((session: { deviceId: string }) => session.deviceId === second.id)).toMatchObject({ sockets: 1 })
-    for (const hidden of [laptop, ACCOUNT_ID, first.publicKey.x, second.publicKey.x]) {
+    for (const hidden of [key, ACCOUNT_ID, first.publicKey.x, second.publicKey.x]) {
       expect(listed.text).not.toContain(hidden)
     }
 

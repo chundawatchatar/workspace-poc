@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { machineFingerprint, type RotateAccessResponse, routes, startBrowserHandshake } from '@orch/shared'
+import { routes, startBrowserHandshake } from '@orch/shared'
 import { localRequest } from '../../app.testing'
 import type { Principal } from '../../lib/principal'
 import { loadSettings } from '../settings/settings.service'
-import { devAddresses, linkClientUrl } from './addresses.service'
+import { devAddresses } from './addresses.service'
 import { fingerprintOf } from './device-proof.service'
 import { testDevice } from './device-proof.testing'
 import { DevicesRepository } from './devices.repository'
@@ -24,6 +24,7 @@ import {
   fakeServer,
   HOLD_MS,
   key,
+  keysFile,
   linkedFile,
   logs,
   machineKeyFile,
@@ -31,6 +32,7 @@ import {
   relay,
   relayKeys,
   savedAccount,
+  seedKey,
   service,
   setup,
   storedKeys,
@@ -58,7 +60,7 @@ function approvedEarlier() {
 }
 
 describe('RemoteAccessService', () => {
-  test('a saved account opens one tunnel at start and creates the default key; without one nothing opens', async () => {
+  test('a saved account opens one tunnel at start and creates no access key; without one nothing opens', async () => {
     writeFileSync(join(dir, 'remote-access.json'), JSON.stringify({ enabled: true }))
     const app = setup({ serverUrl: 'ws://127.0.0.1:4600' }, { SERVER_URL: 'ws://127.0.0.1:4600' })
     expect(tunnels).toHaveLength(0)
@@ -77,15 +79,20 @@ describe('RemoteAccessService', () => {
 
     setup({ linked: true, serverUrl: 'ws://127.0.0.1:4600' })
     expect(tunnels.map((t) => t.options.url)).toEqual(['ws://127.0.0.1:4600/tunnel'])
-    expect(storedKeys().map((k) => k.name)).toEqual(['default'])
-    const { machineId } = service.status()
-    const printed = `Connect link: http://127.0.0.1:4600/#machine=${machineId}&key=`
-    const link = logs.find((line) => line.includes(printed))
-    expect(link).toEndWith(`&fp=${machineFingerprint(String(machineId))}`)
+    expect(existsSync(keysFile())).toBe(false)
     expect(service.status()).toMatchObject({
       tunnel: 'connecting',
       linkedAccount: { ...account, serverUrl: 'ws://127.0.0.1:4600' },
     })
+    service.shutdown()
+
+    // A key saved earlier is kept as it is, and the start-up prints no way to get a new one.
+    seedKey()
+    setup()
+    expect(storedKeys().map((k) => k.name)).toEqual(['default'])
+    for (const issued of ['Connect link', 'Access key:', '#machine=', 'host:rotate']) {
+      expect(logs.join('\n')).not.toContain(issued)
+    }
   })
 
   test('SERVER_URL and CLIENT_URL override the saved addresses', () => {
@@ -98,11 +105,10 @@ describe('RemoteAccessService', () => {
       serverUrlSetBy: 'SERVER_URL',
       clientUrlSetBy: 'CLIENT_URL',
     })
-    expect(service.current()?.clientUrl).toBe('https://env.example')
 
-    // The link falls back from `CLIENT_URL` to the saved client address, then to the server address in use.
+    // The client address falls back from `CLIENT_URL` to the saved one, then to the server address in use.
     const link = (file: unknown, env: Record<string, string> = {}) =>
-      linkClientUrl(devAddresses(loadSettings({ flags: {}, env: {}, file }), env, () => {}).clientUrl)
+      devAddresses(loadSettings({ flags: {}, env: {}, file }), env, () => {}).clientUrl.value
     expect(link({ relayUrl: 'ws://127.0.0.1:4600', clientUrl: 'https://saved.example' })).toBe('https://saved.example')
     expect(link({ relayUrl: 'ws://127.0.0.1:4600' }, { CLIENT_URL: 'ftp://nope' })).toBe('http://127.0.0.1:4600')
     expect(link({ relayUrl: 'ws://127.0.0.1:4600' }, { SERVER_URL: 'wss://relay.example.com' })).toBe(
@@ -177,6 +183,9 @@ describe('RemoteAccessService', () => {
     expect(logs.join('\n')).not.toContain(key)
     expect(logs.join('\n')).not.toContain(email)
     expect(tunnel?.stops).toEqual([])
+    // Connecting issues no access key and logs no connect link.
+    expect(existsSync(keysFile())).toBe(false)
+    for (const issued of ['Connect link', 'Access key:', '#machine=']) expect(logs.join('\n')).not.toContain(issued)
 
     // A connected machine refuses another connect, and the account survives a restart.
     const again = await post(app, routes.remoteAccess.connect, { email, key, serverUrl: 'ws://localhost:4700' })
@@ -369,34 +378,6 @@ describe('RemoteAccessService', () => {
     service.shutdown()
     expect(tunnel.stops).toEqual([undefined])
   })
-
-  test('rotate follows the addresses in use: a link on the default, then on the saved or derived client address', async () => {
-    const rotate = (app: ReturnType<typeof setup>) => localRequest(app, routes.access.rotate.path, { method: 'POST' })
-    const fallback = (await (await rotate(setup())).json()) as RotateAccessResponse
-    expect(fallback.link).toStartWith('https://orch.example.com/#machine=')
-    service.shutdown()
-
-    const onLoopback = setup({ linked: true, serverUrl: 'ws://127.0.0.1:4600' })
-    const revoked = storedKeys().map((k) => k.id)
-    const derived = (await (await rotate(onLoopback)).json()) as RotateAccessResponse
-    expect(derived.link).toBe(
-      `http://127.0.0.1:4600/#machine=${derived.machineId}&key=${derived.key}&fp=${machineFingerprint(derived.machineId)}`,
-    )
-    const [closed] = tunnels[0]?.closed ?? []
-    expect(closed?.reason).toBe('key rotated')
-    expect(revoked.every((keyId) => closed?.revoked({ kind: 'key', keyId, name: 'default', deviceId: 'd1' }))).toBe(
-      true,
-    )
-    // Account sockets stay open across a rotation.
-    expect(closed?.revoked({ kind: 'account', accountId, deviceId: 'd1', ticketExp: 0 })).toBe(false)
-    service.shutdown()
-
-    const withClient = setup({ linked: true, serverUrl: 'ws://127.0.0.1:4600', clientUrl: 'https://orch.example' })
-    const saved = (await (await rotate(withClient)).json()) as RotateAccessResponse
-    expect(saved.link).toBe(
-      `https://orch.example/#machine=${saved.machineId}&key=${saved.key}&fp=${machineFingerprint(saved.machineId)}`,
-    )
-  })
 })
 
 describe('remote sessions', () => {
@@ -453,11 +434,10 @@ describe('end-to-end sessions', () => {
     const [one, two] = await Promise.all([testDevice(), testDevice()])
     const approvedAt = new Date().toISOString()
     new DevicesRepository(devicesFile()).save([{ id: one.id, publicKey: one.publicKey, approvedAt }])
-    const { app, tunnel } = connected()
-    const [defaultKey] = storedKeys()
+    const { tunnel } = connected()
     const ticketExp = Math.floor(Date.now() / 1000) + 60
     const principals: Record<string, [Principal, typeof one]> = {
-      keyOne: [{ kind: 'key', keyId: defaultKey?.id ?? '', name: 'default', deviceId: one.id }, one],
+      keyOne: [{ kind: 'key', keyId: 'k-one', name: 'default', deviceId: one.id }, one],
       accountOne: [{ kind: 'account', accountId, deviceId: one.id, ticketExp }, one],
       accountTwo: [{ kind: 'account', accountId, deviceId: two.id, ticketExp }, two],
       keyTwo: [{ kind: 'key', keyId: 'k-other', name: 'phone', deviceId: two.id }, two],
@@ -479,7 +459,6 @@ describe('end-to-end sessions', () => {
     expect(await closedBy(() => service.removeDevice(one.id))).toEqual(['keyOne', 'accountOne'])
     expect(await closedBy(() => service.endSession(two.id))).toEqual(['accountTwo', 'keyTwo', 'otherAccount'])
     expect(await closedBy(() => tunnel.options.onSessionEnded?.(accountId))).toEqual(['accountOne', 'accountTwo'])
-    expect(await closedBy(() => post(app, routes.access.rotate, {}))).toEqual(['keyOne'])
     // Disconnecting closes the account's sessions, then every other one with the tunnel.
     expect(await closedBy(() => service.disconnect())).toEqual(Object.keys(principals))
   })
