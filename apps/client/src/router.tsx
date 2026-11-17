@@ -2,7 +2,7 @@ import { QueryClient } from '@tanstack/react-query'
 import { createRouter, type RouterHistory } from '@tanstack/react-router'
 import { watchIdentity } from './lib/auth'
 import { acceptEmailLinkToken, listenForEmailLinks } from './lib/emailLink'
-import { acceptConnectLink } from './lib/machines'
+import { clearSavedMachineKeys } from './lib/machines'
 import { ServerError } from './lib/server'
 import { routeTree } from './routeTree.gen'
 
@@ -17,10 +17,11 @@ export interface RouterContext {
  * a memory history; the app uses the browser's.
  */
 export function getRouter(history?: RouterHistory) {
-  // Links carry secrets in the fragment: a connect link's key on any path, and an emailed link's token on its page.
-  // Read them before the router does, so the router starts on the right page and neither reaches its history.
+  // Links carry secrets in the fragment: an emailed link's token on its page, and an old connect link's key on any
+  // path. Take them out before the router reads the URL, so neither reaches its history. The key is dropped unused,
+  // along with any keys an older client saved here.
   if (!history && typeof window !== 'undefined') {
-    acceptConnectLink()
+    clearSavedMachineKeys()
     acceptEmailLinkToken()
     listenForEmailLinks()
   }

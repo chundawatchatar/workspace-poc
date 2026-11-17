@@ -15,11 +15,6 @@ export interface MachineKeyCheckProps {
   machineId: string
   /** The transport `<TerminalUI>` gets, so the key comes from the machine the same way its terminals will. */
   transport: HostTransport
-  /**
-   * What vouched for the id: `link`, a connect link whose `fp` matched it, so the first key is pinned without asking;
-   * `account`, the server's list only, so the owner compares the fingerprint first.
-   */
-  vouchedBy: 'link' | 'account'
   /** Shown while the machine answers that this browser isn't approved there. */
   unapprovedHint: ReactNode
   /** Shown after a 401, when the key or the account was refused. */
@@ -43,10 +38,9 @@ type Phase =
 async function checkKey({
   machineId,
   transport,
-  vouchedBy,
   store,
   signal,
-}: Pick<MachineKeyCheckProps, 'machineId' | 'transport' | 'vouchedBy'> & {
+}: Pick<MachineKeyCheckProps, 'machineId' | 'transport'> & {
   store: MachineKeyStore
   signal: AbortSignal
 }): Promise<Phase> {
@@ -63,22 +57,19 @@ async function checkKey({
   const result = await checkMachineKey(machineId, publicKey, store)
   if (result === 'pinned') return { kind: 'open', publicKey }
   if (result === 'mismatch') return { kind: 'mismatch' }
-  if (vouchedBy === 'account') return { kind: 'confirm', publicKey }
-  const pinned = await pinMachineKey(machineId, publicKey, 'link', store)
-  return pinned === 'pinned' ? { kind: 'open', publicKey } : { kind: 'mismatch' }
+  return { kind: 'confirm', publicKey }
 }
 
 /**
  * Checks the machine's key before its page mounts. It fetches `routes.system.machineKey` through `transport` and
- * checks the key hashes to `machineId` and equals this browser's pin. With no pin yet, a link's key is pinned at
- * once and an account's waits for the owner to confirm the fingerprint. A key that fails either check stops here
- * with a warning and no Retry, so no terminal socket opens and nothing reconnects. The page gets the checked key, so
- * its own transport can make the machine prove it holds that key.
+ * checks the key hashes to `machineId` and equals this browser's pin. With no pin yet, it pins the key only once the
+ * owner confirms the fingerprint. A key that fails either check stops here with a warning and no Retry, so no
+ * terminal socket opens and nothing reconnects. The page gets the checked key, so its own transport can make the
+ * machine prove it holds that key.
  */
 export function MachineKeyCheck({
   machineId,
   transport,
-  vouchedBy,
   unapprovedHint,
   deniedHint,
   store = machineKeyStores.default,
@@ -97,14 +88,14 @@ export function MachineKeyCheck({
       setPhase(next)
       if (next.kind === 'unapproved') timer = setTimeout(() => setAttempt((n) => n + 1), retryMs)
     }
-    checkKey({ machineId, transport, vouchedBy, store, signal: controller.signal }).then(settle, () =>
+    checkKey({ machineId, transport, store, signal: controller.signal }).then(settle, () =>
       settle({ kind: 'failed', denied: false }),
     )
     return () => {
       controller.abort()
       clearTimeout(timer)
     }
-  }, [attempt, machineId, transport, vouchedBy, store, retryMs])
+  }, [attempt, machineId, transport, store, retryMs])
 
   const retry = () => {
     setPhase({ kind: 'loading' })
@@ -121,7 +112,7 @@ export function MachineKeyCheck({
         <ConfirmFingerprint
           machineId={machineId}
           onConfirm={async () => {
-            const pinned = await pinMachineKey(machineId, phase.publicKey, 'confirmed', store)
+            const pinned = await pinMachineKey(machineId, phase.publicKey, store)
             setPhase(pinned === 'pinned' ? { kind: 'open', publicKey: phase.publicKey } : { kind: 'mismatch' })
           }}
           onReject={() => setPhase({ kind: 'mismatch' })}

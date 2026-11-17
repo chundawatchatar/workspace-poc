@@ -13,7 +13,7 @@ import { type ReactNode, useCallback, useMemo } from 'react'
 import { machinesQuery, relayTicketFor } from '../../lib/accountMachines'
 import { sessionQuery } from '../../lib/auth'
 import { loadDeviceKey } from '../../lib/deviceKey'
-import { machinePath, type SavedMachine, useMachines } from '../../lib/machines'
+import { machinePath } from '../../lib/machines'
 import { AccountMenu } from '../account/AccountMenu'
 import { Centered, linkClass } from '../Centered'
 import { MachineKeyCheck } from './MachineKeyCheck'
@@ -31,13 +31,12 @@ interface DeviceKey {
 }
 
 /**
- * The machine a page opens: with `key` through its access key, without it through the signed-in account's tickets,
- * either way with this browser's `device` key, whose `fingerprint` the user approves on the machine.
+ * The machine a page opens through the signed-in account's tickets, with this browser's `device` key, whose
+ * `fingerprint` the user approves on the machine.
  */
 interface OpenedMachine {
   id: string
   name: string
-  key?: string
   device: DeviceKey
 }
 
@@ -53,14 +52,9 @@ const deviceKeyQuery = {
   retry: false,
 } as const
 
-/**
- * A machine's page, or a note that it isn't linked here. A key saved in this browser from a connect link wins;
- * otherwise the account opens a machine it lists. Both wait for this browser's device key.
- */
+/** A machine's page, opened through the account when it lists the machine, or a note that it isn't linked. */
 export function MachinePage({ machineId }: { machineId: string }) {
-  const saved = useMachines().find((m) => m.id === machineId)
   const session = useQuery(sessionQuery)
-  if (saved) return <SavedMachinePage machine={saved} />
   if (session.isPending) return <Loading />
   const userId = session.data?.id
   if (!userId) return <NotLinked />
@@ -85,14 +79,6 @@ function DeviceKeyFailed({ retry, pending }: { retry: () => void; pending: boole
       </Button>
     </Centered>
   )
-}
-
-/** A machine saved from a connect link, opened with its key once this browser's device key is loaded. */
-function SavedMachinePage({ machine }: { machine: SavedMachine }) {
-  const device = useQuery(deviceKeyQuery)
-  if (device.data) return <OpenMachine machine={{ ...machine, device: device.data }} />
-  if (device.isError) return <DeviceKeyFailed pending={device.isFetching} retry={() => void device.refetch()} />
-  return <Loading />
 }
 
 /** A machine opened through the account, named from the account's list, once this browser's device key is loaded. */
@@ -131,15 +117,8 @@ function NotLinked() {
 
 const offlineHint = 'The machine is offline, or not connected to the server. Check that its host is running.'
 
-const keyDeniedHint = (
-  <>
-    The machine's key has changed. Run{' '}
-    <code className="rounded bg-raised px-1.5 py-0.5 font-mono text-ink">bun run host:rotate-key</code> on the machine
-    and open the new connect link it prints.
-  </>
-)
-
-const accountDeniedHint = (
+/** What to do after the machine refused this account, shown on every machine page. */
+const deniedHint = (
   <>
     The machine isn't connected to this account on its host. Connect it again: use Connect a machine on the home page,
     then run the <code className="rounded bg-raised px-1.5 py-0.5 font-mono text-ink">corch connect</code> command it
@@ -160,43 +139,34 @@ function unapprovedHint(fingerprint: string): ReactNode {
 
 /**
  * A machine's transport, its key checked against this browser's pin before `<TerminalUI>` mounts, so a machine whose
- * key doesn't match never gets a terminal socket. `<TerminalUI>` then gets a transport bound to that pinned key. A connect link vouched for the id, so its first key is pinned at
- * once; the account's list didn't, so the owner confirms the fingerprint first.
+ * key doesn't match never gets a terminal socket. `<TerminalUI>` then gets a transport bound to that pinned key. The
+ * account's list doesn't vouch for the machine's key, so the owner confirms its fingerprint the first time.
  */
 function OpenMachine({ machine }: { machine: OpenedMachine }) {
-  const { id, key, device } = machine
+  const { id, device } = machine
   const { signer, fingerprint } = device
 
-  // One transport per machine and key, so moving between workspaces keeps the connection. Without a key, the
-  // account opens the machine with relay tickets; either way every request carries this browser's device proof.
-  // This one only fetches the key to check: it can't open an end-to-end session before the key is known.
+  // One transport per machine, so moving between workspaces keeps the connection. The account opens the machine
+  // with relay tickets, and every request carries this browser's device proof. This one only fetches the key to
+  // check: it can't open an end-to-end session before the key is known.
   const createTransport = useCallback(
     (e2e?: VerifiedTransportOptions) =>
       createRemoteTransport({
         serverUrl: serverUrl(),
         machineId: id,
         device: signer,
-        ...(key ? { accessKey: key } : { relayTicket: () => relayTicketFor(id) }),
+        relayTicket: () => relayTicketFor(id),
         ...e2e,
       }),
-    [id, key, signer],
+    [id, signer],
   )
   const transport = useMemo(() => createTransport(), [createTransport])
-  const deniedHint: ReactNode = key ? keyDeniedHint : accountDeniedHint
   const unapproved = useMemo(() => unapprovedHint(fingerprint), [fingerprint])
   return (
-    <MachineKeyCheck
-      machineId={id}
-      transport={transport}
-      vouchedBy={key ? 'link' : 'account'}
-      unapprovedHint={unapproved}
-      deniedHint={deniedHint}
-    >
+    <MachineKeyCheck machineId={id} transport={transport} unapprovedHint={unapproved} deniedHint={deniedHint}>
       {(publicKey) => (
         <VerifiedMachine publicKey={publicKey} createTransport={createTransport}>
-          {(verified) => (
-            <MachineTerminalUI machine={machine} transport={verified} deniedHint={deniedHint} unapproved={unapproved} />
-          )}
+          {(verified) => <MachineTerminalUI machine={machine} transport={verified} unapproved={unapproved} />}
         </VerifiedMachine>
       )}
     </MachineKeyCheck>
@@ -206,12 +176,10 @@ function OpenMachine({ machine }: { machine: OpenedMachine }) {
 function MachineTerminalUI({
   machine,
   transport,
-  deniedHint,
   unapproved,
 }: {
   machine: OpenedMachine
   transport: HostTransport
-  deniedHint: ReactNode
   unapproved: ReactNode
 }) {
   const { id, name } = machine

@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
 import { PRODUCT_NAME, PRODUCT_TAGLINE } from '@orch/brand'
-import { type E2eSocketOpen, machineSealedSocketPath, routes, serverRoutes } from '@orch/shared'
+import {
+  ACCESS_KEY_HEADER,
+  type E2eSocketOpen,
+  formatConnectFragment,
+  machineSealedSocketPath,
+  routes,
+  serverRoutes,
+} from '@orch/shared'
 import { QueryClientProvider, useQueryClient } from '@tanstack/react-query'
 import { createMemoryHistory, RouterProvider } from '@tanstack/react-router'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
@@ -11,7 +18,6 @@ import { signInWithEmail, signOut } from './lib/auth'
 import { deviceKeyStores, indexedDbKeyStore, loadDeviceKey } from './lib/deviceKey'
 import { acceptEmailLinkToken, type EmailLinkPage, takeEmailLinkToken } from './lib/emailLink'
 import { indexedDbMachineKeyStore, machineKeyStores } from './lib/machineKeys'
-import { saveMachine } from './lib/machines'
 import { authSession, authUser } from './test/betterAuth'
 import { memoryKeyStore } from './test/deviceKeyStore'
 import { testMachine } from './test/machineKey'
@@ -23,8 +29,25 @@ mock.module('./styles.css?url', () => ({ default: '/styles.css' }))
 const { getRouter } = await import('./router')
 
 const user = { id: 'u1', email: 'u1@example.com', name: 'U' }
-/** A machine saved from a connect link, and one the account lists, whose key this browser already confirmed. */
-const [saved, account] = [testMachine(), testMachine()]
+/** The machine the account lists, whose key this browser already confirmed. */
+const account = testMachine()
+const at = '2026-10-30T12:00:00.000Z'
+const listed = {
+  machineId: account.id,
+  name: 'Laptop',
+  createdAt: at,
+  lastOpenedAt: at,
+  online: true,
+  remoteOff: false,
+}
+
+/** The access keys an older client kept in `localStorage`, from the connect links opened in this browser. */
+function saveOldKey(machineId: string, key: string) {
+  localStorage.setItem('orch-machines', JSON.stringify([{ id: machineId, name: 'Old', key, fingerprint: 'F' }]))
+}
+
+/** A router over the browser's own history, which `afterEach` lets go of. */
+let browserRouter: ReturnType<typeof getRouter> | undefined
 
 /** Whether the fake server holds a session for the page's cookie. */
 let signedIn = true
@@ -33,6 +56,9 @@ let signedIn = true
 afterEach(() => {
   deviceKeyStores.default = indexedDbKeyStore
   machineKeyStores.default = indexedDbMachineKeyStore
+  browserRouter?.history.destroy()
+  browserRouter = undefined
+  window.history.replaceState(null, '', '/')
 })
 
 beforeEach(() => {
@@ -42,7 +68,6 @@ beforeEach(() => {
   machineKeyStores.default = memoryMachineKeyStore({
     [account.id]: { publicKey: account.publicKey, pinnedAt, source: 'confirmed' },
   }).store
-  saveMachine({ id: saved.id, name: 'Laptop', key: 'k1', fingerprint: saved.fingerprint })
   server.use(
     http.get('*/api/auth/get-session', () =>
       HttpResponse.json(signedIn ? { user: authUser(user), session: authSession('s1', user.id) } : null),
@@ -55,20 +80,23 @@ beforeEach(() => {
       signedIn = false
       return HttpResponse.json({ success: true })
     }),
-    http.get('*/api/machines', () => HttpResponse.json({ machines: [] })),
+    http.get('*/api/machines', () => HttpResponse.json({ machines: [listed] })),
+    http.post('*/api/machines/:machineId/relay-ticket', () =>
+      HttpResponse.json({ ticket: 'fake.relay.ticket', expiresAt: new Date(Date.now() + 60_000).toISOString() }),
+    ),
     http.get(`*${serverRoutes.machines.listRequests.path}`, () => HttpResponse.json({ requests: [] })),
-    // Each machine answers its own key, which the page checks before it opens any socket.
-    http.get(`*/m/:machineId${routes.system.machineKey.path}`, ({ params }) => {
-      const machine = [saved, account].find((m) => m.id === params.machineId)
-      return machine ? HttpResponse.json({ publicKey: machine.publicKey }) : new HttpResponse(null, { status: 404 })
-    }),
+    // The machine answers its own key, which the page checks before it opens any socket.
+    http.get(`*/m/:machineId${routes.system.machineKey.path}`, ({ params }) =>
+      params.machineId === account.id
+        ? HttpResponse.json({ publicKey: account.publicKey })
+        : new HttpResponse(null, { status: 404 }),
+    ),
     // And opens an end-to-end session, signed with that key, before the page's first request or socket.
-    http.post(`*/m/:machineId${routes.e2e.open.path}`, async ({ params, request }) => {
-      const machine = [saved, account].find((m) => m.id === params.machineId)
-      return machine
-        ? HttpResponse.json(await machine.answer(await request.json()))
-        : new HttpResponse(null, { status: 404 })
-    }),
+    http.post(`*/m/:machineId${routes.e2e.open.path}`, async ({ params, request }) =>
+      params.machineId === account.id
+        ? HttpResponse.json(await account.answer(await request.json()))
+        : new HttpResponse(null, { status: 404 }),
+    ),
   )
 })
 
@@ -79,7 +107,11 @@ beforeEach(() => {
  * the router's query client.
  */
 function appRouter(path: string) {
-  const router = getRouter(createMemoryHistory({ initialEntries: [path] }))
+  return withTestShell(getRouter(createMemoryHistory({ initialEntries: [path] })))
+}
+
+/** Gives `router` the test's shell, which provides its query client. */
+function withTestShell(router: ReturnType<typeof getRouter>) {
   const { queryClient } = router.options.context
   // `shellComponent` is TanStack Start's addition to the root route, so the router's own types don't list it.
   Object.assign(router.routesById.__root__.options, {
@@ -116,8 +148,8 @@ async function land(path: string) {
 
 describe('client routes', () => {
   test('unknown paths show not found, under a machine inside its page', async () => {
-    const connected = quietMachine(saved.id)
-    await show(`/m/${saved.id}/w/ws1/unknown`)
+    const connected = quietMachine(account.id)
+    await show(`/m/${account.id}/w/ws1/unknown`)
     expect(await screen.findByText('Page not found.')).toBeInTheDocument()
     expect(screen.getByText('Laptop')).toBeInTheDocument()
     await connected
@@ -134,21 +166,33 @@ describe('client routes', () => {
     expect(screen.queryByText('Page not found.')).not.toBeInTheDocument()
     cleanup()
 
-    const connected = quietMachine(saved.id)
-    await show(`/m/${saved.id}/w/ws1`)
+    const connected = quietMachine(account.id)
+    await show(`/m/${account.id}/w/ws1`)
     expect((await screen.findAllByText('Connecting to the host…')).length).toBeGreaterThan(0)
     expect(screen.queryByText('Page not found.')).not.toBeInTheDocument()
     await connected
   })
 
-  test('a machine saved from a connect link sends its key with a device proof, and an unapproved browser sees its fingerprint', async () => {
+  test('a listed machine opens with relay tickets, never a key an older client saved, and an unlisted one is not linked', async () => {
+    saveOldKey(account.id, 'k1')
     const opens: E2eSocketOpen[] = []
+    const ticketsFor: string[] = []
+    const keyHeaders: (string | null)[] = []
     server.use(
-      ws.link(`*${machineSealedSocketPath(saved.id)}`).addEventListener('connection', ({ client }) =>
+      // Sees every request to the machine, then lets the handlers above answer it.
+      http.all('*/m/*', ({ request }) => void keyHeaders.push(request.headers.get(ACCESS_KEY_HEADER))),
+      http.post('*/api/machines/:machineId/relay-ticket', ({ params }) => {
+        ticketsFor.push(String(params.machineId))
+        return HttpResponse.json({
+          ticket: 'fake.relay.ticket',
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        })
+      }),
+      ws.link(`*${machineSealedSocketPath(account.id)}`).addEventListener('connection', ({ client }) =>
         client.addEventListener(
           'message',
           async (event) => {
-            opens.push(await saved.openSocket(event.data))
+            opens.push(await account.openSocket(event.data))
             client.close(4403, 'device not approved')
           },
           { once: true },
@@ -156,56 +200,49 @@ describe('client routes', () => {
       ),
     )
     const { fingerprint } = await loadDeviceKey(deviceKeyStores.default)
-    await show(`/m/${saved.id}`)
-    await waitFor(() => expect(opens.length).toBeGreaterThan(0))
-    // The socket opens sealed: its first message is an envelope holding the path and the auth message.
-    expect(opens[0]).toEqual({
-      path: routes.sockets.events.path,
-      auth: { type: 'auth', key: 'k1', device: expect.any(String) },
-    })
-    expect((await screen.findAllByText(fingerprint)).length).toBeGreaterThan(0)
-  })
-
-  test('a machine with no key here opens through the account when listed, and is not linked otherwise', async () => {
-    const at = '2026-10-30T12:00:00.000Z'
-    const listed = {
-      machineId: account.id,
-      name: 'Desktop',
-      createdAt: at,
-      lastOpenedAt: at,
-      online: true,
-      remoteOff: false,
-    }
-    const opens: E2eSocketOpen[] = []
-    const ticketsFor: string[] = []
-    const expiresAt = new Date(Date.now() + 60_000).toISOString()
-    server.use(
-      http.get('*/api/machines', () => HttpResponse.json({ machines: [listed] })),
-      http.post('*/api/machines/:machineId/relay-ticket', ({ params }) => {
-        ticketsFor.push(String(params.machineId))
-        return HttpResponse.json({ ticket: 'fake.relay.ticket', expiresAt })
-      }),
-      ws.link(`*${machineSealedSocketPath(account.id)}`).addEventListener('connection', ({ client }) =>
-        client.addEventListener('message', async (event) => opens.push(await account.openSocket(event.data)), {
-          once: true,
-        }),
-      ),
-    )
     await show(`/m/${account.id}`)
-    expect((await screen.findAllByText('Desktop')).length).toBeGreaterThan(0)
-    await waitFor(() => expect(opens).toHaveLength(1))
+    expect((await screen.findAllByText('Laptop')).length).toBeGreaterThan(0)
+    await waitFor(() => expect(opens.length).toBeGreaterThan(0))
     // The sealed open asks to be judged by the account's ticket, which it carries, with this browser's device proof.
     expect(opens[0]).toEqual({
       path: routes.sockets.events.path,
       auth: { type: 'auth', account: true, device: expect.any(String) },
       ticket: 'fake.relay.ticket',
     })
-    // The events socket asked for its own ticket for this machine before it opened.
     expect(ticketsFor[0]).toBe(account.id)
+    expect(keyHeaders.length).toBeGreaterThan(0)
+    expect(keyHeaders.every((header) => header === null)).toBe(true)
+    // The machine refused this browser, which waits for approval there and shows its fingerprint to approve.
+    expect((await screen.findAllByText(fingerprint)).length).toBeGreaterThan(0)
     cleanup()
 
     await show('/m/other-machine')
     expect(await screen.findByText("This machine isn't linked to your account.")).toBeInTheDocument()
+  })
+
+  test("starting the app removes the saved keys, and an old connect link's key leaves the address bar unused", async () => {
+    const requests: string[] = []
+    server.use(
+      http.all('*', ({ request }) => {
+        requests.push(`${request.url} ${JSON.stringify([...request.headers])}`)
+      }),
+    )
+    saveOldKey(account.id, 'k1')
+    localStorage.setItem('orch-theme', 'dark')
+    const entry = { key: 'entry-1', __TSR_key: 'entry-1', __TSR_index: 0 }
+    const link = formatConnectFragment({ machineId: account.id, key: 'k1', fingerprint: account.fingerprint })
+    window.history.replaceState(entry, '', `/anything?q=1${link}`)
+
+    browserRouter = withTestShell(getRouter())
+    expect(Object.fromEntries(Object.entries(localStorage))).toEqual({ 'orch-theme': 'dark' })
+    expect(window.location.href).toBe('http://localhost:3220/anything?q=1')
+    expect(window.history.state).toEqual(entry)
+    // The router starts where the link pointed, not on the machine's page.
+    await show('/anything', browserRouter)
+    expect(await screen.findByText('Page not found.')).toBeInTheDocument()
+    expect(browserRouter.state.location.href).toBe('/anything?q=1')
+    await waitFor(() => expect(requests.length).toBeGreaterThan(0))
+    expect(requests.filter((request) => request.includes('k1'))).toEqual([])
   })
 
   test('pages share the root query client', async () => {
@@ -251,14 +288,14 @@ describe('session guard', () => {
 
   test('signing in lands on the redirect when it is safe, and home otherwise', async () => {
     signedIn = false
-    const router = await show(`/auth/sign-in?redirect=%2Fm%2F${saved.id}`)
+    const router = await show(`/auth/sign-in?redirect=%2Fm%2F${account.id}`)
     expect(router.state.location.pathname).toBe('/auth/sign-in')
-    const connected = quietMachine(saved.id)
+    const connected = quietMachine(account.id)
     await act(async () => {
       expect(await signInWithEmail(router.options.context.queryClient, user.email, 'pw-old')).toBeNull()
     })
     // The sign-in hands the cache to the new user, which reruns the guards.
-    await waitFor(() => expect(router.state.location.pathname).toBe(`/m/${saved.id}`))
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/m/${account.id}`))
     // The page checks the machine's key before it mounts the machine and connects.
     expect((await screen.findAllByText('Connecting to the host…')).length).toBeGreaterThan(0)
     await connected
@@ -279,7 +316,7 @@ describe('session guard', () => {
     )
 
     signedIn = true
-    expect((await land(`/auth/sign-up?redirect=%2Fm%2F${saved.id}`)).pathname).toBe(`/m/${saved.id}`)
+    expect((await land(`/auth/sign-up?redirect=%2Fm%2F${account.id}`)).pathname).toBe(`/m/${account.id}`)
     expect((await land('/auth/sign-up?redirect=https%3A%2F%2Fevil.example')).href).toBe('/')
   })
 

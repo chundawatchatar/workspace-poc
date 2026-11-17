@@ -3,11 +3,10 @@ import { formOptions } from '@tanstack/react-form'
 import type { QueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
 import { accountQuery } from './auth'
-import { forgetMachine } from './machines'
 import { callServer, ServerError, serverMutation } from './server'
 
-// The machines linked to the signed-in account, from the accounts API. It only ever sends machine ids and names: the
-// access keys stay in this browser (`./machines`), and the host checks them on every request.
+// The machines linked to the signed-in account, from the accounts API. It only ever sends machine ids and names; a
+// machine page opens through the account with relay tickets (`relayTicketFor`), never with an access key.
 
 /** How often the list is read again while it is on screen, so each machine's online state stays current. */
 export const MACHINES_REFETCH_INTERVAL = 10_000
@@ -85,17 +84,11 @@ export function renameMachineMutation(queryClient: QueryClient, userId: string) 
   }
 }
 
-/**
- * Unlinks one of `userId`'s machines, forgets its key in this browser, then reads the list again. The list shows only
- * the account's machines, so a key left behind could never be seen or removed.
- */
+/** Unlinks one of `userId`'s machines, then reads the list again. */
 export function unlinkMachineMutation(queryClient: QueryClient, userId: string) {
   return {
     ...serverMutation(serverRoutes.machines.unlink),
-    onSuccess: (_: unknown, { machineId }: { machineId: string }) => {
-      forgetMachine(machineId)
-      return invalidateMachines(queryClient, userId)
-    },
+    onSuccess: () => invalidateMachines(queryClient, userId),
   }
 }
 

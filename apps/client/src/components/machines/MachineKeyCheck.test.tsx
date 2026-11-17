@@ -32,7 +32,12 @@ const unapproved = () => Response.json({ error: 'not approved', code: DEVICE_NOT
 /** Renders the check inside the app's providers, so the mismatch screen can link back home. */
 function show(props: Omit<MachineKeyCheckProps, 'children' | 'unapprovedHint' | 'deniedHint'>) {
   return renderWithProviders(
-    <MachineKeyCheck {...props} unapprovedHint="Approve ABCD on the machine." deniedHint="Rotate the key." retryMs={5}>
+    <MachineKeyCheck
+      {...props}
+      unapprovedHint="Approve ABCD on the machine."
+      deniedHint="Connect it again."
+      retryMs={5}
+    >
       {() => <p>The machine's page</p>}
     </MachineKeyCheck>,
   )
@@ -54,26 +59,26 @@ async function stopped(transport: HostTransport) {
 }
 
 describe('MachineKeyCheck', () => {
-  test('a connect link pins the first key without asking, and a later key that differs stops the page', async () => {
-    const { store, pins } = memoryMachineKeyStore()
+  test('a pin an older client made from a connect link still opens the page, and a key that differs stops it', async () => {
+    const { store, pins } = memoryMachineKeyStore({ [machine.id]: pin(machine.publicKey, 'link') })
     const first = fakeTransport(serves(machine.publicKey))
-    const view = await show({ machineId: machine.id, transport: first.transport, vouchedBy: 'link', store })
+    const view = await show({ machineId: machine.id, transport: first.transport, store })
     expect(await screen.findByText("The machine's page")).toBeInTheDocument()
     expect(first.paths).toEqual([routes.system.machineKey.path])
-    expect(pins.get(machine.id)).toEqual({ publicKey: machine.publicKey, pinnedAt: expect.any(String), source: 'link' })
+    expect(screen.queryByRole('button', { name: 'Confirm' })).not.toBeInTheDocument()
     view.unmount()
 
     // Another key under the same id can only be one that doesn't hash to it.
     const later = fakeTransport(serves(impostor.publicKey))
-    await show({ machineId: machine.id, transport: later.transport, vouchedBy: 'link', store })
+    await show({ machineId: machine.id, transport: later.transport, store })
     await stopped(later.transport)
-    expect(pins.get(machine.id)?.publicKey).toBe(machine.publicKey)
+    expect(pins.get(machine.id)).toEqual(pin(machine.publicKey, 'link'))
   })
 
-  test('through the account it waits for approval, then pins only once the owner types the fingerprint the machine shows', async () => {
+  test('with no pin it waits for approval, then pins only once the owner types the fingerprint the machine shows', async () => {
     const { store, pins } = memoryMachineKeyStore()
     const { transport, paths } = fakeTransport(unapproved, serves(machine.publicKey))
-    const { user } = await show({ machineId: machine.id, transport, vouchedBy: 'account', store })
+    const { user } = await show({ machineId: machine.id, transport, store })
     expect(await screen.findByText('Approve ABCD on the machine.')).toBeInTheDocument()
 
     // The page never shows the fingerprint, so it can only come from the machine; the field is ready to type in.
@@ -91,14 +96,18 @@ describe('MachineKeyCheck', () => {
     await user.type(field, machine.fingerprint.toLowerCase())
     await user.click(confirm)
     expect(await screen.findByText("The machine's page")).toBeInTheDocument()
-    expect(pins.get(machine.id)).toMatchObject({ publicKey: machine.publicKey, source: 'confirmed' })
+    expect(pins.get(machine.id)).toEqual({
+      publicKey: machine.publicKey,
+      pinnedAt: expect.any(String),
+      source: 'confirmed',
+    })
     expect(transport.openSocket).not.toHaveBeenCalled()
   })
 
   test('"It doesn\'t match" pins nothing and stops; a matching pin skips the question; a bad key stops', async () => {
     const { store, pins } = memoryMachineKeyStore()
     const rejected = fakeTransport(serves(machine.publicKey))
-    const view = await show({ machineId: machine.id, transport: rejected.transport, vouchedBy: 'account', store })
+    const view = await show({ machineId: machine.id, transport: rejected.transport, store })
     await view.user.click(await screen.findByRole('button', { name: "It doesn't match" }))
     await stopped(rejected.transport)
     expect(pins.size).toBe(0)
@@ -106,14 +115,14 @@ describe('MachineKeyCheck', () => {
 
     pins.set(machine.id, pin(machine.publicKey, 'confirmed'))
     const served = fakeTransport(serves(machine.publicKey))
-    const again = await show({ machineId: machine.id, transport: served.transport, vouchedBy: 'account', store })
+    const again = await show({ machineId: machine.id, transport: served.transport, store })
     expect(await screen.findByText("The machine's page")).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Confirm' })).not.toBeInTheDocument()
     again.unmount()
 
     for (const answer of [serves(impostor.publicKey), serves('not-a-key'), () => Response.json({})]) {
       const bad = fakeTransport(answer)
-      const page = await show({ machineId: machine.id, transport: bad.transport, vouchedBy: 'account', store })
+      const page = await show({ machineId: machine.id, transport: bad.transport, store })
       await stopped(bad.transport)
       page.unmount()
     }
