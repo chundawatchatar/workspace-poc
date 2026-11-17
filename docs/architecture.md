@@ -245,8 +245,8 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   `accountQuery` on `serverRoutes.machines.list`, so its key is `accountKey(userId, ...)`), in the server's order,
   each marked Online, Offline or Remote access off. It refetches every 10 seconds while the page is open, since the
   state changes without any client action. Both `online` and `remoteOff` come only from the relay's tunnel registry:
-  `remoteOff` is set when the host's last tunnel ended with `remote.off`, which the host sends only when its owner turns
-  remote access off while it runs. A host that exits, crashes or loses its network shows Offline. Rename (an inline TanStack Form with `machineNameSchema`) and unlink invalidate the list;
+  `remoteOff` is set when the host's last tunnel ended with `remote.off`, which the host sends only when its owner
+  disconnects it while it runs. A host that exits, crashes or loses its network shows Offline. Rename (an inline TanStack Form with `machineNameSchema`) and unlink invalidate the list;
   unlink also forgets the machine's local key, since the list no longer shows local-only machines and a key left
   behind could never be seen or removed. Open question: whether unlink should ask for confirmation.
 - The client's settings (`/settings`, a left nav of sections; password and sessions on `/settings/security`) are reached
@@ -310,8 +310,8 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   `fingerprintKey` (no case, dashes or whitespace) against the pending list, approves the one match, answers 404 when
   none is waiting and 409 when more than one matches; `host:remote devices approve` sends the typed text the same
   way. Approved devices are saved in `devices.json` in the data folder as
-  `{ id, publicKey, approvedAt }`. Revoking one closes its sockets, those opened with a key and through the account, and unlinking the account
-  forgets every device. The key is checked first and alone decides which credential is used, so a wrong key is
+  `{ id, publicKey, approvedAt }`. Revoking one closes its sockets, those opened with a key and through the account, and Connect and Disconnect
+  forget every device. The key is checked first and alone decides which credential is used, so a wrong key is
   refused (with `auth.failed`, which counts against the server's bad-key limit) without its proof being read: a
   guessed key never fills the pending list or spends a nonce, and a ticket never rescues a bad key. A key socket
   spends no ticket, so it isn't single-use; its proof's spent nonce bounds replay, as for HTTP.
@@ -376,23 +376,28 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   older sessions past the cap; that is accepted for now.
 - Enrollment keys are the only way to link a machine to an account. A signed-in user creates one with
   `serverRoutes.machines.createEnrollment` (`modules/machines/enrollment.service.ts`): `oek_` plus 32 random bytes,
-  shown once with its last 4 characters as a fingerprint. The `machine_enrollments` table stores only the key's
-  SHA-256 hash, and a key works once, for 15 minutes. The machine sends it over its own tunnel as `enroll.preview`
-  (which account the key belongs to, with the email masked as `a***@example.com`, without using it) and
-  `enroll.redeem` (links the machine). The machine id is always the tunnel's own, the hash of the public key its `hello` signed with,
+  shown once with its last 4 characters as a fingerprint, together with the server's `SERVER_TUNNEL_URL` as
+  `serverUrl`. The `machine_enrollments` table stores only the key's SHA-256 hash, and a key works once, for 15
+  minutes. The machine's Connect sends it over its own tunnel as `enroll.redeem`, with the account's email as the
+  owner typed it. The machine id is always the tunnel's own, the hash of the public key its `hello` signed with,
   never a field of the frame, so a machine can only enroll itself. Redeeming is one conditional
-  `UPDATE … WHERE usedAt IS NULL AND expiresAt > now RETURNING userId`, so of two racing redeems exactly one wins,
-  and linking then goes through the owner's `forUser` repositories, keeping an existing name. The lookups start from
-  a key, not a principal, so they go through `skipAuthorization` with one fixed reason, behind a closure built in
-  `index.ts`. Each machine gets 10 enrollment frames, refilling 1 per 30 s (`enrollPerMachine`, keyed by machine id,
-  not IP), and a refused frame touches no database. An unknown, used, expired or malformed key all get the same
+  `UPDATE … WHERE usedAt IS NULL AND expiresAt > now AND userId IN (SELECT id FROM "user" WHERE lower(email) = …)
+  RETURNING userId`, so of two racing redeems exactly one wins, and a wrong email leaves the key unused; linking
+  then goes through the owner's `forUser` repositories, keeping an existing name. The lookups start from a key, not a
+  principal, so they go through `skipAuthorization` with one fixed reason, behind a closure built in `index.ts`. Each
+  machine gets 10 `enroll.redeem` and `unlink` frames, refilling 1 per 30 s (`enrollPerMachine`, keyed by machine id,
+  not IP), and a refused frame touches no database. An unknown, used, expired or malformed key, and another
+  account's email, an email with no account or a malformed one, all get the same
   `enroll.failed { code: 'invalid_key' }`, which names no account; `rate_limited` and `unavailable` (accounts off, or
   a database error) describe the machine or the server. Nothing on this path logs the key, its hash, the email or the
   account name. `enroll.redeemed` carries the owner's user id (`accountId`) and the server's relay public keys
-  (`relayKeys`), which the host saves to check relay tickets later. The server is trusted to say who is signed in,
-  and so who owns a key and who gets tickets, but a ticket opens a machine only with a proof from a device approved
-  on it (see "Device approval" above). Expired rows are not
-  cleaned up yet, and there is no cap on outstanding keys per user.
+  (`relayKeys`), which the host saves to check relay tickets later. Disconnect sends `unlink` with that user id: the
+  server deletes, through that account's scoped `machines` repository, only its row for the tunnel's own machine id,
+  and answers `unlinked` whether or not there was one, or `unlink.failed` (`rate_limited`, or `unavailable` with
+  accounts off or on a database error). The host then forgets the account whatever the answer. These frames came
+  with tunnel protocol version 5. The server is trusted to say who is signed in, and so who owns a key and who gets
+  tickets, but a ticket opens a machine only with a proof from a device approved on it (see "Device approval"
+  above). Expired rows are not cleaned up yet, and there is no cap on outstanding keys per user.
 - Better Auth checks the `Origin` of non-GET requests against `SERVER_TRUSTED_ORIGINS` plus the origin of
   `BETTER_AUTH_URL`, and rate limits by client IP in memory (per process, reset on restart). The IP comes from the
   `x-orch-client-ip` header the auth routes set from the server's own client IP reader, replacing any value a client
@@ -522,7 +527,7 @@ and a key's `RELAY_TICKET_TTL_SECONDS` after it opens, so both renew alike: the 
 before expiry, the same margin as tickets. A device holds at most 8 live sessions (tabs share a device), and a ninth
 drops its oldest. Every path in `RemoteAccessService` that closes sockets closes the matching sessions through one
 helper, `closeAccess`: revoking a device, ending its session, unlinking, the server's `session.ended` and key rotation;
-turning remote access off or stopping the tunnel closes them all. Expiry closes no open socket. A session id, an ephemeral key, a signature or a derived key is never logged, saved or put in an error
+disconnecting or stopping the tunnel closes them all. Expiry closes no open socket. A session id, an ephemeral key, a signature or a derived key is never logged, saved or put in an error
 message, a URL or a query key. The key bootstrap (`routes.system.machineKey`) stays unsealed and outside the
 handshake, since the browser needs the key before it can check one, so `MachineKeyCheck` uses a transport without
 `machinePublicKey`. It and the handshake are the two requests the host still serves unsealed through the tunnel (see
@@ -612,14 +617,14 @@ handler or auth timer starts and its `ws.data` reaches nothing. Each refusal is 
 credential or fingerprint, since no proof was read. The owner sees it as "Refused: not end-to-end encrypted". The log
 stays capped at `AUDIT_LOG_MAX_LINES`, so a flood of refusals only pushes older lines out. `http.sealed` and
 `ws.sealed` are unchanged, and local access (`apps/web`) never passes through the tunnel and is unchanged. The server still relays plain `/m/<id>/api` and `/m/<id>/ws`, and the host refuses them; the browser
-sends only the two exempt requests unsealed. There is no setting or grace period, and `TUNNEL_PROTOCOL_VERSION` stays
-4, since no frame changed.
+sends only the two exempt requests unsealed. There is no setting or grace period, and `TUNNEL_PROTOCOL_VERSION` didn't
+change for this, since no frame changed.
 
 Risks that remain with end-to-end encryption:
 
 - **Client code served by a compromised server.** The client is plain web and can't be installed, so a server that
   serves its own page can read what the user types into it and act as that browser. The host's open sessions list,
-  its remote audit log and its kill switch (revoking a device, ending a session, turning remote access off) are the
+  its remote audit log and its kill switch (revoking a device, ending a session, disconnecting) are the
   owner's cover for this.
 - **Metadata.** Timing, sizes and which device connects stay visible to the server, so keystroke timing in a
   terminal leaks.

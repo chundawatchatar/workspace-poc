@@ -29,6 +29,7 @@ every email in a web inbox instead of delivering it. The addresses and ports are
 | `MAIL_FROM` | The sender of every email. |
 | `RELAY_SIGNING_KEY` | The Ed25519 key relay tickets are signed with, as `<kid>:<32-byte seed in base64url>`. Generate one with `bun apps/server/scripts/relay-key.ts`. Never log it. |
 | `RELAY_EXTRA_PUBLIC_KEYS` | Optional. Comma-separated `<kid>:<public key>` entries that machines also trust when they link, ahead of a key rotation. |
+| `SERVER_TUNNEL_URL` | The address machines open their tunnel to on this server: `wss://<host>`, or `ws://` on a loopback host, with no path. `ws://127.0.0.1:4600` in development. Every new enrollment key comes with it, as the `--server` of the `corch connect` command the client shows. |
 
 The server reads them with `loadServerConfig` (`apps/server/src/lib/config.ts`) and exits at start-up with a message
 naming the problem when one is missing or invalid, when the database is unreachable, or when a migration is pending.
@@ -261,27 +262,38 @@ both on every request and socket; the server only signs tickets.
   approved on it, nor with a captured access key alone, which still passes through it. It could push its own key
   into a machine's pending list and hope the owner approves it. Sessions are sealed end to end (REM-2) and the host
   refuses unsealed traffic through the tunnel, so it can't read or inject into one, but it could serve its own page
-  (see `docs/architecture.md`, "Unsealed traffic", for the risks that remain). A revoked session or a machine unlinked on the server gets no new ticket, but an issued one works for up
+  (see `docs/architecture.md`, "Unsealed traffic", for the risks that remain). A revoked session or a machine removed on the server gets no new ticket, but an issued one works for up
   to a minute. A session that ends on the server closes the account's sockets on its online machines through a
-  `session.ended` frame (section 5), except one ended by the operator script or by expiry; unlinking on the host
+  `session.ended` frame (section 5), except one ended by the operator script or by expiry; disconnecting on the host
   closes them too. A refused ticket sends
   `auth.failed` and counts against the browser's bad-key limit; a device waiting for approval sends none. Each
   socket costs one ticket request.
 - The home page's Connect a machine button (`apps/client/src/components/machines/ConnectMachineDialog.tsx`) creates
-  an enrollment key with `serverRoutes.machines.createEnrollment` and shows it once: the key and the
-  `bun run host:remote link <key>` command, each with a Copy button, its fingerprint and a countdown to its expiry.
-  The key lives only in the dialog's state, never in the query cache, storage, the URL or a log, so closing the dialog
-  forgets it and opening it again creates a new one. While it is open the machines list is read every 2 seconds, and
-  the first machine that wasn't listed when the key was created is taken to be the one that redeemed it. A machine
-  linked this way opens from any browser signed in to the account.
+  an enrollment key with `serverRoutes.machines.createEnrollment`, which answers the key with the server's
+  `SERVER_TUNNEL_URL` as `serverUrl`, and shows it once: the
+  `corch connect --email <signed-in email> --key <key> --server <serverUrl>` command (`connectCommand` in
+  `apps/client/src/lib/connectCommand.ts`, which single-quotes a value holding a character a shell would read
+  otherwise) and the key alone, for the machine's Remote access dialog, each with a Copy button, the key's last 4
+  characters and a countdown to its expiry. The key lives only in the dialog's state, never in the query cache,
+  storage, the URL or a log, so closing the dialog forgets it and opening it again creates a new one. While it is
+  open the machines list is read every 2 seconds, and the first machine that wasn't listed when the key was created
+  is taken to be the one that redeemed it. A machine connected this way opens from any browser signed in to the
+  account.
 - An access key still crosses the relay in clear only in the handshake and the key bootstrap, the two requests the
   host serves unsealed; every other request and socket carries it sealed. The relay never checks or stores it.
 - A machine's online state comes from the server's in-memory `MachineRegistry`, the same one the relay uses. A host
-  whose owner turns remote access off while it runs sends `remote.off` before closing its tunnel, and the list shows
-  it as Remote access off instead of Offline; a host that exits or crashes stays Offline. The registry keeps that mark
+  whose owner disconnects it while it runs sends `remote.off` before closing its tunnel, and the list shows it as
+  Remote access off instead of Offline, until it is removed; a host that exits or crashes stays Offline. The registry keeps that mark
   in memory only, so a server restart forgets it, and with more than one server instance both would be wrong (see
   [keeping the machine connected](architecture.md#keeping-the-machine-connected)).
 
-Linking: a machine reaches an account's list only by redeeming an enrollment key over its own tunnel, so knowing a
-machine's id no longer puts it on an account. The accounts API has no endpoint that links a machine by id
-(`POST /api/machines` answers `not_found`).
+Linking: a machine reaches an account's list only by redeeming an enrollment key over its own tunnel
+(`enroll.redeem`), together with the key owner's email, so knowing a machine's id no longer puts it on an account.
+The server matches the email in any letter case and with any spaces around it, in the same conditional `UPDATE` that
+uses the key, so a wrong email leaves the key unused and gets the same `invalid_key` as an unknown key. Someone who
+holds a key could still guess the owner's email within the machine's enrollment limit and the key's 15 minutes; the
+owner's accept step planned next closes that. The accounts API has no endpoint that links a machine by id
+(`POST /api/machines` answers `not_found`). A machine removes itself with the `unlink` frame on Disconnect: the server
+deletes the row of the account it names for the tunnel's own machine id, through that account's scoped `machines`
+repository, and answers `unlinked` whether or not there was one (`answerUnlinkFrame` in
+`modules/machines/enrollment.service.ts`).

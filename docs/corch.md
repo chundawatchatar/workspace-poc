@@ -119,10 +119,10 @@ corch will not use the data folder /home/me/.local/share/corch: other users have
 | `state.json` | The layout: workspaces, panes and tabs. Delete it, with the host stopped, to reset the layout. |
 | `terminal-daemons/` | One record per terminal: how to reattach to it, its last folder and the agent to resume. |
 | `agent-tracking.json` | Your ask-once answers for agent tracking. Delete it to be asked again. |
-| `remote-access.json` | Whether remote access is on. Only the switch: the addresses are in `config.json`. |
+| `remote-access.json` | The old on/off switch for remote access. No longer read; you can delete it. |
 | `machine-key` | The machine's Ed25519 key. The machine id is the hash of its public key, so deleting it gives a new id. |
 | `access-keys.json` | The remote access keys, as hashes only. |
-| `linked-account.json` | The account this machine is linked to, if any. |
+| `linked-account.json` | The account this machine is connected to, if any. Its tunnel runs exactly while it exists. |
 | `devices.json` | The browsers approved to open this machine remotely (public keys only). |
 | `remote-audit.jsonl` | Who opened this machine through the relay, and who was refused. |
 
@@ -171,10 +171,9 @@ corch config path                    # where config.json is
   and replaces the file in one step. It prints `Saved <key> <value> in <path>`. With a host running, it adds
   `The running host uses the change after corch restart.` When the variable for that setting is set in your shell, it
   says that the variable overrides the file for a host started from there.
-- `set` and `unset` also work while a host runs. Changing `relayUrl` while the running host's tunnel is open to
-  another relay prints `The open tunnel stays connected to <relay> until corch restart.` and asks
-  `Turn remote access off now? [y/N] `. `--yes` turns it off without asking. When the machine is linked to an account
-  through another server, it warns that the link belongs to the old server.
+- `set` and `unset` also work while a host runs. While the machine is connected to an account, which the running
+  host says, or `linked-account.json` when none runs, they refuse to change `relayUrl` and print
+  `This machine is connected to an account through its server address. Run corch disconnect first.`
 - `unset` prints the value that now applies: `Removed <key> from <path>. It is now <value> (<source>).`
 
 The dev host reads `relayUrl` and `clientUrl` from `apps/host/.data/config.json`, but takes its port from `HOST_PORT`
@@ -184,7 +183,7 @@ and its addresses from `SERVER_URL` and `CLIENT_URL` in `.env` first. It reads n
 
 ```sh
 corch stop          # stop the host; the terminal daemon and its shells keep running
-corch status        # whether the host runs, its URL, its pid and the terminal daemon
+corch status        # whether the host runs, its URL, its pid, the terminal daemon and the account
 corch logs          # the last 200 lines of the background host's log
 corch logs --all    # all of it
 ```
@@ -200,12 +199,15 @@ corch is running
   URL: http://127.0.0.1:4599
   pid: 51782
   terminal daemon: current, 2 live terminal(s), up 12 s
+  remote access: connected to Ada (a***@example.com) through wss://orch.example.com
   service: not installed
 ```
 
 The terminal daemon is `current` when it runs this host's build, `outdated` when it runs another build of the same
 protocol, `incompatible` when it speaks another protocol, and `not heard from` before the host has reached it (see
-[Upgrading](#upgrading)). The `service:` line names the [login service](#the-login-service) and its state.
+[Upgrading](#upgrading)). The `remote access:` line says whether the machine is connected, and to which account and
+server, or `not connected`; with no host running it reads `linked-account.json` and adds `(host not running)`. The
+`service:` line names the [login service](#the-login-service) and its state.
 
 `corch logs` reads `corch.log.1` and then `corch.log`, so the last 200 lines may span both. Each line starts with the
 time in UTC. Control characters other than line breaks and tabs show as `?`, so the log can't send escapes to your
@@ -298,28 +300,49 @@ When the manager sets no `SHELL`, the host uses `/bin/zsh` on macOS and `/bin/sh
 
 ## Remote access
 
-Remote access works as the [remote access guide](remote-access.md) describes, with two `corch` commands in place of
-the repo's scripts:
+Remote access works as the [remote access guide](remote-access.md) describes, with `corch` commands in place of the
+repo's scripts:
 
 | `corch` | In the repo |
 | --- | --- |
+| `corch connect --email <email> --key <key> [--server <url>]` | `bun run host:remote connect ...` |
+| `corch disconnect` | `bun run host:remote disconnect` |
 | `corch remote <command>` | `bun run host:remote <command>` |
 | `corch rotate-key` | `bun run host:rotate-key` |
 
-`corch remote` takes the same commands (`status`, `server <url>`, `on`, `off`, `link <key>`, `unlink`, `devices`,
-`sessions`, `log`); `corch remote help` lists them. Both act on the data folder's running host when there is one, and
-on the files in the data folder when there isn't.
+To connect this machine to your account, sign in to the client, press "Connect a machine" and run the command it
+shows on the machine:
+
+```sh
+corch connect --email <email> --key <key> --server <url>
+```
+
+Without `--server` it uses the built-in default (the `relayUrl` default above), or the address `--relay-url` or
+`CORCH_RELAY_URL` gave the running host, which a different `--server` can't change. It checks the email, the key and
+the address before it calls the host, and refuses a malformed one without repeating it. It prints the server (with a
+warning when it isn't the default), the email and the key's last 4 characters, then asks
+`Connect this machine to this account? [y/N]`; any answer but y or yes sends nothing and exits 1, and `--yes` skips
+the question. The running host then saves the address as `relayUrl` in `config.json`, opens the tunnel at once and
+redeems the key. Nothing either command prints holds the key.
+
+`corch disconnect` asks `Disconnect this machine from <name> (<masked email>)? [y/N]` (or not, with `--yes`), asks the
+server to remove the machine from the account's list, and forgets the account on the machine either way. When the
+server didn't remove it, it says to remove it in the client. Both commands need the running host, and say so when none
+runs.
+
+`corch remote` takes the same commands (`status`, `connect`, `disconnect`, `devices`, `sessions`, `log`); `corch remote
+help` lists them. They act on the data folder's running host when there is one, and on the files in the data folder
+when there isn't. The old `link`, `unlink`, `server`, `on` and `off` print the usage.
 
 What differs from dev:
 
-- The relay and client addresses are the `relayUrl` and `clientUrl` settings in `config.json`. The Remote access
-  dialog, `corch remote server <url>` and `corch config set relayUrl <url>` all save them there.
-- A changed relay or client address, from the setting, `corch config set` or `host:remote server`, applies from the
-  next start. Turning remote access off applies at once.
-- A packaged host never turns the tunnel on just because a relay address is set. Only the saved switch in
-  `remote-access.json` turns it on. `SERVER_URL` and `CLIENT_URL` are ignored.
-- A relay address given with `--relay-url` or `CORCH_RELAY_URL` can't be changed with `corch remote server`, which
-  says `<flag> sets the server address; change it there`.
+- The relay and client addresses are the `relayUrl` and `clientUrl` settings in `config.json`. Connect, from the
+  Remote access dialog or `corch connect`, saves the relay address there; `corch config set` saves either, but
+  `relayUrl` only while the machine is not connected. A changed client address applies from the next start.
+- The tunnel runs exactly while the machine is connected: a host started with `linked-account.json` opens it, and one
+  without never does. `SERVER_URL` and `CLIENT_URL` are ignored.
+- A relay address given with `--relay-url` or `CORCH_RELAY_URL` is the one Connect uses; the dialog shows it
+  read-only.
 - The connect link the host prints is in its log: `corch logs`, or the terminal of `corch run`.
 
 ## Upgrading
@@ -367,7 +390,7 @@ In this order:
    `npm rm -g corch-<os>-<arch>`.
 5. Delete the data folder: `~/.corch` on macOS, `~/.local/share/corch` (or `$XDG_DATA_HOME/corch`) on Linux, or the
    one you chose. **It holds `machine-key`: deleting it gives the machine a new id**, so its connect links and its
-   link to an account stop working. Unlink the machine from your account first if it is linked.
+   link to an account stop working. Run `corch disconnect` first if it is connected.
 
 The terminal daemon's runtime folder, `/tmp/orchpty-<uid>-<hash>`, is left behind; delete it too, or let the next
 reboot clear `/tmp`.

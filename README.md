@@ -26,27 +26,30 @@ agent's conversation. See [terminal daemon](docs/terminal-daemon.md) for how it
 works.
 
 To reach this machine through the cloud server (`apps/server`), follow the
-[remote access guide](docs/remote-access.md). In short: open
-"Remote access…" from the command palette in the local app. Enter the server
-address, `wss://<server>` or `ws://127.0.0.1:4600` (any loopback host) for a
-local server, and optionally the client address, then turn it on. The host
-keeps one tunnel open to the server, and the dialog shows whether it is
-connected; turning it off closes the tunnel and every remote session at once.
-The addresses are saved as `relayUrl` and `clientUrl` in `config.json` in the
-data folder (`apps/host/.data/` in dev), and apply from the host's next start;
-the on/off switch is saved in `remote-access.json` and applies at once, so
-every later start reconnects on its own. In dev, `SERVER_URL` and `CLIENT_URL`
-in `.env` override the saved addresses, and `SERVER_URL` still turns the tunnel
-on at start whatever the switch says; the packaged `corch` reads neither. The
+[remote access guide](docs/remote-access.md). In short: sign in to the client
+and press "Connect a machine", which creates a one-time key and shows a
+`corch connect --email <email> --key <key> --server <url>` command. Run it on
+the machine (`bun run host:remote connect ...` in dev), or open "Remote
+access…" from the command palette in the local app, fill in the server
+address, your email and the key, and press Connect. After one confirm, the
+host saves the address as `relayUrl` in `config.json` in the data folder
+(`apps/host/.data/` in dev), opens its tunnel to the server at once and links
+the machine to your account. The tunnel runs exactly while the machine is
+connected, so every later start reconnects on its own; Disconnect (or
+`corch disconnect`) asks the server to remove the machine from your list,
+forgets the account and closes the tunnel and every remote session.
+`remote-access.json`, which held the old on/off switch, is no longer read and
+can be deleted. In dev, `SERVER_URL` and `CLIENT_URL` in `.env` fix the
+addresses, but don't turn the tunnel on; the packaged `corch` reads neither. The
 host is identified by an Ed25519 key it creates in `machine-key` in the data
 folder, which never leaves the machine: it signs the server's challenge when
 the tunnel opens, and the machine id is the hash of its public key. Keep that
 file: deleting it gives the machine a new id. A machine set up with the older
-`machine-secret` file relinks once (see `docs/remote-access.md`). Terminals and
-layout sync work through the tunnel as well as the HTTP API.
+`machine-secret` file reconnects once (see `docs/remote-access.md`). Terminals
+and layout sync work through the tunnel as well as the HTTP API.
 
-Every tunneled request and socket needs an access key. The first time remote
-access is on, the host creates one and prints a connect link,
+Every tunneled request and socket needs an access key or an account ticket. The
+first time the tunnel opens, the host creates a key and prints a connect link,
 `<client>/#machine=<id>&key=<key>`, once: only the key's hash is kept, in
 `access-keys.json` in the data folder. Open the link to reach the machine from
 the global app. The client address is `CLIENT_URL` (dev only), else the saved
@@ -55,7 +58,7 @@ the link, or want to cut everyone off? Press "New connect link" in the dialog,
 or run `bun run host:rotate-key` (`corch rotate-key` when installed): either
 gives a new link and closes every remote session that used the old key.
 `bun run host:remote` (`corch remote`) sets up remote access from a terminal
-(`status`, `server <url>`, `on`, `off`, `link <key>`, `unlink`).
+(`status`, `connect`, `disconnect`, `devices`, `sessions`, `log`).
 
 The server serves the global app itself, so the connect link opens on the
 server's own origin and needs no CORS. Build the client with
