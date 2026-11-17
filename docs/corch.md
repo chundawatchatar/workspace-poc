@@ -72,7 +72,6 @@ saved (see [Settings](#settings-and-corch-config) to keep a value):
 | --- | --- |
 | `--port <port>` | The port to listen on, on `127.0.0.1` |
 | `--relay-url <url>` | The relay server's address |
-| `--client-url <url>` | The client app's address |
 | `--log-level <level>` | `error`, `warn`, `info` or `debug` |
 
 `--data-dir <dir>` chooses the data folder (next section) and works with every command, anywhere among its arguments,
@@ -82,7 +81,7 @@ A host that runs keeps the settings it started with, so `corch start --port 4600
 `--port not applied: the running host keeps its settings. Run corch restart with them instead.`
 
 `corch` never reads a `.env` or `bunfig.toml`, from the working folder or anywhere else, and ignores the dev host's
-`HOST_HOST`, `HOST_PORT`, `SERVER_URL` and `CLIENT_URL`.
+`HOST_HOST`, `HOST_PORT` and `SERVER_URL`.
 
 Exit codes: 0 when the command did what it says, 1 when it failed, 2 for arguments that make no command (it prints the
 usage), and 3 from `corch status` when no host runs.
@@ -121,7 +120,7 @@ corch will not use the data folder /home/me/.local/share/corch: other users have
 | `agent-tracking.json` | Your ask-once answers for agent tracking. Delete it to be asked again. |
 | `remote-access.json` | The old on/off switch for remote access. No longer read; you can delete it. |
 | `machine-key` | The machine's Ed25519 key. The machine id is the hash of its public key, so deleting it gives a new id. |
-| `access-keys.json` | The remote access keys, as hashes only. |
+| `access-keys.json` | The old remote access keys. No longer read; you can delete it. |
 | `linked-account.json` | The account this machine is connected to, if any. Its tunnel runs exactly while it exists. |
 | `devices.json` | The browsers approved to open this machine remotely (public keys only). |
 | `remote-audit.jsonl` | Who opened this machine through the relay, and who was refused. |
@@ -140,12 +139,10 @@ The dev host keeps the same files, apart from the `corch.*` ones, in `apps/host/
 | --- | --- | --- | --- | --- |
 | `port` | `4599` | `--port` | `CORCH_PORT` | A whole number from 1 to 65535 |
 | `relayUrl` | `wss://orch.example.com` | `--relay-url` | `CORCH_RELAY_URL` | `wss://<host>`, or `ws://` on `127.0.0.1`, `[::1]` or `localhost` |
-| `clientUrl` | Derived from `relayUrl` | `--client-url` | `CORCH_CLIENT_URL` | An `http://` or `https://` URL |
 | `logLevel` | `info` | `--log-level` | `CORCH_LOG_LEVEL` | `error`, `warn`, `info` or `debug` |
 
 - The default `relayUrl` is a placeholder until there is a real deploy.
-- A `clientUrl` set nowhere is derived from the `relayUrl` in use: `wss://` becomes `https://` and `ws://` becomes
-  `http://`.
+- A `clientUrl` left in `config.json` by an older version is ignored.
 - `logLevel` is checked, but nothing reads it yet: the log holds the same lines at every level.
 
 Each setting is picked on its own, in this order: its flag, then its `CORCH_*` variable, then `config.json`, then the
@@ -166,7 +163,7 @@ corch config path                    # where config.json is
 ```
 
 - `list` and `get` show what a host started from this shell would use: the `CORCH_*` variables, then the file, then
-  the defaults. `list` names each source: `env CORCH_PORT`, `file`, `default` or `derived`.
+  the defaults. `list` names each source: `env CORCH_PORT`, `file` or `default`.
 - `set` checks the value and the file first, and writes nothing when either isn't valid. It changes only that key,
   and replaces the file in one step. It prints `Saved <key> <value> in <path>`. With a host running, it adds
   `The running host uses the change after corch restart.` When the variable for that setting is set in your shell, it
@@ -176,8 +173,8 @@ corch config path                    # where config.json is
   `This machine is connected to an account through its server address. Run corch disconnect first.`
 - `unset` prints the value that now applies: `Removed <key> from <path>. It is now <value> (<source>).`
 
-The dev host reads `relayUrl` and `clientUrl` from `apps/host/.data/config.json`, but takes its port from `HOST_PORT`
-and its addresses from `SERVER_URL` and `CLIENT_URL` in `.env` first. It reads no `CORCH_*` variable.
+The dev host reads `relayUrl` from `apps/host/.data/config.json`, but takes its port from `HOST_PORT` and its server
+address from `SERVER_URL` in `.env` first. It reads no `CORCH_*` variable.
 
 ## Stop, status and logs
 
@@ -308,7 +305,6 @@ repo's scripts:
 | `corch connect --email <email> --key <key> [--server <url>]` | `bun run host:remote connect ...` |
 | `corch disconnect` | `bun run host:remote disconnect` |
 | `corch remote <command>` | `bun run host:remote <command>` |
-| `corch rotate-key` | `bun run host:rotate-key` |
 
 To connect this machine to your account, sign in to the client, press "Connect a machine" and run the command it
 shows on the machine:
@@ -345,14 +341,12 @@ when there isn't. The old `link`, `unlink`, `server`, `on` and `off` print the u
 
 What differs from dev:
 
-- The relay and client addresses are the `relayUrl` and `clientUrl` settings in `config.json`. Connect, from the
-  Remote access dialog or `corch connect`, saves the relay address there; `corch config set` saves either, but
-  `relayUrl` only while the machine is not connected. A changed client address applies from the next start.
+- The relay address is the `relayUrl` setting in `config.json`. Connect, from the Remote access dialog or
+  `corch connect`, saves it there; `corch config set` saves it too, but only while the machine is not connected.
 - The tunnel runs exactly while the machine is connected: a host started with `linked-account.json` opens it, and one
-  without never does. `SERVER_URL` and `CLIENT_URL` are ignored.
+  without never does. `SERVER_URL` is ignored.
 - A relay address given with `--relay-url` or `CORCH_RELAY_URL` is the one Connect uses; the dialog shows it
   read-only.
-- The connect link the host prints is in its log: `corch logs`, or the terminal of `corch run`.
 
 ## Upgrading
 
@@ -398,8 +392,9 @@ In this order:
 4. `npm rm -g corch`. A tarball install also installed the platform package on its own, so remove it too:
    `npm rm -g corch-<os>-<arch>`.
 5. Delete the data folder: `~/.corch` on macOS, `~/.local/share/corch` (or `$XDG_DATA_HOME/corch`) on Linux, or the
-   one you chose. **It holds `machine-key`: deleting it gives the machine a new id**, so its connect links and its
-   link to an account stop working. Run `corch disconnect` first if it is connected.
+   one you chose. **It holds `machine-key`: deleting it gives the machine a new id**, so its link to an account stops
+   working. Run `corch disconnect` first if it is connected. To use the machine remotely again, connect it with a new
+   enrollment key and remove its old entry in the client.
 
 The terminal daemon's runtime folder, `/tmp/orchpty-<uid>-<hash>`, is left behind; delete it too, or let the next
 reboot clear `/tmp`.
@@ -413,8 +408,7 @@ reboot clear `/tmp`.
   machine.
 - It also refuses requests from pages that weren't served from this machine (their `Origin`). Programs on this
   machine can still call it: the host has no sign-in, which is enough for a local tool only.
-- The data folder must be yours and private (0700), and the process files and the log are readable by you only. The
-  log can hold a connect link, which carries an access key, so don't paste it anywhere.
+- The data folder must be yours and private (0700), and the process files and the log are readable by you only.
 - `corch` reads no `.env` or `bunfig.toml`, so a folder you start it from can't change its settings or run code in it.
 - The service runs as your user, never as root.
 - Until a release is published, install only with `--offline`, as in [Install](#install), so npm never fetches an

@@ -42,29 +42,24 @@ connected, so every later start reconnects on its own; Disconnect (or
 `corch disconnect`) asks the server to remove the machine from your list,
 forgets the account and closes the tunnel and every remote session.
 `remote-access.json`, which held the old on/off switch, is no longer read and
-can be deleted. In dev, `SERVER_URL` and `CLIENT_URL` in `.env` fix the
-addresses, but don't turn the tunnel on; the packaged `corch` reads neither. The
+can be deleted, and so can `access-keys.json`. In dev, `SERVER_URL` in `.env`
+fixes the server address, but doesn't turn the tunnel on; the packaged `corch`
+doesn't read it. The
 host is identified by an Ed25519 key it creates in `machine-key` in the data
 folder, which never leaves the machine: it signs the server's challenge when
 the tunnel opens, and the machine id is the hash of its public key. Keep that
-file: deleting it gives the machine a new id. A machine set up with the older
+file: deleting it gives the machine a new id, so it must connect again. A machine set up with the older
 `machine-secret` file reconnects once (see `docs/remote-access.md`). Terminals
 and layout sync work through the tunnel as well as the HTTP API.
 
-Every tunneled request and socket needs an access key or an account ticket. The
-first time the tunnel opens, the host creates a key and prints a connect link,
-`<client>/#machine=<id>&key=<key>`, once: only the key's hash is kept, in
-`access-keys.json` in the data folder. Open the link to reach the machine from
-the global app. The client address is `CLIENT_URL` (dev only), else the saved
-one, else the server address with `ws`/`wss` swapped for `http`/`https`. Lost
-the link, or want to cut everyone off? Press "New connect link" in the dialog,
-or run `bun run host:rotate-key` (`corch rotate-key` when installed): either
-gives a new link and closes every remote session that used the old key.
+Once connected, open the machine from the client's home page in any browser
+signed in to your account: every tunneled request and socket needs a relay
+ticket from the account and a proof from a browser you approved on the machine.
 `bun run host:remote` (`corch remote`) sets up remote access from a terminal
 (`status`, `connect`, `disconnect`, `devices`, `sessions`, `log`).
 
-The server serves the global app itself, so the connect link opens on the
-server's own origin and needs no CORS. Build the client with
+The server serves the global app itself, so the client runs on the server's
+own origin and needs no CORS. Build the client with
 `bun run --filter @orch/client build`, then start the server with
 `bun run --filter @orch/server start` (127.0.0.1:4600). It serves the folder
 in `SERVER_STATIC_DIR` (required, `apps/client/dist` in `.env.example`; a

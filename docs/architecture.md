@@ -50,7 +50,7 @@ Every file the host keeps is in its data folder: `~/.corch` on macOS and `$XDG_D
 `~/.local/share/corch`) on Linux, unless `--data-dir` or `CORCH_DATA_DIR` names another, and `apps/host/.data/` in
 dev. The entry point resolves it and passes it in: nothing resolves a path from `import.meta.dir`, which is
 `/$bunfs/root` inside the executable. `corch` refuses a data folder that isn't the user's own and private (0700).
-Settings (`port`, `relayUrl`, `clientUrl`, `logLevel`) are loaded once at start from `config.json` in that folder,
+Settings (`port`, `relayUrl`, `logLevel`) are loaded once at start from `config.json` in that folder,
 under the setting flags and the `CORCH_*` variables (`modules/settings/`); a packaged host reads no `.env`,
 `bunfig.toml`, `HOST_*` or `SERVER_URL`. Building and smoke-testing it is described in
 [corch.md](corch.md#packaging).
@@ -67,7 +67,7 @@ checks every local request and socket upgrade twice before any route runs (SEC-1
 - **`Origin`.** A request with one must come from a page on `localhost`, `127.0.0.1` or `[::1]` (`lib/localOrigin.ts`);
   one with none, such as `curl` or the CLI, passes.
 
-Tunneled requests skip both: the tunnel has already authorized them by key or ticket and device proof, the relay
+Tunneled requests skip both: the tunnel has already authorized them by relay ticket and device proof, the relay
 dropped their `Host`, and they are marked by a symbol in the request env, never by a header.
 
 ## Two apps, one page: `packages/terminal-ui`
@@ -93,7 +93,7 @@ interface TerminalUIProps {
   machine?: { id: string; name: string }  // client only: which machine is open, named in the sidebar
   header?: ReactNode            // client only: back to the machine list, account menu
   offlineHint?: ReactNode       // what to do when the host is offline
-  deniedHint?: ReactNode        // what to do when the host rejects the access key
+  deniedHint?: ReactNode        // what to do when the host refuses access
   unapprovedHint?: ReactNode    // what to do while the machine waits to approve this browser
   titleSuffix?: string          // follows the workspace name in the document title
   children: ReactNode           // the main area, from the app's router outlet (home, workspace or not found)
@@ -101,10 +101,9 @@ interface TerminalUIProps {
 ```
 
 The remote transport sends requests to `/m/<machineId>/api/*` and sockets to `/m/<machineId>/ws/*` on the server.
-The machine's access key goes in the `x-orch-access-key` header, or in an `{ type: 'auth', key, device }` first
-message on a socket, never in a URL. Without a key, a signed-in account sends a relay ticket in the
-`x-orch-relay-ticket` header, or as a socket subprotocol, with the first message `{ type: 'auth', account: true,
-device }`. Either way every request and socket carries a fresh device proof from this browser's key: in the
+A signed-in account sends a relay ticket in the `x-orch-relay-ticket` header, or as a socket subprotocol, with the
+first message `{ type: 'auth', account: true, device }`, never in a URL. Every request and socket also carries a
+fresh device proof from this browser's key: in the
 `x-orch-device-proof` header, or as `device` in the first message. These pieces live
 in `packages/shared/src/contracts/remote.ts`, `relayTicket.ts` and `deviceProof.ts`.
 
@@ -138,7 +137,7 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   from the host's `routes`. Host routes are relayed under `/m/<id>/api/*` and checked only by the host; server routes
   are served by `apps/server` itself, default to `auth: 'user'`, and refuse a non-GET request without a same-site or
   trusted `Origin` and a JSON `Content-Type`. `/api/auth/*` is Better Auth's and is never in `serverRoutes`. The
-  accounts modules are mounted only when `DATABASE_URL` is set, and the server refuses to start against an
+  accounts modules are always mounted: the server refuses to start without its accounts settings, or against an
   unreachable or unmigrated database.
 - An `auth: 'user'` endpoint reads its session only through Better Auth's `auth.api.getSession`
   (`apps/server/src/modules/auth/auth.middleware.ts`), never by reading the cookie, after the origin and content-type
@@ -156,7 +155,7 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   session there and a sign-out or a password reset (which revokes every session) ends a session on its very next
   request. An account opens a machine only through a relay ticket the machine verifies, with a proof from a browser
   the machine's owner approved on the machine, and only when the machine linked that account with an enrollment
-  key; see [accounts.md](accounts.md#7-accounts-and-machine-access-keys).
+  key; see [accounts.md](accounts.md#7-accounts-and-machine-access).
 - Sessions can be listed and ended, and each revocation takes effect on the session's very next request, both in
   Better Auth and in our `auth: 'user'` endpoints. A user has Better Auth's core endpoints:
   `GET /api/auth/list-sessions` (their own sessions only), `POST /api/auth/revoke-session` (one session by its token,
@@ -238,17 +237,13 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   storage. The page takes it once with `takeEmailLinkToken(page)`, and calls `verifyEmailToken` or `resetPassword`
   directly, never as a query. A reload finds no token and shows the page's no-token state. Better Auth's
   `/api/auth/reset-password/<token>` GET endpoint stays mounted, but no email links to it.
-- Accepted for development, accounts are required by the client: with `DATABASE_URL` unset the server answers 404
-  for `/api/auth/*`, the session reads as signed out, and the user is sent to a sign-in that can't work.
-  `.env.example` sets `DATABASE_URL`.
 - The client's home page lists the signed-in account's machines (`src/lib/accountMachines.ts`, `machinesQuery`:
   `accountQuery` on `serverRoutes.machines.list`, so its key is `accountKey(userId, ...)`), in the server's order,
   each marked Online, Offline or Remote access off. It refetches every 10 seconds while the page is open, since the
   state changes without any client action. Both `online` and `remoteOff` come only from the relay's tunnel registry:
   `remoteOff` is set when the host's last tunnel ended with `remote.off`, which the host sends only when its owner
-  disconnects it while it runs. A host that exits, crashes or loses its network shows Offline. Rename (an inline TanStack Form with `machineNameSchema`) and unlink invalidate the list;
-  unlink also forgets the machine's local key, since the list no longer shows local-only machines and a key left
-  behind could never be seen or removed. Open question: whether unlink should ask for confirmation.
+  disconnects it while it runs. A host that exits, crashes or loses its network shows Offline. Rename (an inline TanStack Form with `machineNameSchema`) and unlink invalidate the list.
+  Open question: whether unlink should ask for confirmation.
 - The client's settings (`/settings`, a left nav of sections; password and sessions on `/settings/security`) are reached
   from the account menu (`src/components/account/AccountMenu.tsx`: the user's email as a button opening "Settings" and
   "Sign out"), shown in the home page's title row and in the machine page's sidebar
@@ -262,20 +257,14 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   "Sign out from all devices" asks for confirmation, then calls `revoke-sessions` (this session included) and marks
   the session as signed out. A 401 from any of these calls reads the session again, so a session revoked elsewhere
   lands on sign-in.
-- Resolved, saved machines: the access keys saved in `localStorage` (`orch-machines`) are still per browser, not
-  per user, and they no longer decide what the home page lists or which rows open. Every listed machine has an Open
-  link; its page uses a saved key when there is one and relay tickets otherwise, and an id that is neither saved nor
-  listed says it isn't linked to the account.
-  A machine saved locally that the account doesn't have is not listed, since a connect link adds nothing to the
-  account; it is listed once it is linked with an enrollment key. The keys stay in
-  `localStorage`, readable by any script on this origin, and the host still checks the key on every request.
-- A connect link opened in the client (`acceptConnectLink`, on load or on `hashchange`) saves the key in
-  `orch-machines`, removes the fragment and opens `/m/<id>`. It writes nothing else and sends nothing to the server,
-  signed in or not, so the machine opens in that browser only.
+- Every listed machine has an Open link, and its page opens it only through the account, with relay tickets; an id
+  the account doesn't list says it isn't linked to the account. Older clients saved access keys in `localStorage`
+  (`orch-machines`); `clearSavedMachineKeys()` removes that entry and an old link's `key` fragment unused, before the
+  router reads the URL.
 - The machines module (`apps/server/src/modules/machines/`, `serverRoutes.machines`) lists, renames and unlinks the
   signed-in user's machines in the `machines` table (one row per user and machine id), only through
-  `data.machines`. The accounts API stores and returns only machine ids and names, never access keys: no schema has a
-  key field and every input is strict, so a body carrying `key` gets 400, and the module never reads request headers
+  `data.machines`. The accounts API stores and returns only machine ids and names: no schema has a key field and
+  every input is strict, so a body carrying `key` gets 400, and the module never reads request headers
   or logs input. It has no endpoint that links a machine by id: `MachinesService.link` is called only when the owner
   accepts a machine's connect request (`acceptRequest`). Linking a machine again keeps its name and refreshes `lastOpenedAt`, which is when it
   was last linked; a link that loses a race to the unique index returns the winning row. Each listed machine is
@@ -291,10 +280,10 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   (`packages/terminal-ui/src/lib/deviceProof.ts`): a compact JWS (`ES256`, `typ: orch-device`) whose header holds
   the public JWK and whose payload names the machine (`aud`), `iat`, a random 16-byte `nonce`, the method (`WS` for
   a socket), the host path with its query string and the body's SHA-256. The host
-  (`modules/remote-access/tunnel-access.service.ts`, with `device-proof.service.ts`) accepts an account request
-  only with a valid ticket, and a connect link's request only with a valid access key, then a valid proof whose `iat` is within 5 minutes of its clock and whose nonce it hasn't seen (kept 10 minutes), from a
+  (`modules/remote-access/tunnel-access.service.ts`, with `device-proof.service.ts`) accepts a request only with a
+  valid ticket, then a valid proof whose `iat` is within 5 minutes of its clock and whose nonce it hasn't seen (kept 10 minutes), from a
   device it approved. The device id is the SHA-256 of the canonical JWK, and its fingerprint (`ABCD-EFGH-JKMN-PQRS`,
-  `deviceFingerprint` in `packages/shared`) is shown by the browser and by the machine. A valid ticket or key and proof
+  `deviceFingerprint` in `packages/shared`) is shown by the browser and by the machine. A valid ticket and proof
   from any other device get a 403 `device_not_approved` or a 4403 close, with no `auth.failed`, and put the device
   in a pending list in memory (at most 5, newest kept, 15 minutes each). The owner is told in two places, both
   naming only the fingerprint and when it first asked: the host logs one line when a device joins the list (not
@@ -302,7 +291,7 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   waiting device (`src/lib/pendingDevices.ts`, polling `routes.remoteAccess.devices` every 5 seconds without retries,
   only when the page offers the Remote access setting, so remote pages never ask), counted in its badge, and
   selecting one opens the Remote access setting. Nothing is sent to the account or the server, and only a caller
-  with a valid ticket or key plus a valid proof can add a device, so each new device key it makes adds one log line;
+  with a valid ticket plus a valid proof can add a device, so each new device key it makes adds one log line;
   that flooding is bounded by who can get there and accepted. The owner approves it in the machine's
   local Remote access setting, which the tunnel can't reach (`routes.remoteAccess.devices`, `approveDevice`,
   `removeDevice`, 403 through the tunnel), by typing the fingerprint their own browser shows: a pending row has
@@ -310,11 +299,7 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   `fingerprintKey` (no case, dashes or whitespace) against the pending list, approves the one match, answers 404 when
   none is waiting and 409 when more than one matches; `host:remote devices approve` sends the typed text the same
   way. Approved devices are saved in `devices.json` in the data folder as
-  `{ id, publicKey, approvedAt }`. Revoking one closes its sockets, those opened with a key and through the account, and Connect and Disconnect
-  forget every device. The key is checked first and alone decides which credential is used, so a wrong key is
-  refused (with `auth.failed`, which counts against the server's bad-key limit) without its proof being read: a
-  guessed key never fills the pending list or spends a nonce, and a ticket never rescues a bad key. A key socket
-  spends no ticket, so it isn't single-use; its proof's spent nonce bounds replay, as for HTTP.
+  `{ id, publicKey, approvedAt }`. Revoking one closes its sockets, and Connect and Disconnect forget every device.
   A fresh proof per request, rather than one bound to the ticket, is deliberate: HTTP tickets are reused for up to a
   minute and the server mints them, so it could reuse a `jti`; the browser's `iat` plus the host's spent nonces
   bound replay without trusting the server's clock or ids. Knowing a machine's id puts nothing on an account: a
@@ -328,12 +313,8 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
     tell browsers apart and dismiss strangers.
   - Through the tunnel the host serves only sealed requests and sockets, plus the key bootstrap and the handshake
     (REM-2, see "Unsealed traffic" under "Remote access" below). So a compromised server can neither read nor inject
-    into a session, and a browser it steers off the sealed path is refused by the host. It still sees the key or
-    ticket and the proof in the clear on those two requests; the risks that remain are listed there.
-  - Access keys from connect links still pass through the server, in a header or the first socket message, so a
-    compromised server can capture one. A captured key alone no longer opens the machine through the tunnel, since
-    it needs a fresh proof from an approved device, but with a key the server can still push its own device into
-    the pending list, as with tickets. Local access (`apps/web`) checks no key and is unchanged.
+    into a session, and a browser it steers off the sealed path is refused by the host. It still sees the ticket
+    and the proof in the clear on those two requests; the risks that remain are listed there.
   - A non-exportable key stops a script from copying the key out of the browser. It doesn't stop script on the
     client origin from asking the browser to sign while the page is open.
   - A browser whose clock is more than 5 minutes off is refused, and its page can't tell that apart from a bad
@@ -346,7 +327,7 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   tunnel for; a failure logs one fixed line, so a sign-out never waits on it or fails because of it. The frame names
   only the account, never a session, token, email or device, and the host trusts nothing else in it: only after
   `welcome`, and only when `accountId` is the account it is linked to, it closes with `CLOSE_SESSION_ENDED` (4410)
-  the sockets whose verified ticket named that account. It never touches key sockets, the link or the devices, so
+  the sockets whose verified ticket named that account. It never touches the link or the devices, so
   the worst a compromised server can do with it is close sockets it could already cut by dropping the tunnel.
   Tickets carry no session id, so every account socket on the machine closes, the revoker's own included; 4410 is
   not a denial, so a browser still signed in reconnects with a fresh ticket, while the revoked one gets no ticket
@@ -394,17 +375,17 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   keyed by machine id, not IP), and a refused frame touches no database. An unknown, used, expired or malformed key,
   a key another machine asked with, and another account's email, an email with no account or a malformed one, all
   get the same `enroll.failed { code: 'invalid_key' }`, which names no account; `rate_limited` and `unavailable`
-  (accounts off, or a database error) describe the machine or the server. Nothing on this path logs the key, its
+  (a server failure, such as a database error) describe the machine or the server. Nothing on this path logs the key, its
   hash, the email or the machine or account name. The owner lists, accepts and rejects waiting requests with
-  `listRequests`, `acceptRequest` and `rejectRequest` (see [accounts](accounts.md#7-accounts-and-machine-access-keys));
+  `listRequests`, `acceptRequest` and `rejectRequest` (see [accounts](accounts.md#7-accounts-and-machine-access));
   both answers use up the key in one conditional `UPDATE` that also checks the request still waits on that machine,
   so of two racing answers one wins and the other gets `not_waiting`. Accept links through the owner's scoped
   repositories, keeping an existing name, and sends the final answer `enroll.redeemed`, with the owner's user id
   (`accountId`) and the server's relay public keys (`relayKeys`), which the host saves to check relay tickets later;
   reject sends `enroll.failed` with `rejected`. Disconnect sends `unlink` with that user id: the server deletes,
   through that account's scoped `machines` repository, only its row for the tunnel's own machine id, and answers
-  `unlinked` whether or not there was one, or `unlink.failed` (`rate_limited`, or `unavailable` with accounts off or
-  on a database error). The host then forgets the account whatever the answer. The request frames came with tunnel
+  `unlinked` whether or not there was one, or `unlink.failed` (`rate_limited`, or `unavailable` on a server failure,
+  such as a database error). The host then forgets the account whatever the answer. The request frames came with tunnel
   protocol version 6. The server is trusted to say who is signed in, and so who owns a key and who gets tickets, but
   a ticket opens a machine only with a proof from a device approved on it (see "Device approval" above). Expired
   rows are not cleaned up yet, and there is no cap on outstanding keys per user.
@@ -471,16 +452,16 @@ and an app can register kinds this repo doesn't ship.
 ### 4. One transport, swappable
 
 All host calls already go through `callApi` and `buildSocketUrl`. Put them behind a `HostTransport` (base URL and how
-the access key is attached) with two implementations, local and remote. The app passes one into `terminal-ui`, and
+the credentials are attached) with two implementations, local and remote. The app passes one into `terminal-ui`, and
 nothing inside the page knows which one is in use. End-to-end encryption (REM-2) became an option of the remote
 one (`machinePublicKey`), not a rewrite.
 
-### 5. Identity is a list of keys, not one key
+### 5. Identity is a list, not one key
 
-Accounts and device approval (REM-1, REM-5) come later, but store remote access keys as a list from the start:
-`{ id, name, hash, createdAt, lastUsedAt }`. Store only the hash. The host checks every tunneled request with one
-function, `authorize(request) → principal | null`. One key with "rotate" is then the special case of the list, and
-per-device keys, revoking a single device or linking to an account change data, not the design.
+Who may open a machine is data, not code: the linked account with the server's relay public keys
+(`linked-account.json`) and a list of approved devices (`devices.json`, `{ id, publicKey, approvedAt }`, public keys
+only). The host checks every tunneled request with one function, `authorize(credentials) → principal | null`, so
+approving or revoking a single device or linking another account changes data, not the design.
 
 ### 6. Persistence behind repositories, on SQLite
 
@@ -537,7 +518,7 @@ the machine's side returns.
 The session opens as an ordinary machine route, `routes.e2e.open` (`POST /api/e2e/sessions`, in
 `contracts/e2eSession.ts`), so the server relays it like any other and needs no change. With `machinePublicKey` (the
 key `MachineKeyCheck` pinned), `createRemoteTransport` posts the browser hello before the first request or socket,
-with the same key or ticket and device proof as every request, so the tunnel's own check decides that the device is
+with the same ticket and device proof as every request, so the tunnel's own check decides that the device is
 approved. The host (`apps/host/src/modules/e2e/`) works only through the tunnel (403 locally), refuses a hello whose
 device key isn't the one that signed the request's proof (403), answers a hello that fails its schema or signature
 with 400, and keeps `{ sessionId, hello, expiresAt }` for the answer: `sessionId` is 128 random bits. The browser
@@ -550,10 +531,9 @@ handshake.
 
 Sessions live in the host's memory only (`E2eSessions`), never in the data folder, so a restart forgets them. An account's
 session expires at the `exp` of the relay ticket that opened it (the tunnel puts it on the principal as `ticketExp`),
-and a key's `RELAY_TICKET_TTL_SECONDS` after it opens, so both renew alike: the browser opens a new one 15 seconds
-before expiry, the same margin as tickets. A device holds at most 8 live sessions (tabs share a device), and a ninth
+and the browser opens a new one 15 seconds before expiry, the same margin as tickets. A device holds at most 8 live sessions (tabs share a device), and a ninth
 drops its oldest. Every path in `RemoteAccessService` that closes sockets closes the matching sessions through one
-helper, `closeAccess`: revoking a device, ending its session, unlinking, the server's `session.ended` and key rotation;
+helper, `closeAccess`: revoking a device, ending its session, unlinking and the server's `session.ended`;
 disconnecting or stopping the tunnel closes them all. Expiry closes no open socket. A session id, an ephemeral key, a signature or a derived key is never logged, saved or put in an error
 message, a URL or a query key. The key bootstrap (`routes.system.machineKey`) stays unsealed and outside the
 handshake, since the browser needs the key before it can check one, so `MachineKeyCheck` uses a transport without
@@ -567,7 +547,7 @@ is never reused and a replayed envelope can't be opened again. Concurrent reques
 which the session's own next-counter-only rule can't take, so every request gets its own channel, from a per-session
 counter in the browser that starts at 1, which sealed sockets share. With
 `machinePublicKey`, `createRemoteTransport` seals every request after the handshake (`contracts/e2eHttp.ts`): the
-inner request `{ method, path, headers, body? }`, with the key or ticket and a fresh device proof in its headers,
+inner request `{ method, path, headers, body? }`, with the ticket and a fresh device proof in its headers,
 is sealed on the next channel and posted as one envelope (the raw 16-byte session id, the channel as a big-endian
 u32, the sealed record) to the server's `MACHINE_SEALED_ROUTE` (`POST /m/<id>/e2e`, `machineSealedPath`, not in the
 `routes` registry). The outer request carries no credential header. The server reads the body (413 over
@@ -576,11 +556,11 @@ same pending, timeout, abort and `auth.failed` handling as `http.request`. The h
 envelope, looks the session up with `E2eSessions.get` (its own records and expiry only, so a swapped id or a
 browser's stale `expiresAt` can only make a request fail), opens the channel and the request, then authorizes the
 inner request exactly as an `http.request`, with a fresh proof every time, and refuses it with 403 unless its
-principal is the one that opened the session (same kind, device, and key or account). A live session admits
+principal is the one that opened the session (same device and account). A live session admits
 nothing by itself. The response goes back on the same channel as sealed records, a head, one per body chunk (64 KiB
 at most, each waiting for the tunnel's room) and an end record that may carry an error, each one length-prefixed
 (u32) in the body of an unsealed `http.response` 200 (`application/octet-stream`), so streamed responses still
-stream. A refused key, ticket or proof still sends `auth.failed` outside the seal, then a sealed 401; an unapproved
+stream. A refused ticket or proof still sends `auth.failed` outside the seal, then a sealed 401; an unapproved
 device gets a sealed 403 `device_not_approved`. A session the host doesn't have gets an unsealed 409
 `e2e_session_unknown`, after which the browser drops its session and opens a new one on the next call, without
 retrying this one, since a compromised server could fake that answer after the host served the request. A
@@ -591,13 +571,13 @@ stops before the end record, so a truncated or reordered relay is never taken fo
 itself and `routes.system.machineKey` stay unsealed; any other plain request is refused (see "Unsealed traffic" below).
 No session id, channel key, record, inner path, header or body is logged, saved, or put into an error message, a
 URL or a query key. Risks that remain: sizes, timing and which device connects stay visible to the server; the
-handshake still carries its key or ticket and proof in clear headers; and a compromised server can spend a
+handshake still carries its ticket and proof in clear headers; and a compromised server can spend a
 session's channel numbers with junk envelopes, which only makes the browser's requests and sockets on those numbers
 fail.
 
 WebSockets are sealed with the same sessions (`contracts/e2eSocket.ts`). With `machinePublicKey`, the transport's
 `openSocket` takes the session's next channel from the same counter as requests, before any await, and builds the
-open record `{ path, auth, ticket? }`: the socket path, the `socketAuthMessage` with the key or `account: true` and a
+open record `{ path, auth, ticket? }`: the socket path, the `socketAuthMessage` with `account: true` and a
 fresh `'WS'` proof, and for an account a fresh relay ticket, which no longer goes in a subprotocol. It opens a real
 socket on the server's `MACHINE_SEALED_SOCKET_ROUTE` (`/m/<id>/e2e/ws`, `machineSealedSocketPath`, not in the
 `routes` registry) with no subprotocols, and sends the envelope (the same session id, channel and sealed record as a
@@ -634,9 +614,9 @@ serves a plain `http.request` only when its method and path match `routes.e2e.op
 exactly as sent (`servedUnsealed`, read from the `routes` registry), so a query string, another method or any other
 spelling doesn't match. Those two are exempt because they come before there can be a session: the browser needs the
 machine key to check the handshake's answer (`MachineKeyCheck`), and the handshake is what opens the session. Both
-are still authorized with a key or ticket and a fresh proof from an approved device. Every other plain request gets
+are still authorized with a ticket and a fresh proof from an approved device. Every other plain request gets
 a JSON 403 `{ error, code: 'e2e_required' }` (`E2E_REQUIRED_CODE`) before any credential is read: there is no
-`auth.failed`, so the server's bad-key limit isn't charged; no call to `authorize`, so no nonce or ticket is spent and
+`auth.failed`, so the server's limit for refused requests isn't charged; no call to `authorize`, so no nonce or ticket is spent and
 no device enters the pending list; and no handler. Every plain `ws.open` is closed with `CLOSE_ACCESS_DENIED` and the
 fixed reason `end-to-end encryption required` as it arrives, with no `auth.failed`. It is never registered, so no
 handler or auth timer starts and its `ws.data` reaches nothing. Each refusal is one `{ kind: 'refused', reason:
@@ -655,9 +635,9 @@ Risks that remain with end-to-end encryption:
   owner's cover for this.
 - **Metadata.** Timing, sizes and which device connects stay visible to the server, so keystroke timing in a
   terminal leaks.
-- **Clear credentials in the bootstrap.** The handshake and the key bootstrap still carry the key or ticket and the
-  device proof in clear headers, so a compromised server can capture a connect link's access key there. Alone it
-  opens nothing, since every request also needs a fresh proof from an approved device.
+- **Clear credentials in the bootstrap.** The handshake and the key bootstrap still carry the ticket and the device
+  proof in clear headers. A captured ticket alone opens nothing, since every request also needs a fresh proof from an
+  approved device.
 - **Denial of service.** The server can cut sockets, fake close codes, refuse to relay, and spend a session's channel
   numbers with junk envelopes, which only makes the browser's requests and sockets fail.
 
@@ -675,9 +655,9 @@ That only stays easy if every remote access job keeps these rules:
   header names, like the hop-by-hop list. So is dropping `Cookie` from every relayed request and socket upgrade, and
   `Set-Cookie` from every machine response: machines share the server's origin, where the account session cookie
   lives, so they never see or set account cookies. Cookie values are never read.
-- **Only the host checks access.** The access key and the device proof travel in headers and the first socket
-  message, and the server never checks them.
-- **The host reports problems the server must react to as control frames.** Rate-limiting bad access keys must not
+- **Only the host checks access.** The relay ticket and the device proof travel in headers and the first socket
+  message, and the server, which only signs tickets, never checks them on the way.
+- **The host reports problems the server must react to as control frames.** Rate-limiting refused tickets must not
   work by the server reading a 401. The host sends a control frame such as `auth.failed` for the request, which keeps
   working once the request itself is encrypted.
 - **One choke point in the browser.** All remote traffic goes through the remote `HostTransport` (rule 4), so the
@@ -715,11 +695,10 @@ terminals. An idle socket costs one TCP connection and a small ping, and one sma
   when none exists, never creating one) through the page's own transport, so it is authorized like every machine
   route. It checks `machineKeyMatches(publicKey, machineId)`, then the pin in the `machine-keys` store of the
   `orch-device` IndexedDB database (`src/lib/machineKeys.ts`, `{ publicKey, pinnedAt, source }`), never in
-  `localStorage`, a query key, a URL or a log. The id itself is vouched for out of band: by a connect link's `fp`
-  (`machineFingerprint(id)`, which the host printed; `acceptConnectLink` refuses a link without a matching one), so
-  its first key is pinned at once (`source: 'link'`), or, through the account, by the owner typing the fingerprint
-  the machine shows locally, which the page never displays itself (`source: 'confirmed'`). A server that lists an id for a key of its own fails that
-  comparison. A key that doesn't hash to the id, or differs from the pin, stops the page with a warning and no Retry,
+  `localStorage`, a query key, a URL or a log. The id itself is vouched for out of band, only by the owner typing the
+  fingerprint the machine shows locally (`machineFingerprint(id)`), which the page never displays itself, before the
+  first key is pinned (`source: 'confirmed'`). Pins with `source: 'link'`, made by older clients from a printed
+  link, are still read. A server that lists an id for a key of its own fails that comparison. A key that doesn't hash to the id, or differs from the pin, stops the page with a warning and no Retry,
   so no terminal socket opens and nothing reconnects. The check runs once per page open, not when sockets reconnect.
   The machine now signs for the browser with this key: `<TerminalUI>` gets a transport that opens an end-to-end session
   first, and an answer that doesn't verify against the pin stops the page the same way. Its HTTP requests and sockets are then sealed
@@ -800,7 +779,7 @@ workflows) and AG-6 (events that start agents), so there is one engine, not thre
 
 ## Suggested order
 
-1. Finish the server and host parts of the remote access backlog, with rule 5 applied to its access-key item.
+1. Finish the server and host parts of the remote access backlog, with rule 5 applied.
 2. Extract `packages/terminal-ui` from `apps/web` with the `HostTransport` (rule 4), then build `apps/client` on it.
    This replaces the "remote mode in the web app" item in the backlog.
 3. Module list in the host (rule 2) and surface registry in `terminal-ui` (rule 3). Both are small refactors that
