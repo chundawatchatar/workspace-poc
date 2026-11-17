@@ -1,10 +1,4 @@
-import {
-  type CreateEnrollmentResponse,
-  machineNameSchema,
-  type RelayTicketResponse,
-  type ServerMachine,
-  serverRoutes,
-} from '@orch/shared'
+import { type CreateEnrollmentResponse, machineNameSchema, type RelayTicketResponse, serverRoutes } from '@orch/shared'
 import { formOptions } from '@tanstack/react-form'
 import type { QueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
@@ -18,17 +12,25 @@ import { callServer, ServerError, serverMutation } from './server'
 /** How often the list is read again while it is on screen, so each machine's online state stays current. */
 export const MACHINES_REFETCH_INTERVAL = 10_000
 
-/** How often the list is read again while the Connect a machine dialog waits for the machine to link. */
-export const MACHINES_LINKING_REFETCH_INTERVAL = 2_000
+/** How often the waiting connect requests are read again on the home page. */
+export const REQUESTS_REFETCH_INTERVAL = 10_000
+
+/** How often the waiting connect requests are read again while the Connect a machine dialog waits for its own. */
+export const REQUESTS_WAITING_REFETCH_INTERVAL = 2_000
+
+/** The query for the account's machines, in the server's order, with each one's online state. */
+export function machinesQuery(userId: string) {
+  return { ...accountQuery(userId, serverRoutes.machines.list, {}), refetchInterval: MACHINES_REFETCH_INTERVAL }
+}
 
 /**
- * The query for the account's machines, in the server's order, with each one's online state. With `linking` it is
- * read every 2 seconds instead of every 10, so a machine that redeems an enrollment key shows up quickly.
+ * The query for the machines waiting for the owner to accept or reject their Connect, newest first. With `waiting`
+ * it is read every 2 seconds instead of every 10, so the dialog that created a key shows its request quickly.
  */
-export function machinesQuery(userId: string, { linking = false }: { linking?: boolean } = {}) {
+export function requestsQuery(userId: string, { waiting = false }: { waiting?: boolean } = {}) {
   return {
-    ...accountQuery(userId, serverRoutes.machines.list, {}),
-    refetchInterval: linking ? MACHINES_LINKING_REFETCH_INTERVAL : MACHINES_REFETCH_INTERVAL,
+    ...accountQuery(userId, serverRoutes.machines.listRequests, {}),
+    refetchInterval: waiting ? REQUESTS_WAITING_REFETCH_INTERVAL : REQUESTS_REFETCH_INTERVAL,
   }
 }
 
@@ -40,18 +42,39 @@ export function createEnrollment(): Promise<CreateEnrollmentResponse> {
   return callServer(serverRoutes.machines.createEnrollment, {})
 }
 
-/**
- * The first machine in `machines` whose id isn't in `baseline`, the ids listed when an enrollment key was created.
- * Undefined means none is new. The client hears nothing when a key is redeemed, so a machine that appears is taken to
- * be the one that redeemed it.
- */
-export function newMachine(baseline: readonly string[], machines: readonly ServerMachine[]): ServerMachine | undefined {
-  const known = new Set(baseline)
-  return machines.find((machine) => !known.has(machine.machineId))
-}
-
 function invalidateMachines(queryClient: QueryClient, userId: string) {
   return queryClient.invalidateQueries({ queryKey: machinesQuery(userId).queryKey })
+}
+
+function invalidateRequests(queryClient: QueryClient, userId: string) {
+  return queryClient.invalidateQueries({ queryKey: requestsQuery(userId).queryKey })
+}
+
+/**
+ * Accepts one of `userId`'s waiting connect requests, which links its machine, then reads the machines again. The
+ * requests are read again either way, so one that stopped waiting goes too.
+ */
+export function acceptRequestMutation(queryClient: QueryClient, userId: string) {
+  return {
+    ...serverMutation(serverRoutes.machines.acceptRequest),
+    onSuccess: () => invalidateMachines(queryClient, userId),
+    onSettled: () => invalidateRequests(queryClient, userId),
+  }
+}
+
+/** Rejects one of `userId`'s waiting connect requests, then reads the requests again, whatever the answer. */
+export function rejectRequestMutation(queryClient: QueryClient, userId: string) {
+  return {
+    ...serverMutation(serverRoutes.machines.rejectRequest),
+    onSettled: () => invalidateRequests(queryClient, userId),
+  }
+}
+
+/** What the page says when answering a connect request failed: `not_waiting` means the machine stopped waiting. */
+export function requestAnswerFailed(error: unknown): string {
+  return error instanceof ServerError && error.code === 'not_waiting'
+    ? 'The machine stopped waiting. Nothing was linked.'
+    : 'Answering the request failed. Try again.'
 }
 
 /** Renames one of `userId`'s machines, then reads the list again. */

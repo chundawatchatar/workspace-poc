@@ -39,6 +39,10 @@ export async function remoteCommand(
       out: (line) => console.log(line),
       err: (line) => console.error(line),
       now: Date.now,
+      onInterrupt: (handler) => {
+        process.on('SIGINT', handler)
+        return () => process.off('SIGINT', handler)
+      },
       program: options.program,
     })
   } catch (error) {

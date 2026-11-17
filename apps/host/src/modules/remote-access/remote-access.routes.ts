@@ -12,6 +12,7 @@ export interface RemoteAccessDeps {
     RemoteAccessService,
     | 'status'
     | 'connect'
+    | 'cancelConnect'
     | 'disconnect'
     | 'listDevices'
     | 'approveDevice'
@@ -50,6 +51,7 @@ export function createRemoteAccessRoutes({ remoteAccess }: RemoteAccessDeps) {
           })
         }
       },
+      cancelConnect: async () => remoteAccess.cancelConnect(),
       disconnect: async () => remoteAccess.disconnect(),
       devices: async () => remoteAccess.listDevices(),
       approveDevice: async ({ fingerprint }) => {

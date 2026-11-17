@@ -8,7 +8,6 @@ import { authSession, authUser } from '../test/betterAuth'
 import { server } from '../test/msw'
 import {
   machinesQuery,
-  newMachine,
   relayTicketFor,
   renameMachineFormOptions,
   renameMachineMutation,
@@ -244,18 +243,5 @@ describe('relayTicketFor', () => {
       ),
     )
     await expect(relayTicketFor(idOne)).rejects.toThrow()
-  })
-})
-
-describe('newMachine', () => {
-  test('is the first machine not listed when the key was created, and none when every one was', () => {
-    const idThree = 'C'.repeat(43)
-    const baseline = [idOne]
-    expect(newMachine(baseline, [machine(idOne, 'Laptop')])).toBeUndefined()
-    expect(newMachine(baseline, [])).toBeUndefined()
-    expect(
-      newMachine(baseline, [machine(idOne, 'Laptop'), machine(idTwo, 'Desktop'), machine(idThree, 'Server')]),
-    ).toMatchObject({ machineId: idTwo, name: 'Desktop' })
-    expect(newMachine([], [machine(idOne, 'Laptop')])?.machineId).toBe(idOne)
   })
 })

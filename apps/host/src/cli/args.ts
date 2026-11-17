@@ -46,8 +46,8 @@ Commands:
   terminals stop      End the terminal daemon and every shell in it
   connect --email <email> --key <key> [--server <url>] [--yes]
                       Connect this machine to your account with a key from Connect a machine in the
-                      client, through the built-in server unless --server names another; --yes
-                      connects without asking
+                      client, through the built-in server unless --server names another, then wait
+                      until you accept it there; --yes connects without asking, Ctrl-C cancels
   disconnect [--yes]  Disconnect this machine from its account; --yes disconnects without asking
   remote <command>    Configure remote access (corch remote help lists the commands)
   rotate-key          Replace the remote access key

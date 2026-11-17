@@ -61,8 +61,16 @@ export interface RemoteCliDeps {
   prompt: (question: string) => Promise<string | null>
   out: (line: string) => void
   err: (line: string) => void
-  /** The current time in milliseconds, for the ages `devices` prints. */
+  /** The current time in milliseconds, for the ages `devices` prints and the time left `connect` prints. */
   now: () => number
+  /**
+   * Calls `handler` on Ctrl-C, instead of ending the process, until the
+   * function it returns is called. `connect` uses it to cancel a request that
+   * waits. Without it, Ctrl-C ends the process as usual.
+   */
+  onInterrupt?: (handler: () => void) => () => void
+  /** How often `connect` reads the status while its request waits, in milliseconds. Defaults to a second. */
+  pollMs?: number
   /** The command the usage names, `bun run host:remote` unless given. */
   program?: string
 }
@@ -108,8 +116,8 @@ const usage = (program: string) => `Usage: ${program} <command>
                                         and the devices
   connect --email <email> --key <key> [--server <url>] [--yes]
                                         Connect this machine to your account with a key from Connect a
-                                        machine in the client; --server defaults to the built-in server
-                                        (needs the running host)
+                                        machine in the client, then wait until you accept it there;
+                                        --server defaults to the built-in server (needs the running host)
   disconnect [--yes]                    Disconnect this machine from its account (needs the running host)
   devices                               List the devices waiting for approval and the approved ones
   devices approve <fingerprint> [--yes] Approve a waiting device by the fingerprint its browser shows (needs

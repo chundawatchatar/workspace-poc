@@ -15,6 +15,7 @@ import { createAuth } from './modules/auth/auth.service'
 import { ChannelBridge } from './modules/bridge/bridge.service'
 import { HttpForwarder } from './modules/forward/forward.service'
 import { ConnectionLimiter } from './modules/limits/limits.service'
+import { ConnectRequests } from './modules/machines/connect-requests.service'
 import { ENROLLMENT_LOOKUP_REASON, EnrollmentService } from './modules/machines/enrollment.service'
 import { createMachinesModule } from './modules/machines/machines.routes'
 import { RelayTickets } from './modules/machines/relay-ticket.service'
@@ -52,7 +53,7 @@ interface AccountsDeps {
 /**
  * What accounts add to the server: their API modules, the hooks that give
  * `user` endpoints a principal, and the enrollment service the tunnel answers
- * `enroll.redeem` and `unlink` frames with.
+ * `enroll.request` and `unlink` frames with.
  */
 interface Accounts {
   modules: ApiModule[]
@@ -65,8 +66,10 @@ interface Accounts {
  * are on: Better Auth at `/api/auth/*`, the account endpoints and the machines
  * endpoints. `forUser` is a closure, so routers never hold the `Domain`, and
  * the enrollment service gets only a closure that logs its fixed reason on
- * every key lookup. Each session Better Auth ends sends `session.ended` to
- * the user's online machines.
+ * every key lookup. The enrollment service holds each machine's connect
+ * request in the one `ConnectRequests`, and the machines endpoints answer it
+ * from there. Each session Better Auth ends sends `session.ended` to the
+ * user's online machines.
  */
 function createAccountsModules({
   domain,
@@ -90,18 +93,19 @@ function createAccountsModules({
     signingKey: accounts.relaySigningKey,
     extraPublicKeys: accounts.relayExtraPublicKeys,
   })
+  const requests = new ConnectRequests()
   return {
     modules: [
       createAuthModule({ auth, clientIp }),
       createAccountModule(),
-      createMachinesModule({ registry, relayTickets, serverTunnelUrl: accounts.serverTunnelUrl }),
+      createMachinesModule({ registry, requests, relayTickets, serverTunnelUrl: accounts.serverTunnelUrl }),
     ],
     api: { authenticate: createAuthenticate({ auth }), forUser },
     enrollment: new EnrollmentService({
       byKey: () => domain.skipAuthorization(ENROLLMENT_LOOKUP_REASON),
       forUser,
       registry,
-      relayKeys: relayTickets.publicKeys,
+      requests,
     }),
   }
 }

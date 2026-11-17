@@ -10,7 +10,14 @@ import { AccessKeyRepository } from '../access/access.repository'
 import { E2eSessions } from '../e2e/e2e.service'
 import { readSettingsFile } from '../settings/settings.repository'
 import { loadSettings } from '../settings/settings.service'
-import type { EnrollAnswer, EnrollRequest, TunnelClientOptions, UnlinkAnswer } from '../tunnel/tunnel.service'
+import type { TunnelClientOptions } from '../tunnel/tunnel.service'
+import type {
+  EnrollAnswer,
+  EnrollRequest,
+  EnrollStart,
+  EnrollWaiting,
+  UnlinkAnswer,
+} from '../tunnel/tunnel-asks.service'
 import type { OpenChannel } from '../tunnel/tunnel-channels.service'
 import { devAddresses, type RemoteAccessEnv, type RemoteAddresses } from './addresses.service'
 import { AuditLogRepository } from './audit-log.repository'
@@ -24,19 +31,24 @@ import { DEFAULT_SERVER_URL, RemoteAccessService } from './remote-access.service
 // and the service wired to them. Each test file calls
 // `useRemoteAccessHarness()` once. Never imported by production code.
 
-/** What a `FakeTunnel` was asked to send: `enroll.redeem`, or `unlink` with its account. */
+/** What a `FakeTunnel` was asked to send: `enroll.request`, or `unlink` with its account. */
 export type SentAsk = EnrollRequest | { type: 'unlink'; accountId: string }
+
+/** The server's first answer to `enroll.request`, before the fake tunnel adds the owner's answer to come. */
+export type FirstAnswer = Omit<EnrollWaiting, 'answer'> | Extract<EnrollStart, { type: 'enroll.failed' }>
 
 /**
  * How the fake server behind every `FakeTunnel` acts. Each test starts with
- * the defaults: reachable, linking whatever is redeemed to the tunnel's own
- * machine, and removing whatever is unlinked.
+ * the defaults: reachable, holding every request for 15 minutes until the test
+ * answers it, and removing whatever is unlinked.
  */
 export interface FakeServer {
   /** False stands for a server that can't be reached: `whenConnected` rejects. */
   reachable: boolean
-  /** Answers `enroll.redeem`; a throw stands for a timeout or a lost tunnel. */
-  redeem: (request: EnrollRequest, machineId: string) => EnrollAnswer
+  /** Answers `enroll.request` first; a throw stands for a timeout or a lost tunnel. */
+  request: (request: EnrollRequest) => FirstAnswer | Promise<FirstAnswer>
+  /** The owner's answer to a request that waits, given at once; null leaves it for the test to give. */
+  owner: ((machineId: string) => EnrollAnswer) | null
   /** Answers `unlink`; a throw stands for a timeout or a lost tunnel. */
   unlink: (accountId: string) => UnlinkAnswer
 }
@@ -63,6 +75,7 @@ export class FakeTunnel {
   stop(options?: { remoteOff: true }) {
     this.stops.push(options)
     this.status = 'off'
+    this.drop()
   }
   /** The open, authorized channels it reports. `closeChannels` drops the ones it matches. */
   channels: OpenChannel[] = []
@@ -75,9 +88,38 @@ export class FakeTunnel {
   }
   /** Every frame that asks the server something, in order. */
   sent: SentAsk[] = []
-  async enroll(request: EnrollRequest) {
+  /** The owner's answer to the request that waits, until it comes or the tunnel goes. */
+  private waiting: { resolve: (answer: EnrollAnswer) => void; reject: (error: Error) => void } | null = null
+  async enroll(request: EnrollRequest): Promise<EnrollStart> {
     this.sent.push(request)
-    return fakeServer.redeem(request, this.options.expectedMachineId ?? '')
+    const first = await fakeServer.request(request)
+    if (first.type === 'enroll.failed') return first
+    const answer = new Promise<EnrollAnswer>((resolve, reject) => {
+      this.waiting = { resolve, reject }
+    })
+    answer.catch(() => {})
+    const owner = fakeServer.owner
+    if (owner) setTimeout(() => this.answer(owner(this.machineId)), 0)
+    return { ...first, answer }
+  }
+  /** Gives the owner's answer to the request that waits. */
+  answer(frame: EnrollAnswer) {
+    const waiting = this.waiting
+    this.waiting = null
+    waiting?.resolve(frame)
+  }
+  /** Accepts the request that waits, linking `machineId`, this machine's own unless given. */
+  accept(machineId = this.machineId) {
+    this.answer(accepted(machineId))
+  }
+  /** Ends the request that waits as a lost connection does. */
+  drop() {
+    const waiting = this.waiting
+    this.waiting = null
+    waiting?.reject(new Error('the tunnel closed'))
+  }
+  private get machineId() {
+    return this.options.expectedMachineId ?? ''
   }
   async unlink(accountId: string) {
     this.sent.push({ type: 'unlink', accountId })
@@ -101,6 +143,14 @@ export const relay = testRelayKey('k1')
 export const relayKeys = [relay.relayKey]
 export const expiresAt = '2026-11-04T12:15:00.000Z'
 
+/** How long the fake server holds a request by default: an enrollment key's 15 minutes. */
+export const HOLD_MS = 15 * 60_000
+
+/** The owner's accept of a request from `machineId`, as the server sends it. */
+export function accepted(machineId: string): EnrollAnswer {
+  return { type: 'enroll.redeemed', id: 1, machineId, accountId, account, relayKeys }
+}
+
 export let dir: string
 export let tunnels: FakeTunnel[]
 export let logs: string[]
@@ -121,7 +171,8 @@ export function useRemoteAccessHarness() {
     dir = mkdtempSync(join(tmpdir(), 'orch-remote-'))
     fakeServer = {
       reachable: true,
-      redeem: (_request, machineId) => ({ type: 'enroll.redeemed', id: 1, machineId, accountId, account, relayKeys }),
+      request: () => ({ type: 'enroll.waiting', id: 1, expiresInMs: HOLD_MS }),
+      owner: null,
       unlink: () => ({ type: 'unlinked', id: 1 }),
     }
     tunnels = []

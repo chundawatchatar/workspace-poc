@@ -19,6 +19,35 @@ export type LinkAccount = z.infer<typeof linkAccount>
 export const linkedAccount = linkAccount.extend({ serverUrl: z.string(), linkedAt: z.iso.datetime() })
 export type LinkedAccount = z.infer<typeof linkedAccount>
 
+/**
+ * A Connect the server holds until the owner accepts or rejects it in the
+ * client. `expiresAt` is an ISO string on the host's clock: the host gives up
+ * then, when the key expires.
+ */
+export const connectRequestStatus = z.object({ expiresAt: z.iso.datetime() })
+export type ConnectRequestStatus = z.infer<typeof connectRequestStatus>
+
+/**
+ * What the host says while its connect request waits, in the Remote access
+ * dialog and in `corch connect`: the owner accepts it in the client after
+ * checking the client shows the same machine fingerprint.
+ */
+export function connectApprovalText(machineFingerprint: string): string {
+  return `Please approve this connect request in the client and check that it shows machine ${machineFingerprint}`
+}
+
+/**
+ * How a Connect that waited ended without linking the machine: the owner
+ * `rejected` it, its key `expired`, the owner `cancelled` it on the machine,
+ * or it `failed`, as when the tunnel dropped.
+ */
+export const connectOutcomeKind = z.enum(['rejected', 'expired', 'cancelled', 'failed'])
+export type ConnectOutcomeKind = z.infer<typeof connectOutcomeKind>
+
+/** How the last Connect ended unlinked, with a message for the owner that never holds the key or the email. */
+export const connectOutcome = z.object({ kind: connectOutcomeKind, message: z.string() })
+export type ConnectOutcome = z.infer<typeof connectOutcome>
+
 export const remoteAccessStatus = z.object({
   /**
    * The server address in use: a flag or the environment, else the one saved in
@@ -42,6 +71,10 @@ export const remoteAccessStatus = z.object({
   tunnel: tunnelState,
   /** The account this machine is connected to. Null means it is not connected. */
   linkedAccount: linkedAccount.nullable(),
+  /** The Connect waiting for the owner's answer in the client. Null means none waits. */
+  connectRequest: connectRequestStatus.nullable(),
+  /** How the last Connect that waited ended without linking. Null after a link, and from the next Connect on. */
+  connectOutcome: connectOutcome.nullable(),
 })
 export type RemoteAccessStatus = z.infer<typeof remoteAccessStatus>
 
@@ -214,8 +247,16 @@ export const remoteAccessContract = defineContract({
     method: 'POST',
     path: '/api/remote-access/connect',
     description:
-      'Connects this machine to the account whose key and email it gets: saves the server address, opens the tunnel to it and redeems the key over it. A connected machine, or an address other than the one a flag or variable sets, gets a 409; an address the host refuses gets a 400. On any failure nothing is linked and the tunnel is stopped. Local callers only.',
+      "Starts connecting this machine to the account whose key and email it gets: saves the server address, opens the tunnel to it and sends the key over it, then answers once the server holds the request for the owner, with `connectRequest` set. The owner's answer in the client, an expiry or a cancel shows in the status later. A connected machine, one already connecting, or an address other than the one a flag or variable sets gets a 409; an address the host refuses gets a 400. On any failure nothing is linked and the tunnel is stopped. Local callers only.",
     input: connectBody,
+    output: remoteAccessStatus,
+  },
+  cancelConnect: {
+    method: 'POST',
+    path: '/api/remote-access/connect/cancel',
+    description:
+      'Ends a Connect on its way or waiting for the owner, before the machine is linked: stops the tunnel, so the server drops the request, and sets `connectOutcome` to `cancelled`. With none on its way it changes nothing. Local callers only.',
+    input: z.strictObject({}),
     output: remoteAccessStatus,
   },
   disconnect: {

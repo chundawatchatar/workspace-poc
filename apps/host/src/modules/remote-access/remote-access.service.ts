@@ -4,6 +4,8 @@ import {
   type AuditLogResponse,
   CLOSE_SESSION_ENDED,
   type ConnectBody,
+  type ConnectOutcome,
+  type ConnectOutcomeKind,
   type DevicesResponse,
   type DisconnectResponse,
   machineFingerprint,
@@ -18,15 +20,24 @@ import { AccessKeys, connectLink, DEFAULT_KEY_NAME, type RemoteAccess } from '..
 import type { E2eSessions } from '../e2e/e2e.service'
 import { DEFAULT_SERVER_URL } from '../settings/settings.service'
 import { loadOrCreateMachineKey, type MachineKey } from '../tunnel/tunnel.repository'
-import { type EnrollAnswer, type EnrollRequest, TunnelClient, type TunnelClientOptions } from '../tunnel/tunnel.service'
+import { TunnelClient, type TunnelClientOptions } from '../tunnel/tunnel.service'
+import type { EnrollAnswer, EnrollRequest, EnrollWaiting } from '../tunnel/tunnel-asks.service'
 import type { OpenSocket } from '../tunnel/tunnel-channels.service'
 import type { Authorization, Credentials, Refusal, TunnelHandler } from '../tunnel/tunnel-http.service'
 import { linkClientUrl, RemoteAccessAddresses, type RemoteAddresses, SERVER_URL_RULE } from './addresses.service'
 import type { AuditLogService } from './audit-log.service'
+import { ConnectAttempt } from './connect-attempt.service'
 import type { DevicesRepository } from './devices.repository'
 import { DevicesService } from './devices.service'
 import type { LinkedAccountRepository, SavedLinkedAccount } from './linked-account.repository'
-import { AmbiguousDevice, ConnectError, InvalidRemoteAccessSetting, UnknownDevice } from './remote-access.errors'
+import {
+  AmbiguousDevice,
+  ConnectError,
+  ENROLL_FAILURES,
+  InvalidRemoteAccessSetting,
+  OUTCOME_MESSAGES,
+  UnknownDevice,
+} from './remote-access.errors'
 import { groupSessions } from './sessions.service'
 import { TunnelAccess } from './tunnel-access.service'
 
@@ -75,13 +86,6 @@ export function hostMachineName(name = hostname()): string {
   return name.trim().slice(0, 64).trim() || 'this machine'
 }
 
-/** The status and message each `enroll.failed` code answers with. */
-const ENROLL_FAILURES = {
-  invalid_key: [400, "This key is unknown, used or expired, or the email doesn't match the account that created it"],
-  rate_limited: [429, 'Too many tries. Wait a minute, then try again'],
-  unavailable: [503, 'The server could not check the key. Try again later'],
-} as const
-
 /**
  * Owns remote access while the host runs: the machine key, the access keys,
  * the tunnel, the account this machine is connected to and its devices. The
@@ -99,8 +103,10 @@ export class RemoteAccessService {
   /** The browsers approved on this machine, and those waiting. */
   private readonly devices: DevicesService
   private readonly access: TunnelAccess
-  /** True while a Connect is on its way, so a second one is refused. */
-  private connecting = false
+  /** The Connect on its way or waiting for the owner, so a second one is refused and Cancel can end it. */
+  private attempt: ConnectAttempt | null = null
+  /** How the last Connect that waited ended unlinked, until the next Connect. */
+  private outcome: ConnectOutcome | null = null
   /** The Disconnect on its way, which a second call shares. */
   private disconnecting: Promise<DisconnectResponse> | null = null
 
@@ -167,22 +173,35 @@ export class RemoteAccessService {
         serverUrl: this.linked.serverUrl,
         linkedAt: this.linked.linkedAt,
       },
+      connectRequest: this.attempt?.expiresAt ? { expiresAt: this.attempt.expiresAt } : null,
+      connectOutcome: this.outcome,
     }
   }
 
   /**
-   * Connects this machine to the account of `email` with the enrollment key
-   * `key`, through `serverUrl`: it makes the address the one in use and saves
-   * it (unless a flag or variable sets it), clears the approved and waiting
-   * devices, opens the tunnel there at once and waits for it, redeems the key
-   * with the email, and saves the account once the server confirms it linked
-   * this machine's own id. Throws `ConnectError` or `InvalidRemoteAccessSetting`;
-   * on any failure nothing is linked and the tunnel is stopped. No message
-   * holds the key or the email.
+   * Starts connecting this machine to the account of `email` with the
+   * enrollment key `key`, through `serverUrl`: it makes the address the one in
+   * use and saves it (unless a flag or variable sets it), clears the approved
+   * and waiting devices, opens the tunnel there at once and waits for it, and
+   * sends the key with the email. It answers once the server holds the request
+   * for the owner, with `connectRequest` set. The owner's answer comes later:
+   * an accept saves the account once the server confirms it linked this
+   * machine's own id; a reject, the key's time running out, the tunnel
+   * dropping or `cancelConnect` ends the request unlinked, stops the tunnel and
+   * sets `connectOutcome`. Throws `ConnectError` or `InvalidRemoteAccessSetting`;
+   * on any failure nothing is linked and the tunnel is stopped. No message holds
+   * the key or the email.
    */
   async connect({ email, key, serverUrl }: ConnectBody): Promise<RemoteAccessStatus> {
     if (this.linked) throw new ConnectError(409, 'This machine is already connected. Disconnect it first')
-    if (this.connecting) throw new ConnectError(409, 'This machine is already connecting')
+    if (this.attempt) {
+      throw new ConnectError(
+        409,
+        this.attempt.expiresAt === null
+          ? 'This machine is already connecting'
+          : 'This machine is already waiting for its connect request to be accepted. Cancel it first',
+      )
+    }
     const address = serverUrl.trim()
     if (!parseServerUrl(address)) throw new ConnectError(400, SERVER_URL_RULE)
     const { relayUrl } = this.addresses.inUse
@@ -192,7 +211,9 @@ export class RemoteAccessService {
         `${relayUrl.setBy} sets the server address. Connect to ${relayUrl.value}, or change it`,
       )
     }
-    this.connecting = true
+    const attempt = new ConnectAttempt()
+    this.attempt = attempt
+    this.outcome = null
     try {
       this.addresses.use(address)
       // Approvals belong to an account, so none left from an earlier one carries over or uses the new tunnel.
@@ -203,28 +224,80 @@ export class RemoteAccessService {
       } catch {
         throw new ConnectError(503, 'Could not connect to the server. Check the address and try again')
       }
-      const answer = await this.redeem(tunnel, { type: 'enroll.redeem', key, email, name: hostMachineName() })
-      if (answer.machineId !== this.machineId()) {
-        throw new ConnectError(502, 'The server linked another machine id than this host has. Nothing was saved')
-      }
-      if (this.tunnel !== tunnel) throw new ConnectError(503, 'The host stopped the tunnel while connecting')
-      const account = {
-        ...answer.account,
-        serverUrl: this.serverUrl(),
-        linkedAt: new Date().toISOString(),
-        accountId: answer.accountId,
-        relayKeys: answer.relayKeys,
-      }
-      this.options.linkedAccounts.save(account)
-      this.linked = account
+      const waiting = await this.request(tunnel, { type: 'enroll.request', key, email, name: hostMachineName() })
+      if (attempt.ended) throw new ConnectError(409, attempt.outcome?.message ?? OUTCOME_MESSAGES.cancelled)
+      attempt.wait(waiting.expiresInMs, () => this.endAttempt(attempt, 'expired'))
+      waiting.answer.then(
+        (answer) => this.answered(attempt, tunnel, answer),
+        () => this.endAttempt(attempt, 'failed'),
+      )
       return this.status()
     } catch (error) {
+      // A cancel already stopped the tunnel, and a new Connect may have opened another since.
+      if (!attempt.end('failed')) throw new ConnectError(409, attempt.outcome?.message ?? OUTCOME_MESSAGES.cancelled)
+      this.attempt = null
       // Not connected, so no tunnel may stay open.
-      if (!this.linked) this.stopTunnel()
+      this.stopTunnel()
       throw error
-    } finally {
-      this.connecting = false
     }
+  }
+
+  /**
+   * Ends the Connect on its way or waiting for the owner, before the machine
+   * is linked: stops the tunnel, so the server drops the request, and sets
+   * `connectOutcome` to `cancelled`. With none on its way it changes nothing.
+   */
+  cancelConnect(): RemoteAccessStatus {
+    if (this.attempt) this.endAttempt(this.attempt, 'cancelled')
+    return this.status()
+  }
+
+  /**
+   * Takes the owner's final answer to `attempt`'s request: a reject ends it,
+   * and an accept of this machine's own id over the same tunnel saves the account.
+   */
+  private answered(attempt: ConnectAttempt, tunnel: Tunnel, answer: EnrollAnswer) {
+    if (attempt.ended) return
+    if (answer.type === 'enroll.failed') {
+      this.endAttempt(attempt, answer.code === 'rejected' ? 'rejected' : 'failed', ENROLL_FAILURES[answer.code][1])
+      return
+    }
+    if (answer.machineId !== this.machineId() || this.tunnel !== tunnel) {
+      this.endAttempt(attempt, 'failed', 'The server linked another machine id than this host has. Nothing was saved')
+      return
+    }
+    const account = {
+      ...answer.account,
+      serverUrl: this.serverUrl(),
+      linkedAt: new Date().toISOString(),
+      accountId: answer.accountId,
+      relayKeys: answer.relayKeys,
+    }
+    try {
+      this.options.linkedAccounts.save(account)
+    } catch {
+      this.endAttempt(
+        attempt,
+        'failed',
+        'The account could not be saved on this machine. Remove the machine in the client, then connect again',
+      )
+      return
+    }
+    attempt.link()
+    this.attempt = null
+    this.linked = account
+  }
+
+  /**
+   * Ends `attempt` unlinked as `kind`, with `message` or the kind's own: the
+   * status shows the outcome, and the tunnel stops, which ends the request on
+   * the server. An attempt that already ended stays as it was.
+   */
+  private endAttempt(attempt: ConnectAttempt, kind: ConnectOutcomeKind, message?: string) {
+    if (!attempt.end(kind, message) || this.attempt !== attempt) return
+    this.attempt = null
+    this.outcome = attempt.outcome
+    this.stopTunnel()
   }
 
   /**
@@ -360,8 +433,9 @@ export class RemoteAccessService {
     return { keys, machineId, clientUrl: linkClientUrl(this.addresses.inUse.clientUrl) }
   }
 
-  /** Closes the tunnel and writes pending key use, for shutdown. */
+  /** Ends a Connect on its way, closes the tunnel and writes pending key use, for shutdown. */
   shutdown() {
+    if (this.attempt) this.endAttempt(this.attempt, 'failed', 'The host stopped. Nothing was linked')
     this.stopTunnel()
     this.keys?.flush()
   }
@@ -471,12 +545,9 @@ export class RemoteAccessService {
     return this.machineKey
   }
 
-  /** Sends `enroll.redeem`, turning `enroll.failed`, a timeout and a lost tunnel into `ConnectError`s. */
-  private async redeem(
-    tunnel: Tunnel,
-    request: EnrollRequest,
-  ): Promise<Exclude<EnrollAnswer, { type: 'enroll.failed' }>> {
-    let answer: EnrollAnswer
+  /** Sends `enroll.request`, turning `enroll.failed`, a timeout and a lost tunnel into `ConnectError`s. */
+  private async request(tunnel: Tunnel, request: EnrollRequest): Promise<EnrollWaiting> {
+    let answer: Awaited<ReturnType<Tunnel['enroll']>>
     try {
       answer = await tunnel.enroll(request)
     } catch {

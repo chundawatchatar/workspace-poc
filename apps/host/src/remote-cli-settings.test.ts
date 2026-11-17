@@ -4,6 +4,7 @@ import { localRequest } from './app.testing'
 import type { RemoteAccessEnv } from './modules/remote-access/addresses.service'
 import { remoteAccessPath } from './modules/remote-access/remote-access.repository'
 import {
+  accepted,
   configFile,
   dir,
   email,
@@ -39,6 +40,7 @@ async function run(callHost: CallHost, args: string[], env: RemoteAccessEnv = {}
     out: (line) => lines.push(line),
     err: (line) => lines.push(line),
     now: () => Date.now(),
+    pollMs: 1,
   })
   return { code, text: lines.join('\n') }
 }
@@ -46,12 +48,14 @@ async function run(callHost: CallHost, args: string[], env: RemoteAccessEnv = {}
 const readJson = (file: string) => JSON.parse(readFileSync(file, 'utf8'))
 
 describe('host:remote and config.json', () => {
-  test('connect saves the address with the running host, status shows it, and disconnect forgets the account', async () => {
+  test('connect saves the address with the running host, waits for the accept, status shows it, and disconnect forgets the account', async () => {
     const app = setup({ serverUrl: 'ws://127.0.0.1:4600' })
+    fakeServer.owner = accepted
     writeFileSync(configFile(), JSON.stringify({ relayUrl: 'ws://127.0.0.1:4600', logLevel: 'debug' }))
     const args = ['connect', '--email', email, '--key', key, '--server', 'ws://localhost:4700', '--yes']
     const connected = await run(through(app), args)
     expect(connected.code).toBe(0)
+    expect(connected.text).toContain('Please approve this connect request in the client')
     expect(connected.text).toContain('Connected to Ada (a***@example.com) through ws://localhost:4700')
     expect(readJson(configFile())).toEqual({ relayUrl: 'ws://localhost:4700', logLevel: 'debug' })
     expect(tunnels.map((t) => t.options.url)).toEqual(['ws://localhost:4700/tunnel'])
@@ -66,6 +70,13 @@ describe('host:remote and config.json', () => {
     expect(disconnected).toMatchObject({ code: 0, text: expect.stringContaining(REMOVE_IN_CLIENT) })
     expect(existsSync(linkedFile())).toBe(false)
     expect((await run(through(app), ['status'])).text).toContain('Connection:     not connected, tunnel off')
+
+    // Against the real service too, a reject ends the wait with its message and links nothing.
+    fakeServer.owner = () => ({ type: 'enroll.failed', id: 1, code: 'rejected' })
+    const rejected = await run(through(app), args)
+    expect(rejected.code).toBe(1)
+    expect(rejected.text).toEndWith('The connect request was rejected in the client. Nothing was linked')
+    expect(existsSync(linkedFile())).toBe(false)
   })
 
   test('with the host running, status names the variables that set the addresses', async () => {

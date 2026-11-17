@@ -293,42 +293,69 @@ describe('TunnelClient', () => {
     expect(conns[1]?.closed?.code).toBe(1000)
   })
 
-  test('enroll and unlink resolve each with its own answer, and reject before welcome, on timeout and on a lost tunnel', async () => {
+  test('enroll waits for the owner after enroll.waiting, unlink answers at once, and both reject before welcome, on timeout and on a lost tunnel', async () => {
     const key = `oek_${'k'.repeat(43)}`
     const email = 'ada@example.com'
     const account = { name: 'Ada', maskedEmail: 'a***@example.com' }
+    const relayKeys = [{ kid: 'k1', publicKey: 'P'.repeat(43) }]
+    const request = { type: 'enroll.request', key, email, name: 'box' } as const
     mode = 'mute'
     const client = start({ timings: { ...timings, welcomeTimeoutMs: 2000, askTimeoutMs: 60 } })
     await until(() => conns[0]?.frames.some((f) => f.type === 'hello') ?? false)
-    await expect(client.enroll({ type: 'enroll.redeem', key, email, name: 'box' })).rejects.toThrow('not connected')
+    await expect(client.enroll(request)).rejects.toThrow('not connected')
     await expect(client.unlink('u1')).rejects.toThrow('not connected')
 
     const [conn] = conns
     if (!conn) throw new Error('no connection')
     send(conn, { type: 'welcome', machineId: 'm' })
     await until(() => client.status === 'connected')
-    const redeem = client.enroll({ type: 'enroll.redeem', key, email, name: 'box' })
+    const sent = () => conn.frames.flatMap((f) => (f.type === 'enroll.request' || f.type === 'unlink' ? [f] : []))
+    /** The id of the `n`th asking frame the client sent, once it has. */
+    const idOf = async (n: number) => {
+      await until(() => sent().length > n)
+      return sent()[n]?.id ?? 0
+    }
+    const asked = client.enroll(request)
     const unlink = client.unlink('u1')
-    const sent = () => conn.frames.filter((f) => f.type === 'enroll.redeem' || f.type === 'unlink')
-    await until(() => sent().length === 2)
-    const [r, u] = sent()
-    if (r?.type !== 'enroll.redeem' || u?.type !== 'unlink') throw new Error('frames out of order')
-    expect(r).toEqual({ type: 'enroll.redeem', id: r.id, key, email, name: 'box' })
-    expect(u).toEqual({ type: 'unlink', id: u.id, accountId: 'u1' })
-    expect(r.id).not.toBe(u.id)
-    // An answer of the wrong kind for the id is ignored; the right one resolves it.
-    const relayKeys = [{ kid: 'k1', publicKey: 'P'.repeat(43) }]
-    send(conn, { type: 'enroll.redeemed', id: u.id, machineId: 'm', accountId: 'u1', account, relayKeys })
-    send(conn, { type: 'unlinked', id: r.id })
-    send(conn, { type: 'unlinked', id: u.id })
-    send(conn, { type: 'enroll.failed', id: r.id, code: 'rate_limited' })
-    expect(await redeem).toEqual({ type: 'enroll.failed', id: r.id, code: 'rate_limited' })
-    expect(await unlink).toEqual({ type: 'unlinked', id: u.id })
+    const [r, u] = [await idOf(0), await idOf(1)]
+    expect(sent()).toEqual([
+      { ...request, id: r },
+      { type: 'unlink', id: u, accountId: 'u1' },
+    ])
+    expect(r).not.toBe(u)
+    // An answer of the wrong kind for the id is ignored, as is a final answer before the request waits.
+    send(conn, { type: 'enroll.waiting', id: u, expiresInMs: 5000 })
+    send(conn, { type: 'unlinked', id: r })
+    send(conn, { type: 'enroll.redeemed', id: r, machineId: 'm', accountId: 'u1', account, relayKeys })
+    send(conn, { type: 'unlinked', id: u })
+    send(conn, { type: 'enroll.waiting', id: r, expiresInMs: 5000 })
+    const waiting = await asked
+    expect(waiting).toMatchObject({ type: 'enroll.waiting', id: r, expiresInMs: 5000 })
+    if (waiting.type !== 'enroll.waiting') throw new Error('not waiting')
+    expect(await unlink).toEqual({ type: 'unlinked', id: u })
 
+    // The owner's answer has no time limit but the connection's, and a second waiting is ignored.
+    await Bun.sleep(100)
+    send(conn, { type: 'enroll.waiting', id: r, expiresInMs: 1 })
+    send(conn, { type: 'enroll.failed', id: r, code: 'rejected' })
+    expect(await waiting.answer).toEqual({ type: 'enroll.failed', id: r, code: 'rejected' })
+
+    // A failed first answer resolves at once, and an unanswered ask times out.
+    const refused = client.enroll(request)
+    send(conn, { type: 'enroll.failed', id: await idOf(2), code: 'rate_limited' })
+    expect(await refused).toMatchObject({ type: 'enroll.failed', code: 'rate_limited' })
     await expect(client.unlink('u1')).rejects.toThrow('did not answer')
-    const lost = client.enroll({ type: 'enroll.redeem', key, email, name: 'box' })
+
+    // A lost tunnel rejects a request on its way and the owner's answer to one that waits.
+    const held = client.enroll(request)
+    send(conn, { type: 'enroll.waiting', id: await idOf(4), expiresInMs: 5000 })
+    const heldWaiting = await held
+    if (heldWaiting.type !== 'enroll.waiting') throw new Error('not waiting')
+    const lost = client.enroll(request)
+    await idOf(5)
     conn.ws.close(1000)
     await expect(lost).rejects.toThrow('closed')
+    await expect(heldWaiting.answer).rejects.toThrow('closed')
     expect(logs.join('\n')).not.toContain(key)
     expect(logs.join('\n')).not.toContain(email)
   })

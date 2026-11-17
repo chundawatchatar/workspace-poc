@@ -28,10 +28,20 @@ interface Props {
   /** The connect link from the last `onNewLink`. Null means none is shown. */
   link: string | null
   /**
-   * Connecting to an account and disconnecting from it. The account, the
-   * address's setter, the default address and `busy` come from this form's props.
+   * Connecting to an account, waiting for the owner's answer and
+   * disconnecting. What comes from the status, and `busy`, come from this
+   * form's props.
    */
-  connection: Omit<RemoteAccessConnectProps, 'linkedAccount' | 'serverUrlSetBy' | 'defaultServerUrl' | 'busy'>
+  connection: Omit<
+    RemoteAccessConnectProps,
+    | 'linkedAccount'
+    | 'connectRequest'
+    | 'connectOutcome'
+    | 'machineFingerprint'
+    | 'serverUrlSetBy'
+    | 'defaultServerUrl'
+    | 'busy'
+  >
   /** The browsers approved for the connected account, and those waiting. Shown only while connected. */
   devices: Omit<RemoteAccessDevicesProps, 'busy'>
   /** The newest remote access recorded on this machine. Shown once the status has loaded. */
@@ -48,10 +58,11 @@ interface Props {
 
 /**
  * The Remote access dialog: where the connection stands, with the machine's id
- * and key fingerprint, the Connect fields or the connected account with
- * Disconnect, the browsers approved for the account, the open sessions, the
- * recent remote access and a button for a fresh connect link. A server
- * address set by a flag or the host's environment is shown read-only.
+ * and key fingerprint, the Connect fields, the request waiting for the owner
+ * or the connected account with Disconnect, the browsers approved for the
+ * account, the open sessions, the recent remote access and a button for a
+ * fresh connect link. A server address set by a flag or the host's
+ * environment is shown read-only.
  */
 export function RemoteAccessForm(props: Props) {
   const { status, link, error, notice, busy } = props
@@ -95,6 +106,9 @@ export function RemoteAccessForm(props: Props) {
           <RemoteAccessConnect
             {...props.connection}
             linkedAccount={status.linkedAccount}
+            connectRequest={status.connectRequest}
+            connectOutcome={status.connectOutcome}
+            machineFingerprint={status.machineFingerprint}
             serverUrlSetBy={status.serverUrlSetBy}
             defaultServerUrl={status.defaultServerUrl}
             busy={busy}

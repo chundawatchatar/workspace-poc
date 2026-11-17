@@ -1,17 +1,20 @@
 import { type AnyPgDatabase, schema } from '@orch/domain'
 import {
   accountEmailSchema,
+  type ConnectRequest,
   type CreateEnrollmentResponse,
   enrollmentFingerprint,
   enrollmentKeySchema,
   type MachineFrame,
   type RelayKey,
   type ServerFrame,
+  type ServerMachine,
 } from '@orch/shared'
-import { and, eq, gt, inArray, isNull, sql } from 'drizzle-orm'
-import type { ForUser, UserData } from '../../lib/createServerRouter'
+import { and, eq, gt, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm'
+import type { ForUser, SessionPrincipal, UserData } from '../../lib/createServerRouter'
 import type { ConnectionLimiter } from '../limits/limits.service'
-import type { MachineRegistry } from '../tunnel/tunnel.service'
+import type { MachineConnection, MachineRegistry } from '../tunnel/tunnel.service'
+import type { ConnectRequests, WaitingRequest } from './connect-requests.service'
 import { MachinesService } from './machines.service'
 
 /** How long an enrollment key works after it is created. */
@@ -37,8 +40,9 @@ export function maskEmail(email: string): string {
 /**
  * Creates an enrollment key for the signed-in user, valid for
  * `ENROLLMENT_TTL_MS` from `now`. The key carries 256 random bits and is
- * returned once, with `serverUrl`, the address machines open their tunnel to;
- * the row holds only its hash.
+ * returned once, with its row's `id`, which is also the id of the request a
+ * machine makes with it, and `serverUrl`, the address machines open their
+ * tunnel to; the row holds only its hash.
  */
 export async function createEnrollment(
   machineEnrollments: UserData['machineEnrollments'],
@@ -47,25 +51,8 @@ export async function createEnrollment(
 ): Promise<CreateEnrollmentResponse> {
   const key = `oek_${Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url')}`
   const expiresAt = new Date(now.getTime() + ENROLLMENT_TTL_MS)
-  await machineEnrollments.insert({ keyHash: hashEnrollmentKey(key), createdAt: now, expiresAt })
-  return { key, fingerprint: enrollmentFingerprint(key), expiresAt: expiresAt.toISOString(), serverUrl }
-}
-
-/** The account an enrollment key belongs to, as a machine may see it. */
-export interface EnrollmentAccount {
-  name: string
-  maskedEmail: string
-}
-
-/**
- * What redeeming a key did: `machineId` is now linked to `account`, whose user
- * id is `accountId`, and should trust relay tickets signed by `relayKeys`.
- */
-export interface EnrollmentRedeemed {
-  machineId: string
-  accountId: string
-  account: EnrollmentAccount
-  relayKeys: RelayKey[]
+  const { id } = await machineEnrollments.insert({ keyHash: hashEnrollmentKey(key), createdAt: now, expiresAt })
+  return { id, key, fingerprint: enrollmentFingerprint(key), expiresAt: expiresAt.toISOString(), serverUrl }
 }
 
 /** What the enrollment service needs. */
@@ -76,21 +63,23 @@ export interface EnrollmentServiceDeps {
    * so every lookup is logged with the fixed reason.
    */
   byKey: () => AnyPgDatabase
-  /** Opens the key owner's scoped repositories, which linking goes through. */
+  /** Opens an account's scoped repositories, which unlinking goes through. */
   forUser: ForUser
-  /** The registry the linked machine's online state is read from. */
+  /** The registry the unlinked machine's online state is read from. */
   registry: MachineRegistry
-  /** The server's relay public keys, handed to every machine that links. */
-  relayKeys: RelayKey[]
+  /** Where each request waits for the owner's answer, shared with the machines module that answers it. */
+  requests: ConnectRequests
   /** The clock. Defaults to the current time. */
   now?: () => Date
 }
 
 /**
- * Redeems enrollment keys for machine tunnels, and removes a machine from an
- * account's list at the machine's own request. An unknown, used, expired or
- * malformed key, and an email that isn't the key owner's, all give null, so a
- * caller can't tell them apart. It never logs a key, a hash, an email or an account.
+ * Takes the connect requests machine tunnels make with enrollment keys and
+ * holds each one for its owner, and removes a machine from an account's list
+ * at the machine's own request. An unknown, used, expired or malformed key, an
+ * email that isn't the key owner's and a key another machine asked with all
+ * give null, so a caller can't tell them apart. It never logs a key, a hash,
+ * an email or an account.
  */
 export class EnrollmentService {
   private readonly now: () => Date
@@ -100,42 +89,52 @@ export class EnrollmentService {
   }
 
   /**
-   * Uses `key` and links `machineId` to its owner under `name`, keeping the
-   * name of a machine the owner already linked, when `email` is the owner's,
-   * in any letter case and with any spaces around it. Null means the key
-   * doesn't work or the email doesn't match, which leaves the key unused.
+   * Records on `key`'s row that the machine of `conn` asks to be linked to the
+   * key's owner under `name`, when `email` is the owner's, in any letter case
+   * and with any spaces around it, and holds the request in `requests` with
+   * the frame's `frameId`. The key stays unused until the owner answers. The
+   * same machine may ask again with the same key, after a cancel or a restart
+   * lost its request; any other machine can't. Answers the key's time left in
+   * milliseconds, or null when the key doesn't work for this machine or the
+   * email doesn't match, which leaves the row as it was.
    */
-  async redeem(machineId: string, key: string, email: string, name: string): Promise<EnrollmentRedeemed | null> {
+  async request(
+    conn: MachineConnection,
+    frameId: number,
+    key: string,
+    email: string,
+    name: string,
+  ): Promise<{ expiresInMs: number } | null> {
     const owner = accountEmailSchema.safeParse(email)
     if (!enrollmentKeySchema.safeParse(key).success || !owner.success) return null
+    const { machineId } = conn
     const db = this.deps.byKey()
     const now = this.now()
-    // One conditional update, so of two redeems racing on one key exactly one gets the row back, and a key sent
-    // with another email stays unused.
+    // One conditional update, so a key sent with another email, or one another machine already asked with, stays as
+    // it was, and of two machines racing on one fresh key exactly one gets it.
     const ownerIds = db
       .select({ id: schema.user.id })
       .from(schema.user)
       .where(eq(sql`lower(${schema.user.email})`, owner.data.toLowerCase()))
-    const [used] = await db
+    const [held] = await db
       .update(enrollments)
-      .set({ usedAt: now })
-      .where(and(this.usable(key, now), inArray(enrollments.userId, ownerIds)))
-      .returning({ userId: enrollments.userId })
-    if (!used) return null
-    const { userId } = used
-    await new MachinesService(this.deps.forUser({ userId }).machines, this.deps.registry).link(machineId, name)
-    const [account] = await db
-      .select({ name: schema.user.name, email: schema.user.email })
-      .from(schema.user)
-      .where(eq(schema.user.id, userId))
-      .limit(1)
-    if (!account) throw new Error('The enrollment key owner is gone.')
-    return {
-      machineId,
-      accountId: userId,
-      account: { name: account.name, maskedEmail: maskEmail(account.email) },
-      relayKeys: this.deps.relayKeys,
-    }
+      .set({ requestMachineId: machineId, requestName: name, requestedAt: now })
+      .where(
+        and(
+          this.usable(key, now),
+          inArray(enrollments.userId, ownerIds),
+          or(isNull(enrollments.requestMachineId), eq(enrollments.requestMachineId, machineId)),
+        ),
+      )
+      .returning({ id: enrollments.id, expiresAt: enrollments.expiresAt })
+    if (!held) return null
+    this.deps.requests.hold({ id: held.id, conn, frameId, machineId, expiresAt: held.expiresAt })
+    return { expiresInMs: Math.max(0, held.expiresAt.getTime() - now.getTime()) }
+  }
+
+  /** Ends the request the tunnel `conn` holds, for its closing. */
+  connectionClosed(conn: MachineConnection): void {
+    this.deps.requests.connectionClosed(conn)
   }
 
   /**
@@ -159,7 +158,7 @@ export class EnrollmentService {
 
 /** What answering a machine's account frames needs. A missing `enrollment` means accounts are off. */
 export interface EnrollmentFrameDeps {
-  enrollment?: Pick<EnrollmentService, 'redeem' | 'unlink'> | null
+  enrollment?: Pick<EnrollmentService, 'request' | 'unlink'> | null
   limiter: ConnectionLimiter
 }
 
@@ -190,19 +189,21 @@ async function guarded(
 }
 
 /**
- * The answer to `enroll.redeem` from the tunnel of `machineId`, which comes
- * from the tunnel's proof and never from the frame. A key that doesn't work
- * and an email that isn't its owner's get the same `invalid_key`.
+ * The first answer to `enroll.request` from the tunnel `conn`, whose machine
+ * id comes from the tunnel's proof and never from the frame: `enroll.waiting`
+ * with the key's time left once the request is held for the owner, else
+ * `enroll.failed`. A key that doesn't work for this machine and an email that
+ * isn't its owner's get the same `invalid_key`.
  */
 export function answerEnrollmentFrame(
-  frame: Extract<MachineFrame, { type: 'enroll.redeem' }>,
-  machineId: string,
+  frame: Extract<MachineFrame, { type: 'enroll.request' }>,
+  conn: MachineConnection,
   deps: EnrollmentFrameDeps,
 ): Promise<ServerFrame> {
   const failed = (code: 'invalid_key' | Refusal): ServerFrame => ({ type: 'enroll.failed', id: frame.id, code })
-  return guarded(machineId, deps, failed, async (enrollment) => {
-    const redeemed = await enrollment.redeem(machineId, frame.key, frame.email, frame.name)
-    return redeemed ? { type: 'enroll.redeemed', id: frame.id, ...redeemed } : failed('invalid_key')
+  return guarded(conn.machineId, deps, failed, async (enrollment) => {
+    const held = await enrollment.request(conn, frame.id, frame.key, frame.email, frame.name)
+    return held ? { type: 'enroll.waiting', id: frame.id, expiresInMs: held.expiresInMs } : failed('invalid_key')
   })
 }
 
@@ -222,4 +223,125 @@ export function answerUnlinkFrame(
     await enrollment.unlink(machineId, frame.accountId)
     return { type: 'unlinked', id: frame.id }
   })
+}
+
+/** What the owner's answers to connect requests need, besides the owner's own repositories. */
+export interface ConnectAnswerDeps {
+  /** The requests waiting for an answer, shared with the enrollment service that holds them. */
+  requests: ConnectRequests
+  /** The registry the linked machine's online state is read from. */
+  registry: MachineRegistry
+  /** The server's relay public keys, handed to every machine that links. */
+  relayKeys: RelayKey[]
+  now: Date
+}
+
+/**
+ * The owner's waiting connect requests, newest first: the rows of their own
+ * enrollment keys that hold a request and are unused and unexpired at `now`,
+ * kept only while the request still waits on the same machine's tunnel, so a
+ * row a closed tunnel or a restart left behind is never listed. It changes
+ * nothing.
+ */
+export async function listConnectRequests(
+  data: UserData,
+  requests: ConnectRequests,
+  now: Date,
+): Promise<ConnectRequest[]> {
+  const rows = await data.machineEnrollments.list(
+    and(isNotNull(enrollments.requestMachineId), isNull(enrollments.usedAt), gt(enrollments.expiresAt, now)),
+  )
+  rows.sort((a, b) => (b.requestedAt?.getTime() ?? 0) - (a.requestedAt?.getTime() ?? 0))
+  return rows.flatMap((row) => {
+    const waiting = requests.waiting(row.id, now)
+    if (!waiting || waiting.machineId !== row.requestMachineId || !row.requestedAt) return []
+    return [
+      {
+        id: row.id,
+        machineId: waiting.machineId,
+        name: row.requestName ?? '',
+        requestedAt: row.requestedAt.toISOString(),
+        expiresAt: row.expiresAt.toISOString(),
+      },
+    ]
+  })
+}
+
+/** Why an answer to a connect request was refused: not one of the owner's, or not waiting any more. */
+export type AnswerRefusal = 'not_found' | 'not_waiting'
+
+/**
+ * Accepts the owner's waiting request `id`: uses up its key, links the
+ * machine to the owner under the name it asked with, and sends
+ * `enroll.redeemed` on the waiting tunnel. Answers the linked machine, or why
+ * it refused, which changes nothing and sends nothing.
+ */
+export async function acceptConnectRequest(
+  id: string,
+  principal: SessionPrincipal,
+  data: UserData,
+  deps: ConnectAnswerDeps,
+): Promise<ServerMachine | AnswerRefusal> {
+  const taken = await takeRequest(id, data, deps)
+  if (typeof taken === 'string') return taken
+  const { row, waiting } = taken
+  const machine = await new MachinesService(data.machines, deps.registry).link(
+    waiting.machineId,
+    row.requestName ?? 'this machine',
+  )
+  waiting.conn.send({
+    type: 'enroll.redeemed',
+    id: waiting.frameId,
+    machineId: waiting.machineId,
+    accountId: principal.userId,
+    account: { name: principal.name, maskedEmail: maskEmail(principal.email) },
+    relayKeys: deps.relayKeys,
+  })
+  return machine
+}
+
+/**
+ * Rejects the owner's waiting request `id`: uses up its key, links nothing
+ * and sends `enroll.failed` with `rejected` on the waiting tunnel. Answers
+ * null, or why it refused, which changes nothing and sends nothing.
+ */
+export async function rejectConnectRequest(
+  id: string,
+  data: UserData,
+  deps: ConnectAnswerDeps,
+): Promise<AnswerRefusal | null> {
+  const taken = await takeRequest(id, data, deps)
+  if (typeof taken === 'string') return taken
+  taken.waiting.conn.send({ type: 'enroll.failed', id: taken.waiting.frameId, code: 'rejected' })
+  return null
+}
+
+/**
+ * Uses up the key of the owner's request `id` while it still waits, and ends
+ * the request. One conditional update, so of two answers racing on one request
+ * exactly one gets it. Another user's id is `not_found`, through the scoped
+ * repository; a used or expired key, or a request whose tunnel is gone, is
+ * `not_waiting`.
+ */
+async function takeRequest(
+  id: string,
+  data: UserData,
+  { requests, now }: ConnectAnswerDeps,
+): Promise<{ row: typeof enrollments.$inferSelect; waiting: WaitingRequest } | AnswerRefusal> {
+  const row = await data.machineEnrollments.find(eq(enrollments.id, id))
+  if (!row) return 'not_found'
+  const waiting = requests.waiting(id, now)
+  if (!waiting || row.requestMachineId !== waiting.machineId) return 'not_waiting'
+  const [used] = await data.machineEnrollments.update(
+    and(
+      eq(enrollments.id, id),
+      isNull(enrollments.usedAt),
+      gt(enrollments.expiresAt, now),
+      eq(enrollments.requestMachineId, waiting.machineId),
+    ),
+    { usedAt: now },
+  )
+  if (!used) return 'not_waiting'
+  requests.end(waiting)
+  return { row: used, waiting }
 }

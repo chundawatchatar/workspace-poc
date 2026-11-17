@@ -48,7 +48,7 @@ describe('tunnel frames', () => {
       { type: 'http.end', id: 2, error: 'stream failed' },
       { type: 'auth.failed', id: 3 },
       { type: 'auth.failed', channel: 7 },
-      { type: 'enroll.redeem', id: 6, key: 'not even a key', email: 'not an email', name: 'Laptop' },
+      { type: 'enroll.request', id: 6, key: 'not even a key', email: 'not an email', name: 'Laptop' },
       { type: 'unlink', id: 8, accountId: 'u1' },
     ]
     const server: TunnelFrame[] = [
@@ -59,6 +59,7 @@ describe('tunnel frames', () => {
       { type: 'http.sealed', id: 5, data: allBytes },
       { type: 'ws.open', channel: 1, path: '/ws/term/abc?cols=80', headers: [] },
       { type: 'ws.sealed', channel: 2, data: allBytes },
+      { type: 'enroll.waiting', id: 6, expiresInMs: 899_000 },
       {
         type: 'enroll.redeemed',
         id: 6,
@@ -68,6 +69,7 @@ describe('tunnel frames', () => {
         relayKeys: [{ kid: 'k1', publicKey: 'P'.repeat(43) }],
       },
       { type: 'enroll.failed', id: 7, code: 'invalid_key' },
+      { type: 'enroll.failed', id: 6, code: 'rejected' },
       { type: 'unlinked', id: 8 },
       { type: 'unlink.failed', id: 9, code: 'rate_limited' },
     ]
@@ -93,8 +95,8 @@ describe('tunnel frames', () => {
     check([...server, ...both], serverFrame)
   })
 
-  test('the protocol is at version 5, and ws.sealed goes as a binary frame whose data decodes byte-equal', () => {
-    expect(TUNNEL_PROTOCOL_VERSION).toBe(5)
+  test('the protocol is at version 6, and ws.sealed goes as a binary frame whose data decodes byte-equal', () => {
+    expect(TUNNEL_PROTOCOL_VERSION).toBe(6)
     const encoded = encodeFrame({ type: 'ws.sealed', channel: 9, data: allBytes })
     expect(encoded).toBeInstanceOf(Uint8Array)
     const decoded = decodeFrame(serverFrame, encoded)
@@ -161,16 +163,16 @@ describe('tunnel frames', () => {
       [machineFrame, JSON.stringify({ type: 'auth.failed' })],
       [machineFrame, JSON.stringify({ type: 'auth.failed', id: 3, key: 'k' })],
       [serverFrame, JSON.stringify({ type: 'auth.failed', id: 3 })],
-      [machineFrame, JSON.stringify({ type: 'enroll.redeem', id: 0, key: 'k', email: 'e', name: 'Box' })],
+      [machineFrame, JSON.stringify({ type: 'enroll.request', id: 0, key: 'k', email: 'e', name: 'Box' })],
       [
         machineFrame,
-        JSON.stringify({ type: 'enroll.redeem', id: 1, key: 'k', email: 'e', name: 'Box', machineId: 'm-2' }),
+        JSON.stringify({ type: 'enroll.request', id: 1, key: 'k', email: 'e', name: 'Box', machineId: 'm-2' }),
       ],
-      [machineFrame, JSON.stringify({ type: 'enroll.redeem', id: 1, key: 'k'.repeat(257), email: 'e', name: 'Box' })],
-      [machineFrame, JSON.stringify({ type: 'enroll.redeem', id: 1, key: 'k', email: 'e'.repeat(321), name: 'Box' })],
-      [machineFrame, JSON.stringify({ type: 'enroll.redeem', id: 1, key: 'k', email: 'e', name: '   ' })],
-      [machineFrame, JSON.stringify({ type: 'enroll.redeem', id: 1, key: 'k', name: 'Box' })],
-      [serverFrame, JSON.stringify({ type: 'enroll.redeem', id: 1, key: 'k', email: 'e', name: 'Box' })],
+      [machineFrame, JSON.stringify({ type: 'enroll.request', id: 1, key: 'k'.repeat(257), email: 'e', name: 'Box' })],
+      [machineFrame, JSON.stringify({ type: 'enroll.request', id: 1, key: 'k', email: 'e'.repeat(321), name: 'Box' })],
+      [machineFrame, JSON.stringify({ type: 'enroll.request', id: 1, key: 'k', email: 'e', name: '   ' })],
+      [machineFrame, JSON.stringify({ type: 'enroll.request', id: 1, key: 'k', name: 'Box' })],
+      [serverFrame, JSON.stringify({ type: 'enroll.request', id: 1, key: 'k', email: 'e', name: 'Box' })],
       [machineFrame, JSON.stringify({ type: 'unlink', id: 1 })],
       [machineFrame, JSON.stringify({ type: 'unlink', id: 1, accountId: '' })],
       [machineFrame, JSON.stringify({ type: 'unlink', id: 1, accountId: 'u1', machineId: 'm-2' })],
@@ -180,6 +182,11 @@ describe('tunnel frames', () => {
       [serverFrame, JSON.stringify({ type: 'unlink.failed', id: 1, code: 'invalid_key' })],
       [machineFrame, JSON.stringify({ type: 'enroll.failed', id: 1, code: 'invalid_key' })],
       [serverFrame, JSON.stringify({ type: 'enroll.failed', id: 1, code: 'expired' })],
+      // Only the server says a request waits, and never for a negative or fractional time.
+      [machineFrame, JSON.stringify({ type: 'enroll.waiting', id: 1, expiresInMs: 1000 })],
+      [serverFrame, JSON.stringify({ type: 'enroll.waiting', id: 1, expiresInMs: -1 })],
+      [serverFrame, JSON.stringify({ type: 'enroll.waiting', id: 1, expiresInMs: 1.5 })],
+      [serverFrame, JSON.stringify({ type: 'enroll.waiting', id: 1, expiresInMs: 1000, machineId: 'm-2' })],
     ]
     for (const [schema, input] of bad) expect(decodeFrame(schema, input)).toBeNull()
   })

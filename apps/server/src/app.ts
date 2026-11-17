@@ -6,11 +6,7 @@ import { machineCors, OriginPolicy, securityHeaders } from './lib/security'
 import { type BridgeSocketDeps, createBridgeSocket } from './modules/bridge/bridge.ws'
 import { createForwardRoutes, type ForwardRoutesDeps } from './modules/forward/forward.routes'
 import type { LimitsDeps } from './modules/limits/limits.middleware'
-import {
-  answerEnrollmentFrame,
-  answerUnlinkFrame,
-  type EnrollmentFrameDeps,
-} from './modules/machines/enrollment.service'
+import { answerEnrollmentFrame, answerUnlinkFrame, type EnrollmentService } from './modules/machines/enrollment.service'
 import { createStaticRoutes, type StaticRoutesDeps } from './modules/static/static.routes'
 import { createSystemRoutes } from './modules/system/system.routes'
 import type { MachineConnection } from './modules/tunnel/tunnel.service'
@@ -33,10 +29,10 @@ export type AppDeps = Omit<TunnelSocketDeps, 'onFrame' | 'onClose' | 'clientIp'>
     /** The accounts modules of the server API. Null or missing means accounts are off, and none is mounted. */
     accounts?: { modules: readonly ApiModule[] } | null
     /**
-     * Answers the tunnel's `enroll.redeem` and `unlink` frames. Null or missing means accounts are off, and they get
-     * `unavailable`.
+     * Answers the tunnel's `enroll.request` and `unlink` frames, and ends a closed tunnel's waiting request. Null or
+     * missing means accounts are off, and the frames get `unavailable`.
      */
-    enrollment?: EnrollmentFrameDeps['enrollment']
+    enrollment?: Pick<EnrollmentService, 'request' | 'unlink' | 'connectionClosed'> | null
   }
 
 /**
@@ -71,13 +67,13 @@ export function createApp(deps: AppDeps): Hono {
       onFrame: (conn, frame) => {
         if (frame.type === 'auth.failed') {
           authFailed(conn, frame)
-        } else if (frame.type === 'enroll.redeem' || frame.type === 'unlink') {
-          // The machine id is the tunnel's own, from its proof, so a machine can only ever link or remove itself.
+        } else if (frame.type === 'enroll.request' || frame.type === 'unlink') {
+          // The machine id is the tunnel's own, from its proof, so a machine can only ever ask to link or remove itself.
           const accounts = { enrollment: deps.enrollment, limiter }
           const answer =
             frame.type === 'unlink'
               ? answerUnlinkFrame(frame, conn.machineId, accounts)
-              : answerEnrollmentFrame(frame, conn.machineId, accounts)
+              : answerEnrollmentFrame(frame, conn, accounts)
           void answer.then((reply) => conn.send(reply))
         } else if (frame.type === 'ws.data' || frame.type === 'ws.close' || frame.type === 'ws.ack') {
           bridge.handleFrame(conn, frame)
@@ -88,6 +84,8 @@ export function createApp(deps: AppDeps): Hono {
       onClose: (conn) => {
         forwarder.connectionClosed(conn)
         bridge.connectionClosed(conn)
+        // A request lives only as long as its tunnel, so the owner can no longer accept it.
+        deps.enrollment?.connectionClosed(conn)
       },
     }),
   )

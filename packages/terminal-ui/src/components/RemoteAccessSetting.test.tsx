@@ -64,7 +64,15 @@ function setup({
     machineFingerprint: 'ABCD-EFGH-JKMN-PQRS',
     tunnel: linked ? 'connected' : 'off',
     linkedAccount: linked ? linkedAccount : null,
+    connectRequest: null,
+    connectOutcome: null,
     ...address,
+  }
+  // The owner's answer in the client, which the dialog picks up from the status within a poll.
+  const owner = {
+    accept: () => {
+      status = { ...status, linkedAccount, connectRequest: null }
+    },
   }
   // Whether the fake server removes the machine on disconnect.
   const server = { removes: true }
@@ -88,7 +96,16 @@ function setup({
       if (path === routes.remoteAccess.connect.path) {
         const sent = body as { key: string; serverUrl: string }
         if (sent.key !== key) return new Response('This key is unknown, used or expired', { status: 400 })
-        status = { ...status, serverUrl: sent.serverUrl, tunnel: 'connected', linkedAccount }
+        const expiresAt = new Date(Date.now() + 15 * 60_000).toISOString()
+        status = { ...status, serverUrl: sent.serverUrl, tunnel: 'connected', connectRequest: { expiresAt } }
+        return Response.json(status)
+      }
+      if (path === routes.remoteAccess.cancelConnect.path) {
+        const connectOutcome = {
+          kind: 'cancelled' as const,
+          message: 'The connect request was cancelled. Nothing was linked',
+        }
+        status = { ...status, tunnel: 'off', connectRequest: null, connectOutcome }
         return Response.json(status)
       }
       if (path === routes.remoteAccess.disconnect.path) {
@@ -126,18 +143,25 @@ function setup({
   }
   disconnect = connect(transport)
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
-  render(
-    <QueryClientProvider client={queryClient}>
-      <RemoteAccessSetting />
-    </QueryClientProvider>,
-  )
-  return { sent, queryClient, live, audit, server }
+  const open = () =>
+    render(
+      <QueryClientProvider client={queryClient}>
+        <RemoteAccessSetting />
+      </QueryClientProvider>,
+    )
+  const dialog = { current: open() }
+  /** Closes the dialog and opens it again, as the owner does. */
+  const reopen = () => {
+    dialog.current.unmount()
+    dialog.current = open()
+  }
+  return { sent, queryClient, live, audit, server, owner, reopen }
 }
 
 describe('RemoteAccessSetting', () => {
-  test('connects with the address in use after a confirm step, keeps a refused attempt, and caches neither key nor email', async () => {
+  test('connects with the address in use after a confirm step, waits for the accept, keeps a refused attempt, and caches neither key nor email', async () => {
     const user = userEvent.setup()
-    const { sent, queryClient } = setup()
+    const { sent, queryClient, owner, reopen } = setup()
     expect(await screen.findByText('Not connected')).toBeInTheDocument()
     const server = screen.getByRole('textbox', { name: 'Server address' })
     await waitFor(() => expect(server).toHaveValue('wss://relay.example.com'))
@@ -158,9 +182,19 @@ describe('RemoteAccessSetting', () => {
     await user.type(keyField, key)
     await connect()
     await confirm()
-    expect(await screen.findByRole('region', { name: 'Connected account' })).toHaveTextContent('Ada Lovelace')
-    expect(screen.getByText('Connected')).toBeInTheDocument()
+    // The host holds the request for the owner, and the dialog shows it again after closing and reopening.
+    const waiting = await screen.findByRole('region', { name: 'Waiting for approval' })
+    expect(waiting).toHaveTextContent('check that it shows machine ABCD-EFGH-JKMN-PQRS')
+    expect(screen.getByText('Waiting for approval…')).toBeInTheDocument()
     expect(screen.queryByText('This key is unknown, used or expired')).not.toBeInTheDocument()
+    reopen()
+    expect(await screen.findByRole('region', { name: 'Waiting for approval' })).toHaveTextContent('Time left')
+
+    owner.accept()
+    expect(await screen.findByRole('region', { name: 'Connected account' }, { timeout: 3000 })).toHaveTextContent(
+      'Ada Lovelace',
+    )
+    expect(screen.getByText('Connected')).toBeInTheDocument()
     expect(sent).toEqual([
       [routes.remoteAccess.connect.path, { email, key: 'oek_wrong', serverUrl: 'wss://relay.example.com' }],
       [routes.remoteAccess.connect.path, { email, key, serverUrl: 'wss://relay.example.com' }],
@@ -176,6 +210,29 @@ describe('RemoteAccessSetting', () => {
     expect(await screen.findByRole('textbox', { name: 'Email' })).toHaveValue('')
     expect(screen.getByRole('textbox', { name: 'Key' })).toHaveValue('')
     expect(screen.getByRole('textbox', { name: 'Server address' })).toHaveValue('wss://relay.example.com')
+  })
+
+  test('Cancel ends a waiting request, and the form comes back with why it ended', async () => {
+    const user = userEvent.setup()
+    const { sent } = setup()
+    await user.type(await screen.findByRole('textbox', { name: 'Email' }), email)
+    await user.type(screen.getByRole('textbox', { name: 'Key' }), key)
+    await user.click(screen.getByRole('button', { name: 'Connect' }))
+    await user.click(
+      within(await screen.findByRole('region', { name: 'Check before connecting' })).getByRole('button', {
+        name: 'Connect',
+      }),
+    )
+    const waiting = await screen.findByRole('region', { name: 'Waiting for approval' })
+    await user.click(within(waiting).getByRole('button', { name: 'Cancel' }))
+
+    const form = await screen.findByRole('form', { name: 'Connect to an account' })
+    expect(form).toHaveTextContent('The connect request was cancelled. Nothing was linked')
+    expect(screen.getByText('Not connected')).toBeInTheDocument()
+    expect(sent.map(([path]) => path)).toEqual([
+      routes.remoteAccess.connect.path,
+      routes.remoteAccess.cancelConnect.path,
+    ])
   })
 
   test("Disconnect asks first, and says to remove the machine in the client when the server didn't", async () => {
