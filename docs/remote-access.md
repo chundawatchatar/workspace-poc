@@ -66,6 +66,17 @@ tunnel to the server runs exactly while this machine is connected to one.
    when it isn't the built-in default, and "Key ends in" with the key's last 4
    characters, which the client showed too. Connect only to a server you run or
    trust.
+4. The machine then asks the account to link it and waits. The dialog shows, in
+   place of the fields, `Please approve this connect request in the client and
+   check that it shows machine <fingerprint>`, with the time left on the key as
+   `mm:ss` and Cancel; the command prints the same sentence and the time left,
+   then waits. The fingerprint is the machine's own (Machine key in the dialog).
+5. In the client, "Connect a machine" replaces "Waiting for the machine to
+   connect…" with the machine's name, its Machine key fingerprint and Accept and
+   Reject. The home page lists every waiting request of the account above your
+   machines too. The client works the fingerprint out from the machine id
+   itself. Check that it is the one the machine shows, and reject any request
+   whose fingerprint isn't: someone else may hold your key.
 
 Connect then, in this order:
 
@@ -75,18 +86,43 @@ Connect then, in this order:
 2. clears the approved and waiting browsers;
 3. opens the tunnel to that address at once, with no restart, and waits for it
    to connect;
-4. redeems the key with the email over the tunnel;
-5. saves the account in `linked-account.json`. The dialog then shows the
-   account, its server and "Connected".
+4. sends the key with the email over the tunnel (`enroll.request`). Once the
+   server holds the request for you, it answers `enroll.waiting` with the key's
+   time left, and Connect returns with the request waiting (`connectRequest` in
+   the status);
+5. on Accept, the server uses up the key, links the machine and tells it
+   (`enroll.redeemed`); the host saves the account in `linked-account.json`,
+   and the dialog shows the account, its server and "Connected".
 
-On any failure (the server can't be reached, the key or the email is refused,
-too many tries, a timeout) nothing is linked and the tunnel is stopped. The
-answer never holds the key or the email.
+On any failure before the request waits (the server can't be reached, the key
+or the email is refused, too many tries, a timeout) nothing is linked and the
+tunnel is stopped. The answer never holds the key or the email.
+
+A waiting request ends unlinked on any of these, and the host then stops the
+tunnel and records why in the status (`connectOutcome`), which the dialog shows
+above the fields again:
+
+- Reject in the client (`rejected`): the key is used up.
+- The key's time running out (`expired`): the host gives up on its own clock,
+  from the time left the server sent, so the two clocks don't need to agree.
+- Cancel in the dialog, `routes.remoteAccess.cancelConnect`, or Ctrl-C in the
+  command (`cancelled`). Stopping the tunnel ends the request on the server, so
+  no cancel frame is needed. Cancel also ends a Connect still on its way, and
+  changes nothing when none is.
+- The tunnel dropping, or the server restarting, which forgets waiting requests
+  (`failed`).
+
+A new Connect clears the outcome; a second one while a request waits gets a 409.
+A key whose request ended without an answer stays unused and keeps this
+machine's id, so the same machine can connect again with it, and any other gets
+`invalid_key`. An Accept can race a Cancel, an expiry or a dropped tunnel by one
+round trip: the account then lists a machine that isn't connected, and you
+remove it in the client.
 
 A host started with a valid `linked-account.json` counts as connected and opens
 the tunnel at start, so it reconnects on its own. One without it never opens a
 tunnel, whatever `SERVER_URL` says. The status line reads "Not connected",
-"Connecting…", "Connected", "Reconnecting…", or "Connection lost" when the
+"Connecting…", "Waiting for approval…", "Connected", "Reconnecting…", or "Connection lost" when the
 machine is connected but its tunnel stopped (another host took over its
 machine key, or the server speaks another protocol version).
 
@@ -212,18 +248,21 @@ rewrites `access-keys.json`, and the host uses the new key at its next start.
 
 ## 5. The account, its browsers and Disconnect
 
-A machine joins an account's list only by redeeming a one-time enrollment key
-over its own tunnel, with the account's email (section 2). A connect link only
-opens the machine in the browser that holds its key: it adds nothing to the
-account, even when that browser is signed in.
+A machine joins an account's list only when the owner accepts, in the client,
+the request it made over its own tunnel with a one-time enrollment key and the
+account's email (section 2). A connect link only opens the machine in the
+browser that holds its key: it adds nothing to the account, even when that
+browser is signed in.
 
-The server links the machine only when the email is the key owner's, in any
+The server holds the request only when the email is the key owner's, in any
 letter case and with any spaces around it. Another account's email, an email
 with no account and a malformed one get the same `invalid_key` answer as an
-unknown, used or expired key, and the key stays unused, so a typo can be fixed
-without a new key. The machine id is always the tunnel's own, from its signed
-`hello`, never anything in a frame or the key. Each machine gets 10 tries,
-then one more every 30 seconds (an `unlink` counts too).
+unknown, used or expired key, or a key another machine already asked with, and
+the key stays as it was, so a typo can be fixed without a new key. The machine
+id is always the tunnel's own, from its signed `hello`, never anything in a
+frame or the key. Each machine gets 10 tries, then one more every 30 seconds
+(an `unlink` counts too). One tunnel holds one request: asking again with
+another key replaces it. Waiting requests live in the server's memory only.
 
 The host saves the account (name, masked email, server address, when it was
 linked, the account's user id and the server's relay public keys, never the key
@@ -316,10 +355,16 @@ be approved again), closes the sockets the account has open, and stops the
 tunnel, telling the server with `remote.off` so the list can show "remote
 access off" until it is removed. A machine the server didn't remove stays on
 the list until you remove it from the client's home page, but it refuses that
-account's tickets from then on. The tunnel protocol is at version 5 for these
-frames; a host on an older version gets "unsupported version" from the server.
+account's tickets from then on. The tunnel protocol is at version 6 for these
+frames (`enroll.request`, answered by `enroll.waiting`, then `enroll.redeemed`
+or `enroll.failed` with `rejected`); a host on an older version gets
+"unsupported version" from the server.
 
-Accepted risks: the server still says who is signed in, so it decides who owns
+Accepted risks: someone who gets hold of a live key and knows the account's
+email can still put a request in front of you; the fingerprint check is the
+defence, so reject any request whose fingerprint isn't the one your machine
+shows. Guessing the email no longer links anything: a right guess only creates
+a request you see. The server still says who is signed in, so it decides who owns
 an enrollment key and who gets relay tickets, but a leaked `RELAY_SIGNING_KEY`
 or a compromised server can't open a machine without an approved browser. It
 can mint tickets to put its own key in the Devices list, hoping you approve it,
@@ -358,7 +403,7 @@ setup script), `bun run host:remote` does what the dialog does:
 
 ```bash
 bun run host:remote status             # server address, connection, machine id and key, account
-bun run host:remote connect --email <email> --key <key> [--server <url>]   # add --yes to skip the question
+bun run host:remote connect --email <email> --key <key> [--server <url>]   # waits for your accept; add --yes to skip the question
 bun run host:remote disconnect                      # add --yes to skip the question
 bun run host:remote devices                         # waiting and approved devices, newest first
 bun run host:remote devices approve <fingerprint>   # add --yes to skip the question
@@ -382,6 +427,14 @@ the built-in default, or the address `SERVER_URL`, `--relay-url` or
 the server (with the warning), the email and `Key ends in: <last 4>`, then asks
 `Connect this machine to this account? [y/N]`; any answer but y or yes sends
 nothing and exits 1, and `--yes` skips the question but still prints them.
+Once the server holds the request, it prints `Please approve this connect
+request in the client and check that it shows machine <fingerprint>` and the
+time left once, as `mm:ss`, then reads the host's status every second. It exits
+0 with `Connected to <name> (<masked email>) through <server>` once you accept,
+and 1 with the reason on a reject, a Cancel in the dialog, the key expiring, a
+dropped tunnel or the host stopping. Ctrl-C, while it waits or while the
+Connect call is on its way, cancels the request, says nothing was linked and
+exits 1; `--yes` doesn't change any of this.
 `disconnect` asks `Disconnect this machine from <name> (<masked email>)? [y/N]`
 the same way, and prints `Remove it in the client` when the server didn't
 remove the machine from the account's list. Nothing either command prints holds

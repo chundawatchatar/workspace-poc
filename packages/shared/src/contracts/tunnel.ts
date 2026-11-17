@@ -8,7 +8,7 @@ import { machineNameSchema } from './serverMachines'
 // HTTP requests and WebSockets over it as these frames. This file runs in the
 // host, the server and the browser, so it uses only web-standard APIs.
 
-export const TUNNEL_PROTOCOL_VERSION = 5
+export const TUNNEL_PROTOCOL_VERSION = 6
 
 /** The server path machines open their tunnel socket on. Its messages are tunnel frames, not JSON client messages. */
 export const TUNNEL_PATH = '/tunnel'
@@ -171,25 +171,41 @@ const enrollmentKey = z.string().max(256)
 const enrollmentEmail = z.string().max(320)
 
 /**
- * Redeems an enrollment key, linking this tunnel's machine to the key's
- * account under `name`, only when `email` is that account's email. The machine
- * id never travels in a frame: it is the tunnel's own.
+ * Asks to link this tunnel's machine to the account of an enrollment key,
+ * under `name`, only when `email` is that account's email. The server holds
+ * the request until the owner accepts or rejects it in the client. The
+ * machine id never travels in a frame: it is the tunnel's own.
  */
-export const enrollRedeemFrame = z.strictObject({
-  type: z.literal('enroll.redeem'),
+export const enrollRequestFrame = z.strictObject({
+  type: z.literal('enroll.request'),
   id,
   key: enrollmentKey,
   email: enrollmentEmail,
   name: machineNameSchema,
 })
 
+/**
+ * The first answer to `enroll.request`, with the same `id`: the server holds
+ * the request for the owner, who has `expiresInMs` (the key's time left) to
+ * answer it. The final answer, `enroll.redeemed` or `enroll.failed` with
+ * `rejected`, comes later with the same `id`, or never, when the tunnel or
+ * the key ends first. A time left rather than a time keeps the two clocks
+ * out of it.
+ */
+export const enrollWaitingFrame = z.strictObject({
+  type: z.literal('enroll.waiting'),
+  id,
+  expiresInMs: z.number().int().nonnegative(),
+})
+
 /** The account an enrollment key belongs to, with only the first character of the email's local part. */
 const enrollAccount = z.strictObject({ name: z.string(), maskedEmail: z.string() })
 
 /**
- * Answers `enroll.redeem` with the same `id`: the machine is now linked to
- * `account`, whose user id is `accountId`. `relayKeys` are the public keys the
- * server signs relay tickets with, which the machine keeps to check them.
+ * The final answer to `enroll.request`, with the same `id`, once the owner
+ * accepted it: the machine is now linked to `account`, whose user id is
+ * `accountId`. `relayKeys` are the public keys the server signs relay tickets
+ * with, which the machine keeps to check them.
  */
 export const enrollRedeemedFrame = z.strictObject({
   type: z.literal('enroll.redeemed'),
@@ -201,15 +217,16 @@ export const enrollRedeemedFrame = z.strictObject({
 })
 
 /**
- * Answers `enroll.redeem` when it fails. `invalid_key` covers an unknown,
- * used, expired and malformed key, and an email that isn't the key owner's,
- * alike; `rate_limited` and `unavailable` describe the machine or the server,
- * not the key.
+ * Answers `enroll.request` when it fails. As the first answer, `invalid_key`
+ * covers an unknown, used, expired and malformed key, an email that isn't the
+ * key owner's and a key another machine asked with, alike; `rate_limited` and
+ * `unavailable` describe the machine or the server, not the key. As the final
+ * answer, `rejected` means the owner rejected the request in the client.
  */
 export const enrollFailedFrame = z.strictObject({
   type: z.literal('enroll.failed'),
   id,
-  code: z.enum(['invalid_key', 'rate_limited', 'unavailable']),
+  code: z.enum(['invalid_key', 'rate_limited', 'unavailable', 'rejected']),
 })
 
 /**
@@ -257,7 +274,7 @@ export const machineFrame = z.discriminatedUnion('type', [
   wsAckFrame,
   pingFrame,
   pongFrame,
-  enrollRedeemFrame,
+  enrollRequestFrame,
   unlinkFrame,
   remoteOffFrame,
 ])
@@ -275,6 +292,7 @@ export const serverFrame = z.discriminatedUnion('type', [
   wsAckFrame,
   pingFrame,
   pongFrame,
+  enrollWaitingFrame,
   enrollRedeemedFrame,
   enrollFailedFrame,
   unlinkedFrame,

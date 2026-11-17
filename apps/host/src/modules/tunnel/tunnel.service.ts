@@ -3,54 +3,20 @@ import {
   CLOSE_UNSUPPORTED_VERSION,
   decodeFrame,
   encodeFrame,
-  type enrollFailedFrame,
-  type enrollRedeemedFrame,
-  type enrollRedeemFrame,
   helloSignedMessage,
   type MachineFrame,
   type ServerFrame,
   serverFrame,
   TUNNEL_PROTOCOL_VERSION,
   type TunnelState,
-  type unlinkedFrame,
-  type unlinkFailedFrame,
-  type unlinkFrame,
 } from '@orch/shared'
-import type { z } from 'zod'
 import type { Principal } from '../../lib/principal'
 import type { RecordAudit } from '../remote-access/audit-log.service'
 import type { MachineKey } from './tunnel.repository'
+import { type EnrollRequest, type EnrollStart, TunnelAsks, type UnlinkAnswer } from './tunnel-asks.service'
 import { type OpenChannel, type OpenSocket, TunnelChannels } from './tunnel-channels.service'
 import { type Authorize, type SealedSessionLookup, type TunnelHandler, TunnelHttp } from './tunnel-http.service'
 import { TunnelOutbox } from './tunnel-outbox.service'
-
-/** An `enroll.redeem` frame to send, without its `id`, which `enroll` picks. */
-export type EnrollRequest = Omit<z.infer<typeof enrollRedeemFrame>, 'id'>
-
-/** The server's answer to an `EnrollRequest`: `enroll.redeemed`, or `enroll.failed`. */
-export type EnrollAnswer = z.infer<typeof enrollRedeemedFrame> | z.infer<typeof enrollFailedFrame>
-
-/** The server's answer to `unlink`: `unlinked`, or `unlink.failed`. */
-export type UnlinkAnswer = z.infer<typeof unlinkedFrame> | z.infer<typeof unlinkFailedFrame>
-
-/** A frame that asks the server something, without its `id`, which the client picks. */
-type AskFrame = EnrollRequest | Omit<z.infer<typeof unlinkFrame>, 'id'>
-
-type Answer = EnrollAnswer | UnlinkAnswer
-
-/** The answers each asking frame waits for. Any other frame with its id is ignored. */
-const ANSWERS: Record<AskFrame['type'], readonly Answer['type'][]> = {
-  'enroll.redeem': ['enroll.redeemed', 'enroll.failed'],
-  unlink: ['unlinked', 'unlink.failed'],
-}
-
-/** A frame waiting for its answer. */
-interface PendingAsk {
-  answers: readonly Answer['type'][]
-  resolve: (frame: Answer) => void
-  reject: (error: Error) => void
-  timer: Timer
-}
 
 /** The exponential backoff curve, in milliseconds. */
 export interface Backoff {
@@ -75,7 +41,7 @@ export interface TunnelTimings extends Backoff {
   silenceTimeoutMs: number
   /** How long a connection must stay welcomed before the backoff starts again from the first attempt. */
   stableAfterMs: number
-  /** How long the server has to answer an `enroll.redeem` or `unlink` frame. */
+  /** How long the server has to answer an `unlink` frame, or an `enroll.request` with `enroll.waiting`. */
   askTimeoutMs: number
   /** How often the wake watchdog compares the wall clock with its previous tick. */
   wakeCheckMs: number
@@ -142,8 +108,8 @@ interface Connection {
   challenged: boolean
   welcomed: boolean
   nonce: number
-  /** The frames that ask the server something, by id, until they are answered, time out or the connection ends. */
-  asks: Map<number, PendingAsk>
+  /** The frames that ask the server something, and the requests it holds, until answered or the connection ends. */
+  asks: TunnelAsks
   /** The timeout of each of this client's pings, by nonce, until its `pong` arrives. */
   pongs: Map<number, Timer>
   timers: Timer[]
@@ -250,12 +216,15 @@ export class TunnelClient {
   }
 
   /**
-   * Sends `enroll.redeem` with a fresh id and resolves with the server's
-   * answer to it. Rejects when the tunnel is not welcomed, when the connection
-   * ends first, or after `askTimeoutMs`. Neither the key nor the email is ever logged.
+   * Sends `enroll.request` with a fresh id and resolves with the server's
+   * first answer to it: `enroll.failed`, or the request waiting for the owner,
+   * whose final answer then comes on this connection with no time limit but
+   * the connection's own. Rejects when the tunnel is not welcomed, when the
+   * connection ends first, or after `askTimeoutMs`. Neither the key nor the
+   * email is ever logged.
    */
-  enroll(request: EnrollRequest): Promise<EnrollAnswer> {
-    return this.ask(request) as Promise<EnrollAnswer>
+  enroll(request: EnrollRequest): Promise<EnrollStart> {
+    return this.ask(request) as Promise<EnrollStart>
   }
 
   /**
@@ -266,19 +235,11 @@ export class TunnelClient {
     return this.ask({ type: 'unlink', accountId }) as Promise<UnlinkAnswer>
   }
 
-  /** Sends `frame` with a fresh id and resolves with the first of its answers that comes back with that id. */
-  private ask(frame: AskFrame): Promise<Answer> {
+  /** Sends `frame` with a fresh id on the welcomed connection; see `TunnelAsks.ask`. */
+  private ask(frame: Parameters<TunnelAsks['ask']>[1]) {
     const conn = this.conn
     if (!conn?.welcomed) return Promise.reject(new Error('the tunnel is not connected'))
-    const id = ++this.askId
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        conn.asks.delete(id)
-        reject(new Error('the server did not answer'))
-      }, this.timings.askTimeoutMs)
-      conn.asks.set(id, { answers: ANSWERS[frame.type], resolve, reject, timer })
-      this.send(conn, { ...frame, id })
-    })
+    return conn.asks.ask(++this.askId, frame)
   }
 
   private connect() {
@@ -311,7 +272,7 @@ export class TunnelClient {
       challenged: false,
       welcomed: false,
       nonce: 0,
-      asks: new Map(),
+      asks: new TunnelAsks((frame) => this.send(conn, frame), this.timings.askTimeoutMs),
       pongs: new Map(),
       timers: [],
     }
@@ -364,17 +325,13 @@ export class TunnelClient {
       case 'session.ended':
         if (conn.welcomed) this.options.onSessionEnded?.(frame.accountId)
         return
+      case 'enroll.waiting':
       case 'enroll.redeemed':
       case 'enroll.failed':
       case 'unlinked':
-      case 'unlink.failed': {
-        const pending = conn.asks.get(frame.id)
-        if (!pending?.answers.includes(frame.type)) return
-        conn.asks.delete(frame.id)
-        clearTimeout(pending.timer)
-        pending.resolve(frame)
+      case 'unlink.failed':
+        conn.asks.receive(frame)
         return
-      }
     }
   }
 
@@ -441,11 +398,7 @@ export class TunnelClient {
     conn.http.close()
     conn.channels.close()
     conn.outbox.close()
-    for (const pending of conn.asks.values()) {
-      clearTimeout(pending.timer)
-      pending.reject(new Error('the tunnel closed'))
-    }
-    conn.asks.clear()
+    conn.asks.close()
   }
 
   private drop(conn: Connection, reason: string) {

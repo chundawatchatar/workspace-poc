@@ -1,6 +1,6 @@
-import { describe, expect, mock, test } from 'bun:test'
+import { afterEach, describe, expect, jest, mock, test } from 'bun:test'
 import type { DevicesResponse, LinkedAccount, RemoteAccessStatus } from '@orch/shared'
-import { render, screen, within } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { type ComponentProps, useState } from 'react'
 import { RemoteAccessForm } from './RemoteAccessForm'
@@ -16,6 +16,8 @@ const status: RemoteAccessStatus = {
   machineFingerprint: 'ABCD-EFGH-JKMN-PQRS',
   tunnel: 'off',
   linkedAccount: null,
+  connectRequest: null,
+  connectOutcome: null,
 }
 
 const linkedAccount: LinkedAccount = {
@@ -40,6 +42,7 @@ function connection(overrides: Partial<Props['connection']> = {}): Props['connec
     onEnrollmentKeyChange: mock(),
     onConnect: mock(),
     onDisconnect: mock(),
+    onCancel: mock(),
     ...overrides,
   }
 }
@@ -99,6 +102,10 @@ function setup(overrides: Partial<Props> = {}) {
   return { props, ...render(<Page />) }
 }
 
+afterEach(() => {
+  jest.useRealTimers()
+})
+
 describe('RemoteAccessForm', () => {
   test('Connect waits for all three fields, shows what to check with only the key ending, and connects on Connect', async () => {
     const user = userEvent.setup()
@@ -140,6 +147,36 @@ describe('RemoteAccessForm', () => {
       within(screen.getByRole('region', { name: 'Check before connecting' })).getByRole('button', { name: 'Connect' }),
     )
     expect(props.connection.onConnect).toHaveBeenCalledTimes(1)
+  })
+
+  test('while the request waits it asks for approval with the fingerprint, counts down and cancels, and an ended one shows why', async () => {
+    jest.useFakeTimers({ now: Date.parse('2026-11-04T12:00:00.000Z') })
+    const user = userEvent.setup({ advanceTimers: (ms) => jest.advanceTimersByTime(ms) })
+    const connectRequest = { expiresAt: '2026-11-04T12:01:30.000Z' }
+    const { props, unmount } = setup({ status: { ...status, tunnel: 'connected', connectRequest } })
+    const waiting = screen.getByRole('region', { name: 'Waiting for approval' })
+    expect(waiting).toHaveTextContent(
+      'Please approve this connect request in the client and check that it shows machine ABCD-EFGH-JKMN-PQRS',
+    )
+    expect(within(waiting).getByText('01:30')).toBeInTheDocument()
+    for (const name of ['Server address', 'Email', 'Key']) {
+      expect(screen.queryByRole('textbox', { name })).not.toBeInTheDocument()
+    }
+    act(() => jest.advanceTimersByTime(1000))
+    expect(within(waiting).getByText('01:29')).toBeInTheDocument()
+    await user.click(within(waiting).getByRole('button', { name: 'Cancel' }))
+    expect(props.connection.onCancel).toHaveBeenCalledTimes(1)
+    expect(props.connection.onConnect).not.toHaveBeenCalled()
+    unmount()
+    // The dialog leaves timers behind as it closes; they run before the real clock is back.
+    act(() => jest.advanceTimersByTime(1000))
+    jest.useRealTimers()
+
+    const message = 'The connect request was rejected in the client. Nothing was linked'
+    setup({ status: { ...status, connectOutcome: { kind: 'rejected', message } } })
+    expect(screen.queryByRole('region', { name: 'Waiting for approval' })).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Key' })).toBeInTheDocument()
+    expect(within(screen.getByRole('form', { name: 'Connect to an account' })).getByText(message)).toBeInTheDocument()
   })
 
   test('an address a flag or variable sets is read-only and names it, and the default gets no warning', async () => {

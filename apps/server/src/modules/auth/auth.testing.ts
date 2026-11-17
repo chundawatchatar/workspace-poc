@@ -7,6 +7,7 @@ import { createAccountModule } from '../account/account.routes'
 import { ChannelBridge } from '../bridge/bridge.service'
 import { HttpForwarder } from '../forward/forward.service'
 import { ConnectionLimiter } from '../limits/limits.service'
+import { ConnectRequests } from '../machines/connect-requests.service'
 import { ENROLLMENT_LOOKUP_REASON, EnrollmentService } from '../machines/enrollment.service'
 import { createMachinesModule } from '../machines/machines.routes'
 import { RelayTickets } from '../machines/relay-ticket.service'
@@ -166,8 +167,9 @@ export interface AccountsTestAppOptions {
 /**
  * An app with accounts on over `domain`, as `index.ts` builds it: Better Auth,
  * the account and machines endpoints, with the real `authenticate` and
- * `forUser`, the enrollment service the tunnel answers with, and the
- * `registry` the machines module reads online state from.
+ * `forUser`, the enrollment service the tunnel answers with, the `requests`
+ * it holds for the machines module to answer, and the `registry` the machines
+ * module reads online state from.
  */
 export function accountsTestApp(
   domain: TestDomain,
@@ -186,6 +188,7 @@ export function accountsTestApp(
   const registry = new MachineRegistry()
   const forUser = (principal: Principal) => domain.forUser(principal)
   const relayTickets = new RelayTickets({ signingKey: TEST_RELAY_SIGNING_KEY, now })
+  const requests = new ConnectRequests()
   const app = createApp({
     registry,
     forwarder: new HttpForwarder({ registry }),
@@ -200,16 +203,23 @@ export function accountsTestApp(
       byKey: () => domain.skipAuthorization(ENROLLMENT_LOOKUP_REASON),
       forUser,
       registry,
+      requests,
       now,
-      relayKeys: relayTickets.publicKeys,
     }),
     accounts: {
       modules: [
         createAuthModule({ auth, clientIp: clientIpReader({ trustProxy: false }) }),
         createAccountModule(),
-        createMachinesModule({ registry, now, relayTickets, serverTunnelUrl: TEST_SERVER_TUNNEL_URL }),
+        createMachinesModule({ registry, requests, now, relayTickets, serverTunnelUrl: TEST_SERVER_TUNNEL_URL }),
       ],
     },
   })
-  return { app, mail, registry, relayTickets, client: authTestClient({ app, mail, base: TEST_BASE, ipPrefix }) }
+  return {
+    app,
+    mail,
+    registry,
+    requests,
+    relayTickets,
+    client: authTestClient({ app, mail, base: TEST_BASE, ipPrefix }),
+  }
 }

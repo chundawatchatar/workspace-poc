@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, mock, spyOn, test } f
 import { schema } from '@orch/domain'
 import { createTestDomain, type TestDomain } from '@orch/domain/testing'
 import {
+  type ConnectRequest,
   type CreateEnrollmentResponse,
   decodeFrame,
   encodeFrame,
@@ -15,7 +16,7 @@ import { eq } from 'drizzle-orm'
 import { serverWebSocket } from '../../lib/websocket'
 import { accountsTestApp, cookiePair } from '../auth/auth.testing'
 import { ConnectionLimiter } from '../limits/limits.service'
-import { answerChallenge, createTestMachineKey } from '../tunnel/tunnel.testing'
+import { answerChallenge, createTestMachineKey, type TestMachineKey } from '../tunnel/tunnel.testing'
 import { hashEnrollmentKey, maskEmail } from './enrollment.service'
 import { MachinesService } from './machines.service'
 
@@ -98,16 +99,22 @@ async function until(check: () => boolean, timeoutMs = 2000) {
   }
 }
 
-type Answer = Extract<ServerFrame, { type: 'enroll.redeemed' | 'enroll.failed' | 'unlinked' | 'unlink.failed' }>
+type Answer = Extract<
+  ServerFrame,
+  { type: 'enroll.waiting' | 'enroll.redeemed' | 'enroll.failed' | 'unlinked' | 'unlink.failed' }
+>
 const isAnswer = (frame: ServerFrame): frame is Answer =>
   frame.type.startsWith('enroll.') || frame.type.startsWith('unlink')
 
-/** A welcomed test machine with a fresh machine key. Every frame it sends gets its own id. */
-async function machine() {
-  const key = await createTestMachineKey()
+/**
+ * A welcomed test machine, with a fresh machine key or `key` to come back as the same machine. Every frame it sends
+ * gets its own id.
+ */
+async function machine(key?: TestMachineKey) {
+  const machineKey = key ?? (await createTestMachineKey())
   const ws = new WebSocket(`ws://127.0.0.1:${server.port}${TUNNEL_PATH}`)
   sockets.push(ws)
-  answerChallenge(ws, key)
+  answerChallenge(ws, machineKey)
   const frames: ServerFrame[] = []
   const raw: string[] = []
   ws.addEventListener('message', (event) => {
@@ -117,20 +124,29 @@ async function machine() {
   })
   await until(() => frames.some((frame) => frame.type === 'welcome'))
   let nextId = 1
+  /** The answers to the frame `id`, in order: a request's first answer, then its final one. */
+  const answersTo = (id: number) => frames.filter(isAnswer).filter((frame) => frame.id === id)
   const answer = async (id: number): Promise<Answer> => {
-    const find = () => frames.filter(isAnswer).find((frame) => frame.id === id)
-    await until(() => find() !== undefined)
-    return find() as Answer
+    await until(() => answersTo(id).length > 0)
+    return answersTo(id)[0] as Answer
   }
   return {
-    machineId: key.machineId,
+    key: machineKey,
+    machineId: machineKey.machineId,
     raw,
-    /** The answers so far, by id. */
-    answered: (id: number) => frames.filter(isAnswer).some((frame) => frame.id === id),
-    redeem(key: string, email: string, name = 'Box') {
+    answersTo,
+    /** True once anything answered the frame `id`. */
+    answered: (id: number) => answersTo(id).length > 0,
+    /** Sends `enroll.request` and answers its first answer. */
+    request(key: string, email: string, name = 'Box') {
       const id = nextId++
-      ws.send(encodeFrame({ type: 'enroll.redeem', id, key, email, name }))
+      ws.send(encodeFrame({ type: 'enroll.request', id, key, email, name }))
       return answer(id)
+    },
+    /** The final answer to the request frame `id`, once the owner answered it. */
+    async final(id: number): Promise<Answer> {
+      await until(() => answersTo(id).length > 1)
+      return answersTo(id)[1] as Answer
     },
     unlink(accountId: string) {
       const id = nextId++
@@ -143,12 +159,17 @@ async function machine() {
       ws.send(JSON.stringify({ ...frame, id }))
       return id
     },
+    /** Closes the tunnel and waits until the server has let it go. */
+    async close() {
+      ws.close()
+      await until(() => ctx.registry.get(machineKey.machineId) === undefined)
+    },
   }
 }
 
 const unknownKey = () => `oek_${Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url')}`
 
-/** Links `machineId` to `user` the way redeeming a key does, without a tunnel. */
+/** Links `machineId` to `user` the way an accepted request does, without a tunnel. */
 function link(user: User, machineId: string, name: string) {
   return new MachinesService(domain.forUser({ userId: user.userId }).machines, ctx.registry).link(machineId, name)
 }
@@ -156,99 +177,152 @@ function link(user: User, machineId: string, name: string) {
 /** The machine ids `user` lists. */
 const idsOf = async (user: User) => (await machinesOf(user)).map((m) => m.machineId).sort()
 
-describe('enrollment over the tunnel', () => {
-  test("redeeming with the owner's email, in any case and with spaces, links only the tunnel machine", async () => {
+/** The connect requests `user` sees waiting. */
+async function requestsOf(user: User): Promise<ConnectRequest[]> {
+  const response = await ctx.client.call('GET', '/api/machines/requests', user)
+  expect(response.status).toBe(200)
+  return ((await response.json()) as { requests: ConnectRequest[] }).requests
+}
+
+/** Accepts or rejects the request `id` as `user`, answering the status and the body. */
+async function answerAs(user: User, id: string, answer: 'accept' | 'reject', body: unknown = {}) {
+  const response = await ctx.client.call('POST', `/api/machines/requests/${id}/${answer}`, { ...user, body })
+  return { status: response.status, body: (await response.json()) as Record<string, unknown> }
+}
+
+const notWaiting = { status: 409, body: { error: { code: 'not_waiting', message: expect.any(String) } } }
+const notFound = { status: 404, body: { error: { code: 'not_found', message: 'Not found.' } } }
+
+/** Every line logged so far, by `skipAuthorization` and the console spies. */
+const seen = (logs: { mock: { calls: unknown[][] } }[]) => [
+  ...lookups,
+  ...logs.flatMap((spy) => spy.mock.calls.map((call) => call.join(' '))),
+]
+
+describe('connect requests over the tunnel', () => {
+  test("a request with the owner's email, in any case and with spaces, waits with the key's time left and links nothing", async () => {
     const logs = (['log', 'info', 'warn', 'error'] as const).map((method) => spyOn(console, method))
     const ada = await signedIn('Ada Lovelace')
     const bob = await signedIn('Bob Builder')
     const created = await createKey(ada)
     const box = await machine()
-    const account = { name: 'Ada Lovelace', maskedEmail: maskEmail(ada.email) }
-    expect(maskEmail('alice@example.com')).toBe('a***@example.com')
 
-    expect(await box.redeem(created.key, `  ${ada.email.toUpperCase()} `, '  Build box  ')).toEqual({
-      type: 'enroll.redeemed',
-      id: 1,
-      machineId: box.machineId,
-      accountId: ada.userId,
-      account,
-      relayKeys: ctx.relayTickets.publicKeys,
-    })
-    expect((await enrollmentRow(created.key))?.usedAt).toBeInstanceOf(Date)
-    const [linked] = await machinesOf(ada)
-    expect(linked).toMatchObject({ machineId: box.machineId, name: 'Build box', online: true, remoteOff: false })
+    const waiting = await box.request(created.key, `  ${ada.email.toUpperCase()} `, '  Build box  ')
+    expect(waiting).toEqual({ type: 'enroll.waiting', id: 1, expiresInMs: expect.any(Number) })
+    const left = waiting.type === 'enroll.waiting' ? waiting.expiresInMs : 0
+    const shouldBe = Date.parse(created.expiresAt) - Date.now()
+    expect(Math.abs(left - shouldBe)).toBeLessThan(2000)
+    const row = await enrollmentRow(created.key)
+    expect(row).toMatchObject({ requestMachineId: box.machineId, requestName: 'Build box', usedAt: null })
+    expect(row?.requestedAt).toBeInstanceOf(Date)
+    expect(await machinesOf(ada)).toEqual([])
     expect(await machinesOf(bob)).toEqual([])
 
-    // A second key for a machine the owner already has keeps its name and refreshes `lastOpenedAt`.
-    await Bun.sleep(5)
-    const again = await createKey(ada)
-    expect((await box.redeem(again.key, ada.email, 'Other name')).type).toBe('enroll.redeemed')
-    const [relinked] = await machinesOf(ada)
-    expect(relinked).toMatchObject({ machineId: box.machineId, name: 'Build box', createdAt: linked?.createdAt })
-    expect(Date.parse(relinked?.lastOpenedAt ?? '')).toBeGreaterThan(Date.parse(linked?.lastOpenedAt ?? ''))
+    // The same machine asking again with the key that holds its own request waits again.
+    expect(await box.request(created.key, ada.email, 'Build box')).toMatchObject({ type: 'enroll.waiting', id: 2 })
+    expect(await requestsOf(ada)).toEqual([
+      {
+        id: created.id,
+        machineId: box.machineId,
+        name: 'Build box',
+        requestedAt: expect.any(String),
+        expiresAt: created.expiresAt,
+      },
+    ])
 
-    const secrets = [created.key, hashEnrollmentKey(created.key), ada.email, ada.email.toUpperCase(), ada.name]
-    const seen = [...lookups, ...logs.flatMap((spy) => spy.mock.calls.map((call) => call.join(' ')))]
-    expect(seen.filter((line) => secrets.some((secret) => line.includes(secret)))).toEqual([])
+    const secrets = [created.key, hashEnrollmentKey(created.key), ada.email, ada.email.toUpperCase(), 'Build box']
+    expect(seen(logs).filter((line) => secrets.some((secret) => line.includes(secret)))).toEqual([])
     const answers = box.raw.filter((text) => text.includes('enroll.'))
     expect(answers.some((text) => text.includes(ada.email) || text.includes(created.key))).toBe(false)
   })
 
-  test('unknown, used, expired and malformed keys and wrong emails all get invalid_key, and a wrong email uses nothing', async () => {
+  test("unknown, used, expired and malformed keys, wrong emails and another machine's key get invalid_key and change nothing", async () => {
     const logs = (['log', 'info', 'warn', 'error'] as const).map((method) => spyOn(console, method))
     const ada = await signedIn('Ada')
     const bob = await signedIn('Bob')
     const used = await createKey(ada)
-    expect((await (await machine()).redeem(used.key, ada.email, 'First')).type).toBe('enroll.redeemed')
+    const first = await machine()
+    await first.request(used.key, ada.email, 'First')
+    expect((await answerAs(ada, used.id, 'reject')).status).toBe(200)
     const expired = await createKey(ada)
     const pending = await createKey(ada)
     offsetMs = 15 * 60_000 + 1000
     const fresh = await createKey(ada)
+    const held = await createKey(ada)
+    const holder = await machine()
+    expect((await holder.request(held.key, ada.email, 'Holder')).type).toBe('enroll.waiting')
+    const rowsBefore = await Promise.all([used, expired, pending, fresh, held].map(({ key }) => enrollmentRow(key)))
 
     const box = await machine()
     const answers: Answer[] = []
-    for (const key of [unknownKey(), used.key, expired.key, 'oek_short', '']) {
-      answers.push(await box.redeem(key, ada.email))
+    for (const key of [unknownKey(), used.key, expired.key, 'oek_short', '', held.key]) {
+      answers.push(await box.request(key, ada.email))
     }
     // Another account's email, an email with no account, and a malformed one, with a key that still works. Another
     // machine sends them, since each machine has only 10 tries at once.
     const typo = await machine()
     const wrong = [bob.email, 'nobody@test.example', 'not an email', '', `${ada.email}x`]
-    for (const email of wrong) answers.push(await typo.redeem(fresh.key, email))
+    for (const email of wrong) answers.push(await typo.request(fresh.key, email))
     expect(answers.map(({ id: _, ...rest }) => rest)).toEqual(
       answers.map(() => ({ type: 'enroll.failed', code: 'invalid_key' })),
     )
-    expect((await enrollmentRow(expired.key))?.usedAt).toBeNull()
-    expect((await enrollmentRow(pending.key))?.usedAt).toBeNull()
-    expect((await enrollmentRow(fresh.key))?.usedAt).toBeNull()
-    expect(await idsOf(ada)).not.toContain(box.machineId)
+    const rowsAfter = await Promise.all([used, expired, pending, fresh, held].map(({ key }) => enrollmentRow(key)))
+    expect(rowsAfter).toEqual(rowsBefore)
+    expect(rowsAfter[3]).toMatchObject({ requestMachineId: null, usedAt: null })
+    expect(rowsAfter[4]).toMatchObject({ requestMachineId: holder.machineId, usedAt: null })
+    expect(await idsOf(ada)).toEqual([])
 
-    // The same key still links once it comes with the owner's email.
-    expect((await typo.redeem(fresh.key, ada.email)).type).toBe('enroll.redeemed')
-    expect(await idsOf(ada)).toContain(typo.machineId)
-    const seen = [...lookups, ...logs.flatMap((spy) => spy.mock.calls.map((call) => call.join(' ')))]
+    // The same key still works once it comes with the owner's email.
+    expect((await typo.request(fresh.key, ada.email)).type).toBe('enroll.waiting')
     for (const secret of [fresh.key, ada.email, bob.email]) {
-      expect(seen.filter((line) => line.includes(secret))).toEqual([])
+      expect(seen(logs).filter((line) => line.includes(secret))).toEqual([])
     }
   })
 
-  test('two machines redeeming one key at once get exactly one success', async () => {
+  test('a request ends when its tunnel closes or its key expires, and the same machine can ask again', async () => {
+    const ada = await signedIn('Ada')
+    const closing = await createKey(ada)
+    const box = await machine()
+    await box.request(closing.key, ada.email, 'Box')
+    expect((await requestsOf(ada)).map((r) => r.id)).toEqual([closing.id])
+
+    await box.close()
+    expect(await requestsOf(ada)).toEqual([])
+    expect(await answerAs(ada, closing.id, 'accept')).toEqual(notWaiting)
+    expect((await enrollmentRow(closing.key))?.usedAt).toBeNull()
+    // The row keeps the machine, so it asks again with the same key, and only it can.
+    const back = await machine(box.key)
+    expect((await back.request(closing.key, ada.email, 'Box')).type).toBe('enroll.waiting')
+    expect((await requestsOf(ada)).map((r) => r.id)).toEqual([closing.id])
+    expect((await (await machine()).request(closing.key, ada.email)).type).toBe('enroll.failed')
+
+    const expiring = await createKey(ada)
+    const other = await machine()
+    await other.request(expiring.key, ada.email, 'Other')
+    offsetMs = 15 * 60_000 + 1000
+    expect(await requestsOf(ada)).toEqual([])
+    expect(await answerAs(ada, expiring.id, 'reject')).toEqual(notWaiting)
+    expect((await enrollmentRow(expiring.key))?.usedAt).toBeNull()
+    expect(other.answersTo(1)).toHaveLength(1)
+  })
+
+  test('two machines asking with one key at once: exactly one waits', async () => {
     const ada = await signedIn('Ada')
     const { key } = await createKey(ada)
     const [one, two] = [await machine(), await machine()]
-    const answers = await Promise.all([one.redeem(key, ada.email, 'One'), two.redeem(key, ada.email, 'Two')])
-    expect(answers.map((answer) => answer.type).sort()).toEqual(['enroll.failed', 'enroll.redeemed'])
-    const winner = answers[0]?.type === 'enroll.redeemed' ? one : two
-    expect(await idsOf(ada)).toEqual([winner.machineId])
+    const answers = await Promise.all([one.request(key, ada.email, 'One'), two.request(key, ada.email, 'Two')])
+    expect(answers.map((answer) => answer.type).sort()).toEqual(['enroll.failed', 'enroll.waiting'])
+    const winner = answers[0]?.type === 'enroll.waiting' ? one : two
+    expect((await requestsOf(ada)).map((r) => r.machineId)).toEqual([winner.machineId])
   })
 
   test('a machine out of enrollment tokens is refused before any lookup, and another machine is still admitted', async () => {
     const box = await machine()
     for (let i = 0; i < 9; i++)
-      expect(await box.redeem(unknownKey(), 'a@test.example')).toMatchObject({ code: 'invalid_key' })
+      expect(await box.request(unknownKey(), 'a@test.example')).toMatchObject({ code: 'invalid_key' })
     expect(await box.unlink('u1')).toEqual({ type: 'unlinked', id: 10 })
     const before = lookups.length
-    expect(await box.redeem(unknownKey(), 'a@test.example')).toEqual({
+    expect(await box.request(unknownKey(), 'a@test.example')).toEqual({
       type: 'enroll.failed',
       id: 11,
       code: 'rate_limited',
@@ -257,7 +331,122 @@ describe('enrollment over the tunnel', () => {
     expect(lookups.length).toBe(before)
 
     // Same IP, another machine: the bucket is per machine id.
-    expect(await (await machine()).redeem(unknownKey(), 'a@test.example')).toMatchObject({ code: 'invalid_key' })
+    expect(await (await machine()).request(unknownKey(), 'a@test.example')).toMatchObject({ code: 'invalid_key' })
+  })
+})
+
+describe("the owner's answer", () => {
+  test("listRequests answers only the caller's waiting requests, newest first", async () => {
+    const ada = await signedIn('Ada')
+    const bob = await signedIn('Bob')
+    const [older, newer, bobs] = [await createKey(ada), await createKey(ada), await createKey(bob)]
+    const [laptop, desktop, bobBox] = [await machine(), await machine(), await machine()]
+    await laptop.request(older.key, ada.email, 'Laptop')
+    await Bun.sleep(5)
+    await desktop.request(newer.key, ada.email, 'Desktop')
+    await bobBox.request(bobs.key, bob.email, 'Bob box')
+
+    const listed = await requestsOf(ada)
+    expect(listed.map((r) => [r.id, r.machineId, r.name])).toEqual([
+      [newer.id, desktop.machineId, 'Desktop'],
+      [older.id, laptop.machineId, 'Laptop'],
+    ])
+    expect(Date.parse(listed[0]?.requestedAt ?? '')).toBeGreaterThan(Date.parse(listed[1]?.requestedAt ?? ''))
+    expect((await requestsOf(bob)).map((r) => r.name)).toEqual(['Bob box'])
+    // Listing changes nothing.
+    expect((await enrollmentRow(older.key))?.usedAt).toBeNull()
+    expect(laptop.answersTo(1)).toHaveLength(1)
+
+    // A tunnel holds one request: asking with another key replaces the earlier one.
+    const replacing = await createKey(ada)
+    await laptop.request(replacing.key, ada.email, 'Laptop')
+    expect((await requestsOf(ada)).map((r) => [r.id, r.name])).toEqual([
+      [replacing.id, 'Laptop'],
+      [newer.id, 'Desktop'],
+    ])
+    expect(await answerAs(ada, older.id, 'accept')).toEqual(notWaiting)
+  })
+
+  test('accept uses the key, links the machine under its name, tells it, and the key then fails for any machine', async () => {
+    const ada = await signedIn('Ada Lovelace')
+    const created = await createKey(ada)
+    const box = await machine()
+    await box.request(created.key, ada.email, 'Build box')
+
+    const accepted = await answerAs(ada, created.id, 'accept')
+    expect(accepted).toEqual({
+      status: 200,
+      body: expect.objectContaining({ machineId: box.machineId, name: 'Build box', online: true, remoteOff: false }),
+    })
+    expect(await box.final(1)).toEqual({
+      type: 'enroll.redeemed',
+      id: 1,
+      machineId: box.machineId,
+      accountId: ada.userId,
+      account: { name: 'Ada Lovelace', maskedEmail: maskEmail(ada.email) },
+      relayKeys: ctx.relayTickets.publicKeys,
+    })
+    expect(maskEmail('alice@example.com')).toBe('a***@example.com')
+    expect((await enrollmentRow(created.key))?.usedAt).toBeInstanceOf(Date)
+    expect(await idsOf(ada)).toEqual([box.machineId])
+    expect(await requestsOf(ada)).toEqual([])
+
+    expect(await answerAs(ada, created.id, 'accept')).toEqual(notWaiting)
+    expect(await answerAs(ada, created.id, 'reject')).toEqual(notWaiting)
+    expect(box.answersTo(1)).toHaveLength(2)
+    expect((await box.request(created.key, ada.email, 'Build box')).type).toBe('enroll.failed')
+    expect((await (await machine()).request(created.key, ada.email)).type).toBe('enroll.failed')
+
+    // A machine the owner already has keeps its name when another of its requests is accepted.
+    await Bun.sleep(5)
+    const again = await createKey(ada)
+    await box.request(again.key, ada.email, 'Other name')
+    const relinked = await answerAs(ada, again.id, 'accept')
+    expect(relinked.body).toMatchObject({ name: 'Build box', createdAt: accepted.body.createdAt })
+    expect(Date.parse(String(relinked.body.lastOpenedAt))).toBeGreaterThan(
+      Date.parse(String(accepted.body.lastOpenedAt)),
+    )
+  })
+
+  test('reject uses the key, tells the machine and links nothing, and the key then fails for any machine', async () => {
+    const ada = await signedIn('Ada')
+    const created = await createKey(ada)
+    const box = await machine()
+    await box.request(created.key, ada.email, 'Box')
+
+    expect(await answerAs(ada, created.id, 'reject')).toEqual({ status: 200, body: { ok: true } })
+    expect(await box.final(1)).toEqual({ type: 'enroll.failed', id: 1, code: 'rejected' })
+    expect((await enrollmentRow(created.key))?.usedAt).toBeInstanceOf(Date)
+    expect(await idsOf(ada)).toEqual([])
+    expect(await requestsOf(ada)).toEqual([])
+    expect(await answerAs(ada, created.id, 'accept')).toEqual(notWaiting)
+    expect((await box.request(created.key, ada.email)).type).toBe('enroll.failed')
+    expect((await (await machine()).request(created.key, ada.email)).type).toBe('enroll.failed')
+  })
+
+  test("another user's request is not found, one with no request is not waiting, and neither links, sends or uses anything", async () => {
+    const ada = await signedIn('Ada')
+    const bob = await signedIn('Bob')
+    const created = await createKey(ada)
+    const unasked = await createKey(ada)
+    const box = await machine()
+    await box.request(created.key, ada.email, 'Box')
+
+    for (const answer of ['accept', 'reject'] as const) {
+      expect(await answerAs(bob, created.id, answer)).toEqual(notFound)
+      expect(await answerAs(ada, crypto.randomUUID(), answer)).toEqual(notFound)
+      expect(await answerAs(ada, unasked.id, answer)).toEqual(notWaiting)
+      // The input is strict: a key or a machine id in the body is refused.
+      for (const body of [{ key: created.key }, { machineId: box.machineId }]) {
+        expect((await answerAs(ada, created.id, answer, body)).status).toBe(400)
+      }
+    }
+    expect((await answerAs(ada, 'not-a-request', 'accept')).status).toBe(400)
+    expect(box.answersTo(1)).toHaveLength(1)
+    expect((await enrollmentRow(created.key))?.usedAt).toBeNull()
+    expect(await idsOf(ada)).toEqual([])
+    expect(await idsOf(bob)).toEqual([])
+    expect((await requestsOf(ada)).map((r) => r.id)).toEqual([created.id])
   })
 })
 

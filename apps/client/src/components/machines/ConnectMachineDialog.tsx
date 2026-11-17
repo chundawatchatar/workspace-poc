@@ -1,10 +1,11 @@
-import type { CreateEnrollmentResponse, ServerMachine } from '@orch/shared'
+import { type ConnectRequest, type CreateEnrollmentResponse, formatTimeLeft, type ServerMachine } from '@orch/shared'
 import { Button, Modal, showToast } from '@orch/ui'
 import { Copy } from '@orch/ui/icons'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { createEnrollment, machinesQuery, newMachine } from '../../lib/accountMachines'
+import { useQuery } from '@tanstack/react-query'
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
+import { createEnrollment, requestsQuery } from '../../lib/accountMachines'
 import { connectCommand } from '../../lib/connectCommand'
+import { ConnectRequestRow } from './ConnectRequestRow'
 
 /** What the dialog says when a key can't be created. */
 const CREATE_FAILED = 'Creating a key failed. Try again.'
@@ -12,27 +13,21 @@ const CREATE_FAILED = 'Creating a key failed. Try again.'
 /** What the dialog says when the clipboard is missing or refuses. */
 const COPY_FAILED = 'Copying failed. Select the text and copy it yourself.'
 
-/** The time left until `expiresAt`, as `mm:ss`, rounded up to the second and never below `00:00`. */
-function formatCountdown(msLeft: number) {
-  const seconds = Math.max(0, Math.ceil(msLeft / 1000))
-  const mm = String(Math.floor(seconds / 60)).padStart(2, '0')
-  const ss = String(seconds % 60).padStart(2, '0')
-  return `${mm}:${ss}`
-}
-
 type Step =
   | { kind: 'creating' }
   | { kind: 'failed' }
-  /** A key on screen, with the machine ids listed when it was created. */
-  | { kind: 'ready'; enrollment: CreateEnrollmentResponse; expiresAt: number; baseline: string[] }
+  /** A key on screen. */
+  | { kind: 'ready'; enrollment: CreateEnrollmentResponse; expiresAt: number }
   | { kind: 'linked'; machine: ServerMachine }
+  | { kind: 'rejected'; request: ConnectRequest }
 
 /**
  * Creates an enrollment key as it opens and shows it once, with what the user needs to connect a machine with it: the
  * `corch connect` command to run there, with the signed-in `email` and the server's tunnel address, and the key alone
  * for the machine's Remote access dialog, each with a Copy button, the key's last 4 characters and the time left. The
- * key lives only in this component's state, so it is gone once the dialog closes. While open, it reads the account's
- * machines every 2 seconds and says so when a new one appears.
+ * key lives only in this component's state, so it is gone once the dialog closes. While a key is on screen, it reads
+ * the account's waiting connect requests every 2 seconds, and once a machine asks with this key (its request has the
+ * key's `id`), it shows the machine's name and fingerprint with Accept and Reject, then what the answer did.
  */
 export function ConnectMachineDialog({
   userId,
@@ -43,31 +38,23 @@ export function ConnectMachineDialog({
   email: string
   onClose: () => void
 }) {
-  const queryClient = useQueryClient()
   const [step, setStep] = useState<Step>({ kind: 'creating' })
   const [now, setNow] = useState(() => Date.now())
-  const list = useQuery(machinesQuery(userId, { linking: true }))
   const mounted = useRef(false)
 
   const create = useCallback(async () => {
     setStep({ kind: 'creating' })
     try {
       const enrollment = await createEnrollment()
-      const listed = await queryClient.ensureQueryData(machinesQuery(userId))
       if (!mounted.current) return
       setNow(Date.now())
-      setStep({
-        kind: 'ready',
-        enrollment,
-        expiresAt: Date.parse(enrollment.expiresAt),
-        baseline: listed.machines.map((m) => m.machineId),
-      })
+      setStep({ kind: 'ready', enrollment, expiresAt: Date.parse(enrollment.expiresAt) })
     } catch {
       if (!mounted.current) return
       showToast(CREATE_FAILED, 'error')
       setStep({ kind: 'failed' })
     }
-  }, [queryClient, userId])
+  }, [])
 
   // The ref survives StrictMode's second effect run, so opening the dialog creates one key, not two.
   const started = useRef(false)
@@ -91,10 +78,8 @@ export function ConnectMachineDialog({
     return () => clearInterval(timer)
   }, [ready, expired])
 
-  const linked = ready && list.data ? newMachine(ready.baseline, list.data.machines) : undefined
-  useEffect(() => {
-    if (linked) setStep({ kind: 'linked', machine: linked })
-  }, [linked])
+  const requests = useQuery({ ...requestsQuery(userId, { waiting: true }), enabled: ready !== null && !expired })
+  const request = ready && requests.data?.requests.find((waiting) => waiting.id === ready.enrollment.id)
 
   return (
     <Modal title="Connect a machine" width="w-[520px] max-w-[94vw]" onClose={onClose}>
@@ -117,10 +102,29 @@ export function ConnectMachineDialog({
           <Button onClick={() => void create()}>Create a new key</Button>
         </div>
       )}
-      {ready && !expired && <KeyDetails enrollment={ready.enrollment} email={email} msLeft={ready.expiresAt - now} />}
+      {ready && !expired && (
+        <KeyDetails enrollment={ready.enrollment} email={email} msLeft={ready.expiresAt - now}>
+          {request ? (
+            <ConnectRequestRow
+              request={request}
+              userId={userId}
+              onAccepted={(machine) => setStep({ kind: 'linked', machine })}
+              onRejected={(rejected) => setStep({ kind: 'rejected', request: rejected })}
+            />
+          ) : (
+            <p className="text-xs text-faint">Waiting for the machine to connect…</p>
+          )}
+        </KeyDetails>
+      )}
       {step.kind === 'linked' && (
         <div className="flex flex-col items-start gap-3">
           <p role="status">{step.machine.name} is connected</p>
+          <Button onClick={onClose}>Done</Button>
+        </div>
+      )}
+      {step.kind === 'rejected' && (
+        <div className="flex flex-col items-start gap-3">
+          <p role="status">{step.request.name} was not connected. Its key no longer works.</p>
           <Button onClick={onClose}>Done</Button>
         </div>
       )}
@@ -128,21 +132,25 @@ export function ConnectMachineDialog({
   )
 }
 
+/** The key and how to use it, then `children`: the machine waiting with this key, or a line saying none is yet. */
 function KeyDetails({
   enrollment,
   email,
   msLeft,
+  children,
 }: {
   enrollment: CreateEnrollmentResponse
   email: string
   msLeft: number
+  children: ReactNode
 }) {
   const command = connectCommand({ email, key: enrollment.key, serverUrl: enrollment.serverUrl })
   return (
     <div className="flex flex-col gap-3 text-[13px]">
       <p className="text-dim">
         Run this command on the machine you want to connect. Before it connects, it shows the server, your email and the
-        key's last 4 characters, so you can check they match. The key works once.
+        key's last 4 characters, so you can check they match. Then it waits for you to accept it here. The key works
+        once.
       </p>
       <CopyField label="Command" value={command} copyLabel="Copy command" />
       <CopyField label="Key, for the machine's Remote access dialog" value={enrollment.key} copyLabel="Copy key" />
@@ -151,10 +159,10 @@ function KeyDetails({
           Key ends in <span className="font-mono text-ink">{enrollment.fingerprint}</span>
         </span>
         <span>
-          Expires in <span className="font-mono text-ink">{formatCountdown(msLeft)}</span>
+          Expires in <span className="font-mono text-ink">{formatTimeLeft(msLeft)}</span>
         </span>
       </div>
-      <p className="text-xs text-faint">Waiting for the machine to connect…</p>
+      {children}
     </div>
   )
 }

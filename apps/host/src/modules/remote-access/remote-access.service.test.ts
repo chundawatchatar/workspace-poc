@@ -20,7 +20,9 @@ import {
   e2eSessions,
   email,
   type FakeTunnel,
+  type FirstAnswer,
   fakeServer,
+  HOLD_MS,
   key,
   linkedFile,
   logs,
@@ -37,6 +39,14 @@ import {
 } from './remote-access.testing'
 
 useRemoteAccessHarness()
+
+async function until(check: () => boolean, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs
+  while (!check()) {
+    if (Date.now() > deadline) throw new Error('timed out waiting')
+    await Bun.sleep(2)
+  }
+}
 
 /** A device id that differs from the others in its first character, so each has its own fingerprint. */
 const deviceOf = (n: number) => `${n}${'d'.repeat(42)}`
@@ -113,13 +123,14 @@ describe('RemoteAccessService', () => {
     expect(existsSync(machineKeyFile())).toBe(false)
   })
 
-  test('connect saves the address, clears the devices, opens the tunnel at once and saves the account', async () => {
+  test('connect saves the address, clears the devices, opens the tunnel, waits for the owner, and an accept saves the account', async () => {
     approvedEarlier()
     const app = setup()
     // Written while the host runs: connect rereads the file, so this key survives.
     writeFileSync(configFile(), JSON.stringify({ logLevel: 'debug' }))
     expect(service.listDevices().approved).toHaveLength(1)
 
+    const before = Date.now()
     const answer = await post(app, routes.remoteAccess.connect, {
       email: ` ${email} `,
       key,
@@ -132,23 +143,40 @@ describe('RemoteAccessService', () => {
     })
     expect(readdirSync(dir).filter((name) => name.endsWith('.tmp'))).toEqual([])
     expect(service.listDevices()).toEqual({ pending: [], approved: [] })
+    const [tunnel] = tunnels
     expect(tunnels.map((t) => [t.options.url, t.status])).toEqual([['ws://localhost:4700/tunnel', 'connected']])
-    expect(tunnels[0]?.sent).toEqual([{ type: 'enroll.redeem', key, email, name: hostMachineName() }])
+    expect(tunnel?.sent).toEqual([{ type: 'enroll.request', key, email, name: hostMachineName() }])
+    // Waiting: the tunnel is open, but nothing is linked until the owner accepts.
+    const waiting = answer.json()
+    expect(waiting).toMatchObject({ tunnel: 'connected', linkedAccount: null, connectOutcome: null })
+    const left = Date.parse(waiting.connectRequest.expiresAt) - before
+    expect(left).toBeGreaterThanOrEqual(HOLD_MS)
+    expect(left).toBeLessThan(HOLD_MS + 1000)
+    expect(existsSync(linkedFile())).toBe(false)
+    const twice = await post(app, routes.remoteAccess.connect, { email, key, serverUrl: 'ws://localhost:4700' })
+    expect(twice).toMatchObject({ status: 409, text: expect.stringContaining('already waiting') })
 
+    tunnel?.accept()
+    await until(() => service.status().linkedAccount !== null)
     const { accountId: savedId, relayKeys: savedKeys, ...saved } = JSON.parse(readFileSync(linkedFile(), 'utf8'))
     expect([savedId, savedKeys]).toEqual([accountId, relayKeys])
     expect(saved).toEqual({ ...account, serverUrl: 'ws://localhost:4700', linkedAt: expect.any(String) })
+    const status = await localRequest(app, routes.remoteAccess.status.path)
+    const text = await status.text()
     // The account id and the keys stay on this machine: the status, and so the page, never shows them.
-    expect(answer.json()).toMatchObject({
+    expect(JSON.parse(text)).toMatchObject({
       serverUrl: 'ws://localhost:4700',
       serverUrlIsDefault: false,
       tunnel: 'connected',
       linkedAccount: saved,
+      connectRequest: null,
+      connectOutcome: null,
     })
-    for (const hidden of [accountId, relay.relayKey.publicKey, key, email]) expect(answer.text).not.toContain(hidden)
+    for (const hidden of [accountId, relay.relayKey.publicKey, key, email]) expect(text).not.toContain(hidden)
     expect(readFileSync(linkedFile(), 'utf8')).not.toContain(key)
     expect(logs.join('\n')).not.toContain(key)
     expect(logs.join('\n')).not.toContain(email)
+    expect(tunnel?.stops).toEqual([])
 
     // A connected machine refuses another connect, and the account survives a restart.
     const again = await post(app, routes.remoteAccess.connect, { email, key, serverUrl: 'ws://localhost:4700' })
@@ -201,13 +229,11 @@ describe('RemoteAccessService', () => {
       throw new Error(`the tunnel closed ${key} ${email}`)
     }
     const cases: [Partial<typeof fakeServer>, number, string?][] = [
-      [{ redeem: failed('invalid_key') }, 400, "This key is unknown, used or expired, or the email doesn't match"],
-      [{ redeem: failed('rate_limited') }, 429],
-      [{ redeem: failed('unavailable') }, 503],
-      [{ redeem: lost }, 503, 'The server did not answer'],
+      [{ request: failed('invalid_key') }, 400, "This key is unknown, used or expired, or the email doesn't match"],
+      [{ request: failed('rate_limited') }, 429],
+      [{ request: failed('unavailable') }, 503],
+      [{ request: lost }, 503, 'The server did not answer'],
       [{ reachable: false }, 503, 'Could not connect to the server'],
-      // A link to another machine id than this host's.
-      [{ redeem: () => ({ type: 'enroll.redeemed', id: 1, machineId: 'else', accountId, account, relayKeys }) }, 502],
     ]
     const defaults = { ...fakeServer }
     for (const [server, status, message] of cases) {
@@ -218,11 +244,71 @@ describe('RemoteAccessService', () => {
       expect(answer.text).not.toContain(key)
       expect(answer.text).not.toContain(email)
       expect(tunnels.at(-1)?.status).toBe('off')
-      expect(service.status()).toMatchObject({ tunnel: 'off', linkedAccount: null })
+      expect(service.status()).toMatchObject({ tunnel: 'off', linkedAccount: null, connectRequest: null })
     }
     expect(tunnels).toHaveLength(cases.length)
     expect(existsSync(linkedFile())).toBe(false)
     expect(logs.join('\n')).not.toContain(key)
+  })
+
+  test('a waiting request ends unlinked on a reject, the key expiring, a cancel, a dropped tunnel or another id', async () => {
+    const app = setup()
+    const connect = () => post(app, routes.remoteAccess.connect, { email, key, serverUrl: 'ws://127.0.0.1:4600' })
+    // Nothing on its way: cancel changes nothing.
+    expect((await post(app, routes.remoteAccess.cancelConnect, {})).json()).toMatchObject({
+      tunnel: 'off',
+      connectRequest: null,
+      connectOutcome: null,
+    })
+
+    const ends: [string, (tunnel: FakeTunnel) => unknown, string][] = [
+      ['rejected', (tunnel) => tunnel.answer({ type: 'enroll.failed', id: 1, code: 'rejected' }), 'rejected'],
+      ['expired', () => until(() => service.status().connectRequest === null), 'expired'],
+      ['cancelled', () => post(app, routes.remoteAccess.cancelConnect, {}), 'cancelled'],
+      ['failed', (tunnel) => tunnel.drop(), 'connection to the server ended'],
+      ['failed', (tunnel) => tunnel.accept('another-machine'), 'another machine id'],
+    ]
+    for (const [kind, end, says] of ends) {
+      fakeServer.request = () => ({ type: 'enroll.waiting', id: 1, expiresInMs: kind === 'expired' ? 30 : HOLD_MS })
+      const started = await connect()
+      // A new Connect clears the outcome of the last one.
+      expect(started.json()).toMatchObject({ connectRequest: { expiresAt: expect.any(String) }, connectOutcome: null })
+      const tunnel = tunnels.at(-1) as FakeTunnel
+      await end(tunnel)
+      await until(() => service.status().connectOutcome !== null)
+      const status = await localRequest(app, routes.remoteAccess.status.path)
+      const text = await status.text()
+      expect(JSON.parse(text)).toMatchObject({
+        tunnel: 'off',
+        linkedAccount: null,
+        connectRequest: null,
+        connectOutcome: { kind, message: expect.stringContaining(says) },
+      })
+      for (const secret of [key, email]) expect(text).not.toContain(secret)
+      expect(tunnel.stops).toHaveLength(1)
+      expect(existsSync(linkedFile())).toBe(false)
+      // A late accept, after the request ended, links nothing.
+      tunnel.accept()
+      await Bun.sleep(1)
+      expect(service.status().linkedAccount).toBeNull()
+    }
+    expect(logs.join('\n')).not.toContain(key)
+  })
+
+  test('cancel while the Connect call is on its way ends it, and the call says nothing was linked', async () => {
+    const app = setup()
+    let answerFirst = (_answer: FirstAnswer) => {}
+    fakeServer.request = () => new Promise((resolve) => (answerFirst = resolve))
+    const connecting = post(app, routes.remoteAccess.connect, { email, key, serverUrl: 'ws://127.0.0.1:4600' })
+    await until(() => tunnels[0]?.sent.length === 1)
+    const second = await post(app, routes.remoteAccess.connect, { email, key, serverUrl: 'ws://127.0.0.1:4600' })
+    expect(second).toMatchObject({ status: 409, text: 'This machine is already connecting' })
+
+    expect(service.cancelConnect()).toMatchObject({ tunnel: 'off', connectOutcome: { kind: 'cancelled' } })
+    answerFirst({ type: 'enroll.waiting', id: 1, expiresInMs: HOLD_MS })
+    expect(await connecting).toMatchObject({ status: 409, text: expect.stringContaining('Nothing was linked') })
+    expect(service.status()).toMatchObject({ linkedAccount: null, connectRequest: null })
+    expect(tunnels[0]?.stops).toHaveLength(1)
   })
 
   test('disconnect asks the server to remove the machine, then forgets the account and stops the tunnel', async () => {

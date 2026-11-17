@@ -15,6 +15,9 @@ describe('remoteAccessLabel', () => {
     expect(remoteAccessLabel('reconnecting', true)).toEqual({ label: 'Reconnecting…', tone: 'warn' })
     expect(remoteAccessLabel('stopped', true)).toEqual({ label: 'Connection lost', tone: 'bad' })
     expect(label('off', true)).toBe('Connection lost')
+    // A Connect waiting for the owner's answer says so, until it links.
+    expect(remoteAccessLabel('connected', false, true)).toEqual({ label: 'Waiting for approval…', tone: 'warn' })
+    expect(remoteAccessLabel('connected', true, true).label).toBe('Connected')
   })
 })
 

@@ -276,8 +276,8 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   signed-in user's machines in the `machines` table (one row per user and machine id), only through
   `data.machines`. The accounts API stores and returns only machine ids and names, never access keys: no schema has a
   key field and every input is strict, so a body carrying `key` gets 400, and the module never reads request headers
-  or logs input. It has no endpoint that links a machine by id: `MachinesService.link` is called only when an
-  enrollment key is redeemed. Linking a machine again keeps its name and refreshes `lastOpenedAt`, which is when it
+  or logs input. It has no endpoint that links a machine by id: `MachinesService.link` is called only when the owner
+  accepts a machine's connect request (`acceptRequest`). Linking a machine again keeps its name and refreshes `lastOpenedAt`, which is when it
   was last linked; a link that loses a race to the unique index returns the winning row. Each listed machine is
   `online` when the in-memory `MachineRegistry` holds its tunnel, and `remoteOff` when it is not online and its last
   tunnel sent `remote.off` (`markRemoteOff`, accepted only from the machine's live, welcomed connection; its next
@@ -318,7 +318,7 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   A fresh proof per request, rather than one bound to the ticket, is deliberate: HTTP tickets are reused for up to a
   minute and the server mints them, so it could reuse a `jti`; the browser's `iat` plus the host's spent nonces
   bound replay without trusting the server's clock or ids. Knowing a machine's id puts nothing on an account: a
-  machine links only by redeeming an enrollment key over its own tunnel.
+  machine links only when the owner accepts the request it made with an enrollment key over its own tunnel.
 - Accepted risks that remain with device approval:
   - Phishing the approval: a compromised server can still mint tickets, so it can push its own key into the pending
     list and hope the owner approves it. Approval needs the fingerprint typed from the owner's own browser and
@@ -374,30 +374,56 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   with `bun run host:remote log`, which reads the file itself when the host is stopped. Unlinking or revoking does not
   clear it; deleting the file does. Refusals come from anyone who can reach the relay, so a flood of them can push
   older sessions past the cap; that is accepted for now.
-- Enrollment keys are the only way to link a machine to an account. A signed-in user creates one with
-  `serverRoutes.machines.createEnrollment` (`modules/machines/enrollment.service.ts`): `oek_` plus 32 random bytes,
-  shown once with its last 4 characters as a fingerprint, together with the server's `SERVER_TUNNEL_URL` as
-  `serverUrl`. The `machine_enrollments` table stores only the key's SHA-256 hash, and a key works once, for 15
-  minutes. The machine's Connect sends it over its own tunnel as `enroll.redeem`, with the account's email as the
-  owner typed it. The machine id is always the tunnel's own, the hash of the public key its `hello` signed with,
-  never a field of the frame, so a machine can only enroll itself. Redeeming is one conditional
-  `UPDATE … WHERE usedAt IS NULL AND expiresAt > now AND userId IN (SELECT id FROM "user" WHERE lower(email) = …)
-  RETURNING userId`, so of two racing redeems exactly one wins, and a wrong email leaves the key unused; linking
-  then goes through the owner's `forUser` repositories, keeping an existing name. The lookups start from a key, not a
-  principal, so they go through `skipAuthorization` with one fixed reason, behind a closure built in `index.ts`. Each
-  machine gets 10 `enroll.redeem` and `unlink` frames, refilling 1 per 30 s (`enrollPerMachine`, keyed by machine id,
-  not IP), and a refused frame touches no database. An unknown, used, expired or malformed key, and another
-  account's email, an email with no account or a malformed one, all get the same
-  `enroll.failed { code: 'invalid_key' }`, which names no account; `rate_limited` and `unavailable` (accounts off, or
-  a database error) describe the machine or the server. Nothing on this path logs the key, its hash, the email or the
-  account name. `enroll.redeemed` carries the owner's user id (`accountId`) and the server's relay public keys
-  (`relayKeys`), which the host saves to check relay tickets later. Disconnect sends `unlink` with that user id: the
-  server deletes, through that account's scoped `machines` repository, only its row for the tunnel's own machine id,
-  and answers `unlinked` whether or not there was one, or `unlink.failed` (`rate_limited`, or `unavailable` with
-  accounts off or on a database error). The host then forgets the account whatever the answer. These frames came
-  with tunnel protocol version 5. The server is trusted to say who is signed in, and so who owns a key and who gets
-  tickets, but a ticket opens a machine only with a proof from a device approved on it (see "Device approval"
-  above). Expired rows are not cleaned up yet, and there is no cap on outstanding keys per user.
+- Enrollment keys, with the owner's accept, are the only way to link a machine to an account. A signed-in user creates
+  one with `serverRoutes.machines.createEnrollment` (`modules/machines/enrollment.service.ts`): `oek_` plus 32 random
+  bytes, shown once with its last 4 characters as a fingerprint, together with its row's `id` and the server's
+  `SERVER_TUNNEL_URL` as `serverUrl`. The `machine_enrollments` table stores only the key's SHA-256 hash, and a key
+  works once, for 15 minutes. The machine's Connect sends it over its own tunnel as `enroll.request`, with the
+  account's email as the owner typed it. The machine id is always the tunnel's own, the hash of the public key its
+  `hello` signed with, never a field of the frame, so a machine can only ask to enroll itself. Asking is one
+  conditional `UPDATE … SET requestMachineId, requestName, requestedAt WHERE usedAt IS NULL AND expiresAt > now AND
+  userId IN (SELECT id FROM "user" WHERE lower(email) = …) AND (requestMachineId IS NULL OR requestMachineId = <this
+  machine>) RETURNING id, expiresAt`, so of two machines racing on one fresh key exactly one holds it, and a wrong
+  email, or a key another machine holds, leaves the row as it was. The answer is `enroll.waiting` with the key's time
+  left, and the request waits in `ConnectRequests` (`connect-requests.service.ts`, in memory, one per tunnel, a new
+  one on the same tunnel replacing it), which the tunnel's `onClose` ends. The request id is the row's `id`, which
+  the dialog that created the key matches. The lookups start from a key, not a principal, so they go through
+  `skipAuthorization` with one fixed reason, behind a closure built in `index.ts`; the owner's answers go through
+  `data` only. Each machine gets 10 `enroll.request` and `unlink` frames, refilling 1 per 30 s (`enrollPerMachine`,
+  keyed by machine id, not IP), and a refused frame touches no database. An unknown, used, expired or malformed key,
+  a key another machine asked with, and another account's email, an email with no account or a malformed one, all
+  get the same `enroll.failed { code: 'invalid_key' }`, which names no account; `rate_limited` and `unavailable`
+  (accounts off, or a database error) describe the machine or the server. Nothing on this path logs the key, its
+  hash, the email or the machine or account name. The owner lists, accepts and rejects waiting requests with
+  `listRequests`, `acceptRequest` and `rejectRequest` (see [accounts](accounts.md#7-accounts-and-machine-access-keys));
+  both answers use up the key in one conditional `UPDATE` that also checks the request still waits on that machine,
+  so of two racing answers one wins and the other gets `not_waiting`. Accept links through the owner's scoped
+  repositories, keeping an existing name, and sends the final answer `enroll.redeemed`, with the owner's user id
+  (`accountId`) and the server's relay public keys (`relayKeys`), which the host saves to check relay tickets later;
+  reject sends `enroll.failed` with `rejected`. Disconnect sends `unlink` with that user id: the server deletes,
+  through that account's scoped `machines` repository, only its row for the tunnel's own machine id, and answers
+  `unlinked` whether or not there was one, or `unlink.failed` (`rate_limited`, or `unavailable` with accounts off or
+  on a database error). The host then forgets the account whatever the answer. The request frames came with tunnel
+  protocol version 6. The server is trusted to say who is signed in, and so who owns a key and who gets tickets, but
+  a ticket opens a machine only with a proof from a device approved on it (see "Device approval" above). Expired
+  rows are not cleaned up yet, and there is no cap on outstanding keys per user.
+- Connect on the host is two-phase. `routes.remoteAccess.connect` answers as soon as the server sends
+  `enroll.waiting`, with `connectRequest` (its expiry on the host's clock) in the status, and the dialog and the CLI
+  then read the status: a call that blocked for up to 15 minutes would outlive `Bun.serve`'s 10-second idle timeout,
+  and Cancel needs a call of its own anyway. `TunnelAsks` (`modules/tunnel/tunnel-asks.service.ts`) waits
+  `askTimeoutMs` for the first answer, then for the final one with no limit but the connection's. The host ends the
+  wait itself (`ConnectAttempt`, `modules/remote-access/connect-attempt.service.ts`) on a reject, at the key's time
+  left, when the tunnel drops, or on `cancelConnect`, which is stopping the tunnel: the machine isn't linked yet, and
+  the closed tunnel ends the request on the server, so no cancel frame exists. Each of these stops the tunnel and
+  sets `connectOutcome` (`rejected`, `expired`, `cancelled` or `failed`), with a message that holds neither the key
+  nor the email; a new Connect clears it, and a second one while one waits gets 409. The client computes the
+  fingerprint it shows from `machineId` itself, so a server that named another machine would show another
+  fingerprint than the host does. Accepted risks: someone with a live key and the right email can still put a
+  request in front of the owner, which the fingerprint check is there to catch, so guessing the email (bounded by
+  the enrollment limit and the key's 15 minutes) no longer links anything. An accept can race a Cancel, an expiry or
+  a dropped tunnel by one round trip, leaving a listed machine that isn't connected, which the owner removes in the
+  client. Waiting requests live in one server's memory, like the `MachineRegistry`, so a restart drops them and the
+  host reports `failed`.
 - Better Auth checks the `Origin` of non-GET requests against `SERVER_TRUSTED_ORIGINS` plus the origin of
   `BETTER_AUTH_URL`, and rate limits by client IP in memory (per process, reset on restart). The IP comes from the
   `x-orch-client-ip` header the auth routes set from the server's own client IP reader, replacing any value a client

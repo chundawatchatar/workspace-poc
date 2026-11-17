@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
 import { PRODUCT_NAME, PRODUCT_TAGLINE } from '@orch/brand'
-import { type E2eSocketOpen, machineSealedSocketPath, routes } from '@orch/shared'
+import { type E2eSocketOpen, machineSealedSocketPath, routes, serverRoutes } from '@orch/shared'
 import { QueryClientProvider, useQueryClient } from '@tanstack/react-query'
 import { createMemoryHistory, RouterProvider } from '@tanstack/react-router'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
@@ -56,6 +56,7 @@ beforeEach(() => {
       return HttpResponse.json({ success: true })
     }),
     http.get('*/api/machines', () => HttpResponse.json({ machines: [] })),
+    http.get(`*${serverRoutes.machines.listRequests.path}`, () => HttpResponse.json({ requests: [] })),
     // Each machine answers its own key, which the page checks before it opens any socket.
     http.get(`*/m/:machineId${routes.system.machineKey.path}`, ({ params }) => {
       const machine = [saved, account].find((m) => m.id === params.machineId)

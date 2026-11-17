@@ -1,13 +1,14 @@
-import { Button, FormError } from '@orch/ui'
+import { Button, FormError, showToast } from '@orch/ui'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { machinesQuery } from '../../lib/accountMachines'
+import { machinesQuery, requestsQuery } from '../../lib/accountMachines'
 import { sessionQuery } from '../../lib/auth'
 import { AccountMenu } from '../account/AccountMenu'
 import { ConnectMachineDialog } from './ConnectMachineDialog'
+import { ConnectRequestRow } from './ConnectRequestRow'
 import { MachineRow } from './MachineRow'
 
-/** The home page: the machines linked to the signed-in account. */
+/** The home page: the machines waiting to be accepted, then the machines linked to the signed-in account. */
 export function MachineList() {
   const user = useQuery(sessionQuery).data
   const [connecting, setConnecting] = useState(false)
@@ -18,6 +19,7 @@ export function MachineList() {
         {user && <Button onClick={() => setConnecting(true)}>Connect a machine</Button>}
         <AccountMenu className="min-w-0" />
       </div>
+      {user && <WaitingRequests userId={user.id} />}
       {user ? <AccountMachines userId={user.id} /> : <Loading />}
       {user && connecting && (
         <ConnectMachineDialog userId={user.id} email={user.email} onClose={() => setConnecting(false)} />
@@ -31,6 +33,32 @@ function Loading() {
     <p role="status" className="text-dim">
       Loading your machines…
     </p>
+  )
+}
+
+/**
+ * Every machine waiting for the account to accept or reject its Connect, read every 10 seconds. Nothing shows while
+ * none waits, or while the list can't be read.
+ */
+function WaitingRequests({ userId }: { userId: string }) {
+  const requests = useQuery(requestsQuery(userId)).data?.requests ?? []
+  if (requests.length === 0) return null
+  return (
+    <section aria-label="Waiting to connect" className="flex flex-col gap-2">
+      <h2 className="text-[13px] font-medium text-ink">Waiting to connect</h2>
+      <ul className="divide-y divide-line rounded-md border border-line">
+        {requests.map((request) => (
+          <li key={request.id} className="px-3 py-2">
+            <ConnectRequestRow
+              request={request}
+              userId={userId}
+              onAccepted={(machine) => showToast(`${machine.name} is connected`)}
+              onRejected={({ name }) => showToast(`${name} was not connected`)}
+            />
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }
 

@@ -172,9 +172,11 @@ async function setUp() {
         if (frame.type === 'hello' && helloVerifies(frame, conn.nonce)) {
           send(conn, { type: 'welcome', machineId: await machineIdFromPublicKey(frame.publicKey) })
         }
-        if (frame.type === 'enroll.redeem') {
+        // Like the server, it holds a request, and the owner accepts it at once.
+        if (frame.type === 'enroll.request') {
           const account = { name: 'Ada', maskedEmail: 'a***@example.com' }
           const relayKeys = [relay.relayKey]
+          send(conn, { type: 'enroll.waiting', id: frame.id, expiresInMs: 60_000 })
           send(conn, { type: 'enroll.redeemed', id: frame.id, machineId, accountId: ACCOUNT_ID, account, relayKeys })
         }
         if (frame.type === 'unlink') send(conn, { type: 'unlinked', id: frame.id })

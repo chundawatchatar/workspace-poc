@@ -11,7 +11,7 @@ afterEach(async () => {
 })
 
 describe('machineEnrollments table', () => {
-  test('refuses a repeated key hash across users, starts unused and goes with its user', async () => {
+  test('refuses a repeated key hash across users, starts unused with no request and goes with its user', async () => {
     const domain = await createTestDomain({ log: () => {} })
     open.push(domain)
     const db = domain.forAuthLibrary()
@@ -21,7 +21,23 @@ describe('machineEnrollments table', () => {
     ])
     const expiresAt = new Date(Date.now() + 60_000)
     const row = await domain.forUser({ userId: 'a' }).machineEnrollments.insert({ keyHash: 'h1', expiresAt })
-    expect(row).toMatchObject({ userId: 'a', keyHash: 'h1', usedAt: null })
+    expect(row).toMatchObject({
+      userId: 'a',
+      keyHash: 'h1',
+      usedAt: null,
+      requestMachineId: null,
+      requestName: null,
+      requestedAt: null,
+    })
+    const requestedAt = new Date()
+    const [asked] = await domain
+      .forUser({ userId: 'a' })
+      .machineEnrollments.update(eq(machineEnrollments.keyHash, 'h1'), {
+        requestMachineId: 'm1',
+        requestName: 'Laptop',
+        requestedAt,
+      })
+    expect(asked).toMatchObject({ requestMachineId: 'm1', requestName: 'Laptop', requestedAt, usedAt: null })
 
     const bob = domain.forUser({ userId: 'b' }).machineEnrollments
     await expect(bob.insert({ keyHash: 'h1', expiresAt })).rejects.toThrow()

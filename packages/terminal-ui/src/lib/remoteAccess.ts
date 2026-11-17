@@ -7,11 +7,18 @@ export const REMOVE_IN_CLIENT =
 
 /**
  * What the Remote access dialog says about the connection, and the colour of
- * its dot, from the tunnel's state and whether an account is `linked`. A
+ * its dot, from the tunnel's state, whether an account is `linked` and
+ * whether a Connect is `waiting` for the owner's answer in the client. A
  * tunnel that opens before the account is saved, as Connect does, reads as
- * connecting; a linked machine whose tunnel stopped has lost its connection.
+ * connecting until the request waits; a linked machine whose tunnel stopped
+ * has lost its connection.
  */
-export function remoteAccessLabel(state: TunnelState, linked: boolean): { label: string; tone: RemoteAccessTone } {
+export function remoteAccessLabel(
+  state: TunnelState,
+  linked: boolean,
+  waiting = false,
+): { label: string; tone: RemoteAccessTone } {
+  if (waiting && !linked) return { label: 'Waiting for approval…', tone: 'warn' }
   if (state === 'reconnecting') return { label: 'Reconnecting…', tone: 'warn' }
   if (state === 'connecting' || (state === 'connected' && !linked)) return { label: 'Connecting…', tone: 'warn' }
   if (!linked) return { label: 'Not connected', tone: 'off' }

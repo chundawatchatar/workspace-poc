@@ -1,20 +1,31 @@
 import {
   accountEmailSchema,
+  connectApprovalText,
   enrollmentFingerprint,
   enrollmentKeySchema,
+  formatTimeLeft,
   parseServerUrl,
   type RemoteAccessStatus,
   routes,
   sameServerUrl,
 } from '@orch/shared'
 import { SERVER_URL_RULE } from './modules/remote-access/addresses.service'
-import type { RemoteCliDeps } from './remote-cli'
+import type { HostAnswer, RemoteCliDeps } from './remote-cli'
 import { printable, refused } from './remote-cli-output'
 
 // `connect` and `disconnect`: the Connect and Disconnect buttons of the Remote
 // access dialog, for a terminal. Both need the running host, which owns the
 // tunnel. Nothing here prints the key, and the email only in the lines the
 // owner checks before connecting.
+
+/** How often `connect` reads the host's status while the request waits for the owner. */
+const WAIT_POLL_MS = 1000
+
+/** What `connect` says when the owner pressed Ctrl-C. */
+export const CANCELLED = 'Cancelled. Nothing was linked'
+
+/** What `connect` says when the host went away while the request waited. */
+export const HOST_STOPPED = 'The host stopped. Nothing was linked'
 
 export type ConnectCommand =
   | { name: 'connect'; email: string; key: string; server: string | null; yes: boolean }
@@ -72,7 +83,12 @@ export function connectProblem(command: Extract<ConnectCommand, { name: 'connect
  * Connects through the running host whose status is `current`: shows the
  * server, the email and the key's last 4 characters, asks unless `--yes` was
  * given, then sends Connect. Without `--server` it uses the built-in default,
- * or the address a flag or variable sets, which a different `--server` can't change.
+ * or the address a flag or variable sets, which a different `--server` can't
+ * change. Once the server holds the request, it prints the machine's
+ * fingerprint for the owner to check in the client and the time left, then
+ * reads the status until the owner answers: 0 once linked, 1 on a reject, a
+ * cancel, the key expiring, a dropped tunnel or the host stopping. Ctrl-C,
+ * while the call is on its way or the request waits, cancels it.
  */
 export async function connectThroughHost(
   command: Extract<ConnectCommand, { name: 'connect' }>,
@@ -98,10 +114,86 @@ export async function connectThroughHost(
   deps.out(`Key ends in: ${printable(enrollmentFingerprint(command.key))}`)
   if (!(await confirmed(command.yes, 'Connect this machine to this account? [y/N] ', 'Not connected', deps))) return 1
   deps.out('Connecting...')
-  const answer = await deps.callHost(routes.remoteAccess.connect, { email, key: command.key, serverUrl: server })
-  if (!answer?.ok) return refused(answer, deps.err)
-  deps.out(`Connected to ${accountName(answer.data)} through ${printable(server)}`)
-  return 0
+  const interrupt = watchInterrupt(deps)
+  try {
+    const connecting = deps.callHost(routes.remoteAccess.connect, { email, key: command.key, serverUrl: server })
+    const answer = await Promise.race([connecting, interrupt.fired])
+    if (answer === INTERRUPTED) return cancel(deps, connecting)
+    if (!answer?.ok) return refused(answer, deps.err)
+    const waiting = answer.data
+    if (!waiting.connectRequest) return ended(waiting, server, deps)
+    deps.out(connectApprovalText(printable(waiting.machineFingerprint ?? 'unknown')))
+    const left = formatTimeLeft(Date.parse(waiting.connectRequest.expiresAt) - deps.now())
+    deps.out(`The request expires in ${left}. Waiting for the answer; press Ctrl-C to cancel.`)
+    for (;;) {
+      const tick = await Promise.race([Bun.sleep(deps.pollMs ?? WAIT_POLL_MS), interrupt.fired])
+      if (tick === INTERRUPTED) return cancel(deps)
+      const status = await deps.callHost(routes.remoteAccess.status, {})
+      if (status === null) {
+        deps.err(HOST_STOPPED)
+        return 1
+      }
+      if (!status.ok) return refused(status, deps.err)
+      if (!status.data.connectRequest) return ended(status.data, server, deps)
+    }
+  } finally {
+    interrupt.stop()
+  }
+}
+
+const INTERRUPTED = Symbol('interrupted')
+
+/**
+ * Catches Ctrl-C through `deps.onInterrupt` until `stop`, resolving `fired`
+ * on the first one. Only the first is caught, so a second one ends the process
+ * as usual.
+ */
+function watchInterrupt(deps: RemoteCliDeps): { fired: Promise<typeof INTERRUPTED>; stop: () => void } {
+  let stop = () => {}
+  const fired = new Promise<typeof INTERRUPTED>((resolve) => {
+    stop =
+      deps.onInterrupt?.(() => {
+        stop()
+        resolve(INTERRUPTED)
+      }) ?? stop
+  })
+  return { fired, stop: () => stop() }
+}
+
+/**
+ * Cancels the Connect after Ctrl-C. A Connect call still on its way may have
+ * reached the host only after the cancel, so once it answers that its request
+ * waits, that request is cancelled too.
+ */
+async function cancel(
+  deps: RemoteCliDeps,
+  connecting?: Promise<HostAnswer<typeof routes.remoteAccess.connect> | null>,
+) {
+  let status = await deps.callHost(routes.remoteAccess.cancelConnect, {})
+  // Its own failure, if any, is moot: the cancel decides what happened.
+  const late = await connecting?.catch(() => null)
+  if (late?.ok && late.data.connectRequest) status = await deps.callHost(routes.remoteAccess.cancelConnect, {})
+  if (status === null) {
+    deps.err(HOST_STOPPED)
+    return 1
+  }
+  if (!status.ok) return refused(status, deps.err)
+  if (status.data.linkedAccount) {
+    deps.out(`The request was accepted before the cancel. Connected to ${accountName(status.data)}`)
+    return 0
+  }
+  deps.err(CANCELLED)
+  return 1
+}
+
+/** Reports a request that stopped waiting: 0 once it linked, else 1 with how it ended. */
+function ended(status: RemoteAccessStatus, server: string, deps: RemoteCliDeps): number {
+  if (status.linkedAccount) {
+    deps.out(`Connected to ${accountName(status)} through ${printable(server)}`)
+    return 0
+  }
+  deps.err(printable(status.connectOutcome?.message ?? 'The connect request ended. Nothing was linked'))
+  return 1
 }
 
 /**

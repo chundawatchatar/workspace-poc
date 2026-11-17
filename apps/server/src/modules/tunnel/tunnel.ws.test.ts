@@ -224,9 +224,9 @@ describe('tunnel socket', () => {
     expect(registry.isRemoteOff(id)).toBe(false)
   })
 
-  test('answers enroll.redeem and unlink with `unavailable` while accounts are off', async () => {
+  test('answers enroll.request and unlink with `unavailable` while accounts are off', async () => {
     const machine = await hello(keyA, { pong: true })
-    machine.send({ type: 'enroll.redeem', id: 1, key: 'oek_any', email: 'a@example.com', name: 'Box' })
+    machine.send({ type: 'enroll.request', id: 1, key: 'oek_any', email: 'a@example.com', name: 'Box' })
     machine.send({ type: 'unlink', id: 2, accountId: 'u1' })
     const answers = () => machine.frames.filter((f) => f.type === 'enroll.failed' || f.type === 'unlink.failed')
     await until(() => answers().length === 2)

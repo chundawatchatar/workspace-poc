@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { type ServerMachine, serverRoutes } from '@orch/shared'
-import { screen } from '@testing-library/react'
+import { type ConnectRequest, machineFingerprint, type ServerMachine, serverRoutes } from '@orch/shared'
+import { Toaster } from '@orch/ui'
+import { screen, within } from '@testing-library/react'
 import { HttpResponse, http } from 'msw'
 import { authSession, authUser } from '../../test/betterAuth'
 import { server } from '../../test/msw'
@@ -14,13 +15,26 @@ function machine(id: string, name: string, state: Partial<ServerMachine> = {}): 
   return { machineId: id.repeat(43), name, createdAt: at, lastOpenedAt: at, online: true, remoteOff: false, ...state }
 }
 
-/** Answers the session and the account's machines, `Desktop` and `Laptop` by default, none with a key in this browser. */
-function signedIn(machines = [machine('A', 'Desktop'), machine('B', 'Laptop')]) {
+/**
+ * Answers the session, the account's machines, `Desktop` and `Laptop` by default, none with a key in this browser,
+ * and the waiting connect requests, none by default. Accepting one links its machine.
+ */
+function signedIn(machines = [machine('A', 'Desktop'), machine('B', 'Laptop')], requests: ConnectRequest[] = []) {
+  const state = { machines, requests }
   server.use(
     http.get('*/api/auth/get-session', () =>
       HttpResponse.json({ user: account, session: authSession('s1', account.id) }),
     ),
-    http.get(`*${serverRoutes.machines.list.path}`, () => HttpResponse.json({ machines })),
+    http.get(`*${serverRoutes.machines.list.path}`, () => HttpResponse.json({ machines: state.machines })),
+    http.get(`*${serverRoutes.machines.listRequests.path}`, () => HttpResponse.json({ requests: state.requests })),
+    http.post(`*${serverRoutes.machines.acceptRequest.path}`, ({ params }) => {
+      const found = state.requests.find((request) => request.id === params.id)
+      if (!found) return HttpResponse.json({ error: { code: 'not_waiting', message: 'Not waiting.' } }, { status: 409 })
+      state.requests = state.requests.filter((request) => request !== found)
+      const linked = { ...machine('C', found.name), machineId: found.machineId }
+      state.machines = [linked, ...state.machines]
+      return HttpResponse.json(linked)
+    }),
   )
 }
 
@@ -51,5 +65,26 @@ describe('MachineList', () => {
     expect(await row('Laptop')).toHaveTextContent('Offline')
     expect(await row('Server')).toHaveTextContent('Remote access off')
     expect(await row('Server')).not.toHaveTextContent('Offline')
+  })
+
+  test('a waiting request shows above the machines with its fingerprint, and Accept links it', async () => {
+    const machineId = 'D'.repeat(43)
+    const id = '11111111-1111-4111-8111-111111111111'
+    signedIn([machine('A', 'Desktop')], [{ id, machineId, name: 'Build box', requestedAt: at, expiresAt: at }])
+    const { user } = await renderWithProviders(
+      <>
+        <MachineList />
+        <Toaster />
+      </>,
+    )
+    const waiting = await screen.findByRole('region', { name: 'Waiting to connect' })
+    const row = within(waiting).getByRole('group', { name: 'Connect request from Build box' })
+    expect(row).toHaveTextContent(`Machine key ${machineFingerprint(machineId)}`)
+    expect(within(row).getByRole('button', { name: 'Reject Build box' })).toBeInTheDocument()
+
+    await user.click(within(row).getByRole('button', { name: 'Accept Build box' }))
+    expect(await screen.findByRole('status')).toHaveTextContent('Build box is connected')
+    expect(await screen.findByRole('link', { name: 'Open Build box' })).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Waiting to connect' })).not.toBeInTheDocument()
   })
 })

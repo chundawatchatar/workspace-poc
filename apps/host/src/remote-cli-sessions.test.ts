@@ -20,6 +20,8 @@ const status: RemoteAccessStatus = {
   machineFingerprint: 'ABCD-EFGH-JKMN-PQRS',
   tunnel: 'connected',
   linkedAccount: null,
+  connectRequest: null,
+  connectOutcome: null,
 }
 const alice = `1${'d'.repeat(42)}`
 const bob = `2${'d'.repeat(42)}`

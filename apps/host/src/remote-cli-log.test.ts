@@ -28,6 +28,8 @@ const status: RemoteAccessStatus = {
   machineFingerprint: 'ABCD-EFGH-JKMN-PQRS',
   tunnel: 'connected',
   linkedAccount: null,
+  connectRequest: null,
+  connectOutcome: null,
 }
 
 let dir: string

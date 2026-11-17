@@ -52,12 +52,18 @@ export function enrollmentFingerprint(key: string): string {
  */
 export const accountEmailSchema = z.string().trim().max(254).pipe(z.email('Not an email address.'))
 
+/** The id of an enrollment key, which is also the id of the connect request a machine makes with it. */
+export const connectRequestIdSchema = z.uuid('Not a request id.')
+
 /**
  * A new enrollment key. It is shown once, works once and expires at
- * `expiresAt`, an ISO string. `serverUrl` is the address machines open their
- * tunnel to on this server, which `corch connect --server` takes.
+ * `expiresAt`, an ISO string. `id` is also the id of the connect request a
+ * machine makes with it, so the page that created the key can find that
+ * request. `serverUrl` is the address machines open their tunnel to on this
+ * server, which `corch connect --server` takes.
  */
 export const createEnrollmentResponse = z.object({
+  id: connectRequestIdSchema,
   key: enrollmentKeySchema,
   fingerprint: z.string().length(4),
   expiresAt: z.iso.datetime(),
@@ -66,6 +72,29 @@ export const createEnrollmentResponse = z.object({
 export type CreateEnrollmentResponse = z.infer<typeof createEnrollmentResponse>
 
 export const relayTicketBody = z.strictObject({ machineId: machineIdSchema })
+
+/**
+ * A machine waiting for the owner to accept or reject its Connect, made with
+ * one of the owner's enrollment keys. `machineId` is the id its tunnel proved,
+ * which the client turns into the fingerprint the owner compares with the one
+ * the machine shows. Dates are ISO strings; the request ends at `expiresAt`,
+ * when its key does.
+ */
+export const connectRequest = z.object({
+  id: connectRequestIdSchema,
+  machineId: machineIdSchema,
+  name: z.string(),
+  requestedAt: z.iso.datetime(),
+  expiresAt: z.iso.datetime(),
+})
+export type ConnectRequest = z.infer<typeof connectRequest>
+
+export const listRequestsResponse = z.object({ requests: z.array(connectRequest) })
+export type ListRequestsResponse = z.infer<typeof listRequestsResponse>
+
+export const connectRequestBody = z.strictObject({ id: connectRequestIdSchema })
+
+export const rejectRequestResponse = z.object({ ok: z.literal(true) })
 
 export const serverMachinesContract = defineServerContract({
   list: {
@@ -94,9 +123,35 @@ export const serverMachinesContract = defineServerContract({
     method: 'POST',
     path: '/api/machines/enrollments',
     description:
-      'Creates a single-use enrollment key, valid for 15 minutes, that a machine redeems over its tunnel to link itself.',
+      'Creates a single-use enrollment key, valid for 15 minutes, that a machine sends over its tunnel to ask to be linked. Its `id` is the id of that request.',
     input: z.strictObject({}),
     output: createEnrollmentResponse,
+  },
+  listRequests: {
+    method: 'GET',
+    path: '/api/machines/requests',
+    description:
+      "Lists the machines waiting for the signed-in user to accept or reject their Connect, newest first. A request ends when its machine's tunnel closes or its key expires.",
+    input: z.strictObject({}),
+    output: listRequestsResponse,
+  },
+  acceptRequest: {
+    method: 'POST',
+    path: '/api/machines/requests/:id/accept',
+    description:
+      "Accepts one of the signed-in user's waiting requests: uses up its key, links the machine under the name it asked with, tells the machine, and answers it. A request that stopped waiting answers `not_waiting` and changes nothing.",
+    errors: { not_waiting: 409 },
+    input: connectRequestBody,
+    output: serverMachine,
+  },
+  rejectRequest: {
+    method: 'POST',
+    path: '/api/machines/requests/:id/reject',
+    description:
+      "Rejects one of the signed-in user's waiting requests: uses up its key, links nothing and tells the machine. A request that stopped waiting answers `not_waiting` and changes nothing.",
+    errors: { not_waiting: 409 },
+    input: connectRequestBody,
+    output: rejectRequestResponse,
   },
   relayTicket: {
     method: 'POST',

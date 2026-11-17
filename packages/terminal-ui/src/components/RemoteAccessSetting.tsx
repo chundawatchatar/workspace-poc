@@ -1,7 +1,7 @@
 import { type DevicesResponse, machineFingerprint, type RemoteAccessStatus, routes } from '@orch/shared'
 import { RemoteAccessForm } from '@orch/ui'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { apiKey, apiMutation, apiQuery, callApi } from '../lib/api'
 import { REMOVE_IN_CLIENT, remoteAccessLabel, requestErrorMessage } from '../lib/remoteAccess'
 import { setOverlay } from '../lib/store'
@@ -14,16 +14,21 @@ const POLL_MS = 2000
  * `routes.access.rotate`. While an account is connected it also lists the
  * browsers approved for it, and always the browsers connected through the
  * tunnel now and the recent remote access the host recorded, all polled like
- * the status. The key and the email live only in this component's state:
- * Connect goes through `callApi`, not a mutation, so they never enter TanStack
- * Query's caches, and both are dropped once it succeeds.
+ * the status. A Connect the server holds for the owner shows from the status,
+ * so it is still there after the dialog is closed and opened again, and the
+ * poll picks up the owner's answer. The key and the email live only in this
+ * component's state: Connect goes through `callApi`, not a mutation, so they
+ * never enter TanStack Query's caches, and both are dropped once the machine
+ * is linked.
  */
 export function RemoteAccessSetting() {
   const queryClient = useQueryClient()
   const status = useQuery({ ...apiQuery(routes.remoteAccess.status, {}), refetchInterval: POLL_MS, retry: false })
   const rotate = useMutation(apiMutation(routes.access.rotate))
   const disconnect = useMutation(apiMutation(routes.remoteAccess.disconnect))
+  const cancelConnect = useMutation(apiMutation(routes.remoteAccess.cancelConnect))
   const linked = Boolean(status.data?.linkedAccount)
+  const waiting = Boolean(status.data?.connectRequest)
   const devices = useQuery({
     ...apiQuery(routes.remoteAccess.devices, {}),
     enabled: linked,
@@ -48,6 +53,15 @@ export function RemoteAccessSetting() {
   const [connecting, setConnecting] = useState(false)
 
   const data = status.data
+
+  // Once linked, the key is used up and the email is no longer needed, so neither stays in memory.
+  useEffect(() => {
+    if (!linked) return
+    setEmail('')
+    setEnrollmentKey('')
+    setServerUrl(null)
+  }, [linked])
+
   // An address a flag or the environment sets can't be edited, so the field shows the one in use.
   const shownServer = data?.serverUrlSetBy ? data.serverUrl : (serverUrl ?? data?.serverUrl ?? '')
 
@@ -109,13 +123,20 @@ export function RemoteAccessSetting() {
         serverUrl: shownServer.trim(),
       })
       showStatus(next)
-      setEmail('')
-      setEnrollmentKey('')
-      setServerUrl(null)
     } catch (failure) {
       setError(requestErrorMessage(failure))
     } finally {
       setConnecting(false)
+    }
+  }
+
+  /** Cancels the Connect that waits for the owner, then shows the status the host answers. */
+  async function cancelWaiting() {
+    setError(null)
+    try {
+      showStatus(await cancelConnect.mutateAsync({}))
+    } catch (failure) {
+      setError(requestErrorMessage(failure))
     }
   }
 
@@ -136,7 +157,7 @@ export function RemoteAccessSetting() {
   const { label, tone } = connecting
     ? remoteAccessLabel('connecting', false)
     : data
-      ? remoteAccessLabel(data.tunnel, linked)
+      ? remoteAccessLabel(data.tunnel, linked, waiting)
       : { label: status.isError ? 'Could not reach the host' : 'Checking…', tone: 'off' as const }
 
   return (
@@ -155,6 +176,7 @@ export function RemoteAccessSetting() {
         onEnrollmentKeyChange: setEnrollmentKey,
         onConnect: connectAccount,
         onDisconnect: disconnectAccount,
+        onCancel: cancelWaiting,
       }}
       devices={{
         devices: devices.data,
@@ -171,6 +193,7 @@ export function RemoteAccessSetting() {
       busy={
         rotate.isPending ||
         disconnect.isPending ||
+        cancelConnect.isPending ||
         approveDevice.isPending ||
         removeDevice.isPending ||
         endSession.isPending ||

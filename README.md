@@ -33,8 +33,11 @@ the machine (`bun run host:remote connect ...` in dev), or open "Remote
 access…" from the command palette in the local app, fill in the server
 address, your email and the key, and press Connect. After one confirm, the
 host saves the address as `relayUrl` in `config.json` in the data folder
-(`apps/host/.data/` in dev), opens its tunnel to the server at once and links
-the machine to your account. The tunnel runs exactly while the machine is
+(`apps/host/.data/` in dev), opens its tunnel to the server at once and asks to
+be linked to your account. It then waits, showing its machine fingerprint,
+until you accept the request in the client, which shows the same fingerprint
+for you to check (reject it if it doesn't match); a reject, the key expiring or
+Cancel (Ctrl-C in the command) links nothing. The tunnel runs exactly while the machine is
 connected, so every later start reconnects on its own; Disconnect (or
 `corch disconnect`) asks the server to remove the machine from your list,
 forgets the account and closes the tunnel and every remote session.

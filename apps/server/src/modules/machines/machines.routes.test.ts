@@ -45,7 +45,7 @@ async function signedIn(): Promise<User> {
 const freshMachineId = () => randomBytes(32).toString('base64url')
 const path = (machineId: string) => `/api/machines/${machineId}`
 
-/** Links `machineId` to `user` the way redeeming an enrollment key does, without HTTP. */
+/** Links `machineId` to `user` the way an accepted connect request does, without HTTP. */
 function link(user: User, machineId: string, name: string) {
   return new MachinesService(domain.forUser({ userId: user.userId }).machines, ctx.registry).link(machineId, name)
 }
@@ -261,7 +261,7 @@ describe('machines module', () => {
     const rows = await enrollmentsOf()
     expect(rows).toHaveLength(2)
     const row = rows.find((r) => r.keyHash === createHash('sha256').update(created.key).digest('hex'))
-    expect(row).toMatchObject({ createdAt: NOW, usedAt: null })
+    expect(row).toMatchObject({ id: created.id, createdAt: NOW, usedAt: null, requestMachineId: null })
     expect(Object.values(row ?? {})).not.toContain(created.key)
 
     for (const body of [{ key: created.key }, { name: 'Laptop' }]) {

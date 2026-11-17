@@ -62,6 +62,8 @@ function fakeHost(linkedAccount: LinkedAccount | null): CallHost {
     machineFingerprint: null,
     tunnel: linkedAccount ? 'connected' : 'off',
     linkedAccount,
+    connectRequest: null,
+    connectOutcome: null,
   }
   return (async () => ({ ok: true, data: status })) as CallHost
 }

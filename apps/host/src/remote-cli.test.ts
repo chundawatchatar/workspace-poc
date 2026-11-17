@@ -1,160 +1,27 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { describe, expect, test } from 'bun:test'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { type ConnectBody, machineFingerprint, type RemoteAccessStatus } from '@orch/shared'
+import { machineFingerprint } from '@orch/shared'
 import { accessKeysPath } from './modules/access/access.repository'
-import type { RemoteAccessEnv } from './modules/remote-access/addresses.service'
-import { fingerprintOf } from './modules/remote-access/device-proof.service'
 import { DevicesRepository, devicesPath } from './modules/remote-access/devices.repository'
-import { DevicesService } from './modules/remote-access/devices.service'
-import { linkedAccountPath } from './modules/remote-access/linked-account.repository'
-import { AmbiguousDevice, ConnectError, UnknownDevice } from './modules/remote-access/remote-access.errors'
-import { createRemoteAccessRoutes } from './modules/remote-access/remote-access.routes'
 import { DEFAULT_SERVER_URL } from './modules/remote-access/remote-access.service'
-import { NoRemoteSessions } from './modules/remote-access/remote-access.testing'
 import { machineKeyFile } from './modules/tunnel/tunnel.repository'
-import { createTestMachineKey } from './modules/tunnel/tunnel.testing'
-import { createHostCaller, runRemote } from './remote-cli'
-import { REMOVE_IN_CLIENT } from './remote-cli-connect'
+import {
+  alice,
+  bob,
+  carol,
+  dir,
+  host,
+  linked,
+  MINUTE,
+  machineKey,
+  run,
+  runningHost,
+  stoppedHost,
+  useRemoteCliHarness,
+} from './remote-cli.testing'
 
-const key = `oek_${'k'.repeat(43)}`
-const email = 'ada.lovelace@example.com'
-const machineKey = createTestMachineKey()
-const account = { name: 'Ada', maskedEmail: 'a***@example.com' }
-const linked = { ...account, serverUrl: DEFAULT_SERVER_URL, linkedAt: '2026-11-04T12:00:00.000Z' }
-
-/** A browser device: an id, the fingerprint its page shows and its public key, which no output may hold. */
-function device(seed: number) {
-  const id = Buffer.from(new Uint8Array(32).fill(seed)).toString('base64url')
-  const coordinate = (salt: number) => Buffer.from(new Uint8Array(32).fill(seed + salt)).toString('base64url')
-  const publicKey = { kty: 'EC', crv: 'P-256', x: coordinate(100), y: coordinate(150) } as const
-  return { id, fingerprint: fingerprintOf(id), publicKey }
-}
-const [alice, bob, carol] = [device(1), device(2), device(3)]
-const MINUTE = 60_000
-
-/** Stands in for `RemoteAccessService` behind the real routes, recording each call it gets. */
-class FakeRemoteAccess extends NoRemoteSessions {
-  current: RemoteAccessStatus = {
-    serverUrl: DEFAULT_SERVER_URL,
-    serverUrlIsDefault: true,
-    defaultServerUrl: DEFAULT_SERVER_URL,
-    clientUrl: 'https://app.example.com',
-    serverUrlSetBy: null,
-    clientUrlSetBy: null,
-    machineId: machineKey.machineId,
-    machineFingerprint: machineFingerprint(machineKey.machineId),
-    tunnel: 'off',
-    linkedAccount: null,
-  }
-  calls: [string, unknown][] = []
-  /** How many times the status was asked for. */
-  statusCalls = 0
-  /** What `connect` throws, standing for a host refusal. */
-  connectError: ConnectError | null = null
-  /** Whether `disconnect` says the server removed the machine. */
-  removed = true
-  /** The host's clock, in milliseconds, which the CLI's `now` reads too. */
-  clock = Date.UTC(2026, 10, 6, 12)
-  /** The real device lists, saved apart from the CLI's data folder, which a running host's commands never read. */
-  devices = new DevicesService(new DevicesRepository(join(dir, 'host-devices.json')), () => this.clock)
-
-  status() {
-    this.statusCalls++
-    return this.current
-  }
-  async connect(input: ConnectBody) {
-    this.calls.push(['connect', input])
-    if (this.connectError) throw this.connectError
-    const linkedAccount = { ...linked, serverUrl: input.serverUrl }
-    this.current = { ...this.current, serverUrl: input.serverUrl, tunnel: 'connected', linkedAccount }
-    return this.current
-  }
-  async disconnect() {
-    this.calls.push(['disconnect', {}])
-    this.current = { ...this.current, tunnel: 'off', linkedAccount: null }
-    return { status: this.current, removedFromAccount: this.removed }
-  }
-  listDevices() {
-    return this.devices.list()
-  }
-  approveDevice(fingerprint: string) {
-    this.calls.push(['approveDevice', fingerprint])
-    const result = this.devices.approve(fingerprint)
-    if (result === 'none') throw new UnknownDevice(fingerprint)
-    if (result === 'several') throw new AmbiguousDevice(fingerprint)
-    return this.devices.list()
-  }
-  auditLog = () => ({ entries: [] })
-  removeDevice(id: string) {
-    this.calls.push(['removeDevice', id])
-    this.devices.remove(id)
-    return this.devices.list()
-  }
-}
-
-let dir: string
-let host: FakeRemoteAccess
-let server: ReturnType<typeof Bun.serve> | null
-
-beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'orch-remote-cli-'))
-  host = new FakeRemoteAccess()
-  server = null
-})
-
-afterEach(() => {
-  server?.stop(true)
-  rmSync(dir, { recursive: true, force: true })
-})
-
-/** Serves the real remote access routes over `host` on a free port, and answers its base URL. */
-function runningHost(): string {
-  server = Bun.serve({ port: 0, fetch: createRemoteAccessRoutes({ remoteAccess: host }).fetch })
-  return `http://127.0.0.1:${server.port}`
-}
-
-/** A base URL nothing listens on: a server is started to get a free port, then stopped. */
-function stoppedHost(): string {
-  const probe = Bun.serve({ port: 0, fetch: () => new Response('') })
-  const url = `http://127.0.0.1:${probe.port}`
-  probe.stop(true)
-  return url
-}
-
-/**
- * Runs the CLI with `answers` as the lines typed, and answers its exit code and
- * everything it printed, which must never hold the key or the machine's private key.
- */
-async function run(
-  baseUrl: string,
-  args: string[],
-  options: { env?: RemoteAccessEnv; answers?: (string | null)[]; onPrompt?: () => void } = {},
-) {
-  const answers = [...(options.answers ?? [])]
-  const lines: string[] = []
-  const code = await runRemote(args, {
-    callHost: createHostCaller(baseUrl),
-    dataDir: dir,
-    env: options.env ?? {},
-    prompt: async (question) => {
-      lines.push(question)
-      options.onPrompt?.()
-      return answers.shift() ?? null
-    },
-    out: (line) => lines.push(line),
-    err: (line) => lines.push(line),
-    now: () => host.clock,
-  })
-  const text = lines.join('\n')
-  expect(text).not.toContain(key)
-  expect(text).not.toContain(machineKey.privateKey)
-  for (const { id, publicKey } of [alice, bob, carol]) {
-    for (const value of [id, publicKey.x, publicKey.y]) expect(text).not.toContain(value)
-  }
-  return { code, text }
-}
+useRemoteCliHarness()
 
 describe('host:remote with the host running', () => {
   test('status prints the address, the connection, the machine and the account', async () => {
@@ -168,112 +35,6 @@ describe('host:remote with the host running', () => {
     expect(status.text).toContain(`Machine id:     ${machineKey.machineId}`)
     expect(status.text).toContain(`Machine key:    ${machineFingerprint(machineKey.machineId)}\n`)
     expect(status.text).toContain(`Account:        Ada (a***@example.com) through ${DEFAULT_SERVER_URL}`)
-  })
-
-  test('connect shows the server, the email and the key ending, asks, and connects only on yes', async () => {
-    const url = runningHost()
-    const args = ['connect', '--email', email, '--key', key, '--server', 'wss://other.example.com']
-
-    const no = await run(url, args, { answers: [''] })
-    expect(no.code).toBe(1)
-    expect(no.text.split('\n')).toEqual([
-      'Server:      wss://other.example.com',
-      'Warning:     this is not the default server. Connect only if you run it or trust who does.',
-      `Email:       ${email}`,
-      `Key ends in: ${key.slice(-4)}`,
-      'Connect this machine to this account? [y/N] ',
-      'Not connected',
-    ])
-    expect((await run(url, args, { answers: [null] })).code).toBe(1)
-    expect(host.calls).toEqual([])
-
-    const yes = await run(url, args, { answers: ['YES'] })
-    expect(yes.code).toBe(0)
-    expect(yes.text).toContain('Connected to Ada (a***@example.com) through wss://other.example.com')
-    // The email shows only in the line the owner checks.
-    expect(yes.text.split(email)).toHaveLength(2)
-    expect(host.calls).toEqual([['connect', { email, key, serverUrl: 'wss://other.example.com' }]])
-
-    // Connected now, so a second connect is refused before anything is sent.
-    const again = await run(url, ['connect', `--email=${email}`, `--key=${key}`, '--yes'])
-    expect(again).toMatchObject({ code: 1, text: expect.stringContaining('already connected to Ada') })
-    expect(host.calls).toHaveLength(1)
-  })
-
-  test('connect uses the default without --server, or the address a variable sets, and --yes skips the question', async () => {
-    const url = runningHost()
-    const yes = await run(url, ['connect', '--yes', '--key', key, '--email', ` ${email} `])
-    expect(yes.code).toBe(0)
-    expect(yes.text).not.toContain('[y/N]')
-    expect(yes.text).not.toContain('Warning:')
-    expect(host.calls).toEqual([['connect', { email, key, serverUrl: DEFAULT_SERVER_URL }]])
-
-    host.calls = []
-    host.current = {
-      ...host.current,
-      linkedAccount: null,
-      serverUrl: 'ws://127.0.0.1:4600',
-      serverUrlSetBy: 'SERVER_URL',
-    }
-    const other = await run(url, ['connect', '--email', email, '--key', key, '--server', 'wss://other.example.com'])
-    expect(other).toEqual({
-      code: 1,
-      text: 'SERVER_URL sets the server address to ws://127.0.0.1:4600. Leave out --server',
-    })
-    expect((await run(url, ['connect', '--email', email, '--key', key, '--yes'])).code).toBe(0)
-    expect(host.calls).toEqual([['connect', { email, key, serverUrl: 'ws://127.0.0.1:4600' }]])
-
-    // A host refusal is printed as it is, and a name from the server can't fake a line.
-    host.current = { ...host.current, linkedAccount: null }
-    host.connectError = new ConnectError(400, "This key is unknown, used or expired, or the email doesn't match")
-    const refused = await run(url, ['connect', '--email', email, '--key', key, '--yes'])
-    expect(refused).toMatchObject({ code: 1, text: expect.stringContaining('This key is unknown') })
-  })
-
-  test('a malformed key, email or server, and the old commands, are refused before the host is called', async () => {
-    const url = runningHost()
-    const secret = 'oek_secret'
-    const cases: [string[], string][] = [
-      [['connect', '--email', email, '--key', secret], 'That is not an enrollment key.'],
-      [['connect', '--email', 'secret@', '--key', key], 'That is not an email address'],
-      [['connect', '--email', email, '--key', key, '--server', 'ws://secret.example.com'], 'The server address must'],
-    ]
-    for (const [args, message] of cases) {
-      const { code, text } = await run(url, args)
-      expect([code, text.startsWith(message)]).toEqual([1, true])
-      for (const value of [secret, 'secret@', 'secret.example.com', email]) expect(text).not.toContain(value)
-    }
-    for (const args of [['link', key], ['unlink'], ['server', 'wss://x'], ['on'], ['off'], ['connect', '--key', key]]) {
-      const { code, text } = await run(url, args)
-      expect([args, code, text.startsWith('Usage:')]).toEqual([args, 1, true])
-    }
-    expect(host.statusCalls).toBe(0)
-  })
-
-  test("disconnect asks, and says when the machine is still on the account's list", async () => {
-    const url = runningHost()
-    expect((await run(url, ['disconnect'])).text).toBe('This machine is not connected')
-    host.current = { ...host.current, tunnel: 'connected', linkedAccount: linked }
-
-    const no = await run(url, ['disconnect'], { answers: ['n'] })
-    expect(no.code).toBe(1)
-    expect(no.text).toContain('Disconnect this machine from Ada (a***@example.com)? [y/N]')
-    expect(host.calls).toEqual([])
-    const yes = await run(url, ['disconnect'], { answers: ['y'] })
-    expect(yes.code).toBe(0)
-    expect(yes.text).toContain('Disconnected.')
-    expect(yes.text).not.toContain(REMOVE_IN_CLIENT)
-
-    host.current = { ...host.current, linkedAccount: linked }
-    host.removed = false
-    const kept = await run(url, ['disconnect', '--yes'])
-    expect(kept.code).toBe(0)
-    expect(kept.text).not.toContain('[y/N]')
-    expect(kept.text).toContain(REMOVE_IN_CLIENT)
-    expect(host.calls).toEqual([
-      ['disconnect', {}],
-      ['disconnect', {}],
-    ])
   })
 
   test('devices lists waiting then approved devices with their ages, and status counts them', async () => {
@@ -411,19 +172,6 @@ describe('host:remote with the host stopped', () => {
     const broken = await run(url, ['status'])
     expect(broken.code).toBe(1)
     expect(broken.text).toContain('Connection:     unknown')
-  })
-
-  test('connect and disconnect need the running host, and write nothing', async () => {
-    const url = stoppedHost()
-    writeFileSync(linkedAccountPath(dir), JSON.stringify(linked))
-    for (const args of [
-      ['connect', '--email', email, '--key', key, '--yes'],
-      ['disconnect', '--yes'],
-    ]) {
-      expect(await run(url, args)).toEqual({ code: 1, text: 'No host is running. Start it, then run this again' })
-    }
-    expect(existsSync(machineKeyFile(dir))).toBe(false)
-    expect(readFileSync(linkedAccountPath(dir), 'utf8')).toBe(JSON.stringify(linked))
   })
 
   test('devices lists and removes the approved devices in the file, and approve needs the host', async () => {

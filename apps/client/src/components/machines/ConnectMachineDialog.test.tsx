@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, jest, mock, spyOn, test } from 'bun:test'
-import { type CreateEnrollmentResponse, type ServerMachine, serverRoutes } from '@orch/shared'
+import {
+  type ConnectRequest,
+  type CreateEnrollmentResponse,
+  machineFingerprint,
+  type ServerMachine,
+  serverRoutes,
+} from '@orch/shared'
 import { Toaster } from '@orch/ui'
-import { act, screen, waitFor } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { HttpResponse, http } from 'msw'
 import { authSession, authUser } from '../../test/betterAuth'
@@ -17,23 +23,61 @@ function machine(id: string, name: string): ServerMachine {
   return { machineId: id.repeat(43), name, createdAt: at, lastOpenedAt: at, online: true, remoteOff: false }
 }
 
-/** A fake enrollment key with the contract's shape, ending in `tail` (4 characters), so its fingerprint is `tail`. */
+/**
+ * A fake enrollment key with the contract's shape, ending in `tail` (4 characters), so its fingerprint is `tail`. Its
+ * id is a fixed UUID made of `tail`'s first character, which must be a hex digit.
+ */
 function enrollment(tail: string, expiresAt: number): CreateEnrollmentResponse {
   const key = `oek_${'k'.repeat(39)}${tail}`
-  return { key, fingerprint: tail, expiresAt: new Date(expiresAt).toISOString(), serverUrl }
+  const id = `${tail[0]?.repeat(8)}-0000-4000-8000-000000000000`
+  return { id, key, fingerprint: tail, expiresAt: new Date(expiresAt).toISOString(), serverUrl }
+}
+
+/** The connect request a machine makes with `key`: the machine `machineId` asks as `name`. */
+function requestWith(key: CreateEnrollmentResponse, machineId: string, name: string): ConnectRequest {
+  return { id: key.id, machineId, name, requestedAt: at, expiresAt: key.expiresAt }
 }
 
 /**
- * Answers the session, the account's machines (`state.machines`) and each create request with the next of `answers`
- * (an enrollment, or a status for a failure, 0 meaning a network error), and records the bodies of the creates.
+ * Answers the session, the account's machines (`state.machines`), the waiting requests (`state.requests`) and each
+ * create request with the next of `answers` (an enrollment, or a status for a failure, 0 meaning a network error),
+ * and records the bodies of the creates. Accept links a waiting request's machine, and reject drops it, unless
+ * `state.stopped` says the machine stopped waiting.
  */
 function fakeServer(answers: (CreateEnrollmentResponse | number)[]) {
-  const state = { machines: [machine('A', 'Desktop')], creates: [] as string[] }
+  const state = {
+    machines: [machine('A', 'Desktop')],
+    requests: [] as ConnectRequest[],
+    creates: [] as string[],
+    stopped: false,
+  }
+  /** Takes the waiting request the path names, or answers why not. */
+  const take = (id: unknown) => {
+    const found = state.requests.find((request) => request.id === id)
+    state.requests = state.requests.filter((request) => request !== found)
+    if (!found) return HttpResponse.json({ error: { code: 'not_found', message: 'Not found.' } }, { status: 404 })
+    if (state.stopped) {
+      return HttpResponse.json({ error: { code: 'not_waiting', message: 'Not waiting.' } }, { status: 409 })
+    }
+    return found
+  }
   server.use(
     http.get('*/api/auth/get-session', () =>
       HttpResponse.json({ user: account, session: authSession('s1', account.id) }),
     ),
     http.get(`*${serverRoutes.machines.list.path}`, () => HttpResponse.json({ machines: state.machines })),
+    http.get(`*${serverRoutes.machines.listRequests.path}`, () => HttpResponse.json({ requests: state.requests })),
+    http.post(`*${serverRoutes.machines.acceptRequest.path}`, ({ params }) => {
+      const taken = take(params.id)
+      if (taken instanceof Response) return taken
+      const linked = { ...machine('A', taken.name), machineId: taken.machineId }
+      state.machines = [linked, ...state.machines]
+      return HttpResponse.json(linked)
+    }),
+    http.post(`*${serverRoutes.machines.rejectRequest.path}`, ({ params }) => {
+      const taken = take(params.id)
+      return taken instanceof Response ? taken : HttpResponse.json({ ok: true })
+    }),
     http.post(`*${serverRoutes.machines.createEnrollment.path}`, async ({ request }) => {
       state.creates.push(await request.text())
       const answer = answers.shift()
@@ -79,7 +123,7 @@ afterEach(() => {
 })
 
 describe('ConnectMachineDialog', () => {
-  test('shows a new key once, copies it and its corch connect command, and says when a new machine connects', async () => {
+  test('shows a new key once, copies it and its corch connect command, and accepts the machine that asks with it', async () => {
     const first = enrollment('aaaa', Date.now() + 15 * 60_000)
     const second = enrollment('bbbb', Date.now() + 15 * 60_000)
     const state = fakeServer([first, second])
@@ -109,13 +153,22 @@ describe('ConnectMachineDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Copy command' }))
     expect(await findToast()).toHaveTextContent('Copying failed.')
 
-    // Desktop was listed before the key was made, so only Laptop counts as the machine that used it. The dialog
-    // reads the list every 2 seconds.
-    state.machines = [machine('B', 'Laptop'), ...state.machines]
-    expect(await screen.findByText('Laptop is connected', {}, { timeout: 3_000 })).toBeInTheDocument()
+    // Another key's request waits too, but the dialog shows only the one made with its own key, read every 2 seconds.
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByText('Waiting for the machine to connect…')).toBeInTheDocument()
+    const other = enrollment('cccc', Date.now() + 15 * 60_000)
+    const laptopId = 'B'.repeat(43)
+    state.requests = [requestWith(other, 'C'.repeat(43), 'Server'), requestWith(first, laptopId, 'Laptop')]
+    const row = await within(dialog).findByRole('group', { name: 'Connect request from Laptop' }, { timeout: 3_000 })
+    expect(row).toHaveTextContent(`Machine key ${machineFingerprint(laptopId)}`)
+    expect(within(dialog).queryByText('Server')).not.toBeInTheDocument()
+    expect(within(dialog).queryByText('Waiting for the machine to connect…')).not.toBeInTheDocument()
+    await user.click(within(row).getByRole('button', { name: 'Accept Laptop' }))
+    expect(await screen.findByText('Laptop is connected')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Done' }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(screen.getByText('Laptop')).toBeInTheDocument()
+    // The machine list was read again, so Laptop is listed at once.
+    expect(screen.getByRole('link', { name: 'Open Laptop' })).toBeInTheDocument()
 
     const held = JSON.stringify([
       document.body.innerHTML,
@@ -137,7 +190,30 @@ describe('ConnectMachineDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Connect a machine' }))
     expect(await screen.findByText(second.key)).toBeInTheDocument()
     expect(state.creates).toHaveLength(2)
-  }, 10_000)
+  }, 15_000)
+
+  test('Reject says the machine was not connected, and a request that stopped waiting says so in a toast', async () => {
+    const first = enrollment('aaaa', Date.now() + 15 * 60_000)
+    const second = enrollment('bbbb', Date.now() + 15 * 60_000)
+    const state = fakeServer([first, second])
+    const { user } = await renderHome()
+    await user.click(await screen.findByRole('button', { name: 'Connect a machine' }))
+    expect(await screen.findByText(first.key)).toBeInTheDocument()
+    state.requests = [requestWith(first, 'B'.repeat(43), 'Laptop')]
+    await user.click(await screen.findByRole('button', { name: 'Reject Laptop' }, { timeout: 3_000 }))
+    expect(await screen.findByText(/Laptop was not connected/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Done' }))
+
+    await user.click(screen.getByRole('button', { name: 'Connect a machine' }))
+    expect(await screen.findByText(second.key)).toBeInTheDocument()
+    state.requests = [requestWith(second, 'C'.repeat(43), 'Server')]
+    state.stopped = true
+    await user.click(await screen.findByRole('button', { name: 'Accept Server' }, { timeout: 3_000 }))
+    expect(await findToast()).toHaveTextContent('The machine stopped waiting. Nothing was linked.')
+    // The requests are read again, so the row goes and the dialog waits again, with nothing linked.
+    expect(await screen.findByText('Waiting for the machine to connect…')).toBeInTheDocument()
+    expect(state.machines.map((m) => m.name)).toEqual(['Desktop'])
+  }, 15_000)
 
   test('counts down to the expiry, then hides the key and offers a new one', async () => {
     const start = new Date('2026-11-04T12:00:00.000Z').getTime()

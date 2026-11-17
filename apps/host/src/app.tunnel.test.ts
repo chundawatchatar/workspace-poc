@@ -281,6 +281,8 @@ describe('tunneled sockets', () => {
         serverUrl: `ws://127.0.0.1:${server.port}`,
         linkedAt: expect.any(String),
       },
+      connectRequest: null,
+      connectOutcome: null,
     })
     for (const hidden of [
       machineKey.privateKey,
