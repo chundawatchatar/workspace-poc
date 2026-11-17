@@ -1,20 +1,22 @@
 import type { TunnelState } from '@orch/shared'
 import type { RemoteAccessTone } from '@orch/ui'
 
-/** What the Remote access dialog says about the tunnel, and the colour of its dot. */
-export function remoteAccessLabel(state: TunnelState): { label: string; tone: RemoteAccessTone } {
-  switch (state) {
-    case 'off':
-      return { label: 'Off', tone: 'off' }
-    case 'connecting':
-      return { label: 'Connecting…', tone: 'warn' }
-    case 'connected':
-      return { label: 'Connected', tone: 'good' }
-    case 'reconnecting':
-      return { label: 'Reconnecting…', tone: 'warn' }
-    case 'stopped':
-      return { label: 'Stopped: another host took over, or the server needs a newer host', tone: 'bad' }
-  }
+/** What the Remote access dialog says after a disconnect the server didn't record. */
+export const REMOVE_IN_CLIENT =
+  "Disconnected. The server did not remove this machine from your account's list: remove it in the client."
+
+/**
+ * What the Remote access dialog says about the connection, and the colour of
+ * its dot, from the tunnel's state and whether an account is `linked`. A
+ * tunnel that opens before the account is saved, as Connect does, reads as
+ * connecting; a linked machine whose tunnel stopped has lost its connection.
+ */
+export function remoteAccessLabel(state: TunnelState, linked: boolean): { label: string; tone: RemoteAccessTone } {
+  if (state === 'reconnecting') return { label: 'Reconnecting…', tone: 'warn' }
+  if (state === 'connecting' || (state === 'connected' && !linked)) return { label: 'Connecting…', tone: 'warn' }
+  if (!linked) return { label: 'Not connected', tone: 'off' }
+  if (state === 'connected') return { label: 'Connected', tone: 'good' }
+  return { label: 'Connection lost', tone: 'bad' }
 }
 
 /**

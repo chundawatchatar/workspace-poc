@@ -7,19 +7,14 @@ import {
   encodeFrame,
   type MachineFrame,
   machineFrame,
+  parseServerUrl,
   routes,
   type ServerFrame,
   TUNNEL_PATH,
   TUNNEL_PROTOCOL_VERSION,
 } from '@orch/shared'
 import type { Server, ServerWebSocket } from 'bun'
-import {
-  backoffDelay,
-  parseServerUrl,
-  TunnelClient,
-  type TunnelClientOptions,
-  type TunnelTimings,
-} from './tunnel.service'
+import { backoffDelay, TunnelClient, type TunnelClientOptions, type TunnelTimings } from './tunnel.service'
 import { createTestMachineKey, helloVerifies, testNonce } from './tunnel.testing'
 
 const key = createTestMachineKey()
@@ -140,30 +135,6 @@ async function until(check: () => boolean, timeoutMs = 1000) {
     await Bun.sleep(2)
   }
 }
-
-describe('parseServerUrl', () => {
-  test('takes wss for any host and ws only for a loopback host', () => {
-    expect(parseServerUrl('wss://relay.example.com')).toBe(`wss://relay.example.com${TUNNEL_PATH}`)
-    expect(parseServerUrl('wss://relay.example.com:8443/base/')).toBe(`wss://relay.example.com:8443/base${TUNNEL_PATH}`)
-    expect(parseServerUrl('ws://127.0.0.1:4600')).toBe(`ws://127.0.0.1:4600${TUNNEL_PATH}`)
-    expect(parseServerUrl('ws://[::1]:4600')).toBe(`ws://[::1]:4600${TUNNEL_PATH}`)
-    expect(parseServerUrl('ws://localhost:4600')).toBe(`ws://localhost:4600${TUNNEL_PATH}`)
-    for (const value of [
-      'ws://example.com',
-      'ws://10.0.0.1',
-      'ws://localhost.example.com',
-      'ws://127.0.0.1.example.com',
-      'http://127.0.0.1:4600',
-      'https://relay.example.com',
-      'relay.example.com',
-      'wss://',
-      'wss://user:pass@relay.example.com',
-      '',
-    ]) {
-      expect(parseServerUrl(value)).toBeNull()
-    }
-  })
-})
 
 describe('backoffDelay', () => {
   test('doubles from the base up to the cap, scaled by the jitter', () => {
@@ -322,41 +293,72 @@ describe('TunnelClient', () => {
     expect(conns[1]?.closed?.code).toBe(1000)
   })
 
-  test('enroll resolves each request with its own answer, and rejects before welcome, on timeout and on a lost tunnel', async () => {
+  test('enroll and unlink resolve each with its own answer, and reject before welcome, on timeout and on a lost tunnel', async () => {
     const key = `oek_${'k'.repeat(43)}`
+    const email = 'ada@example.com'
     const account = { name: 'Ada', maskedEmail: 'a***@example.com' }
     mode = 'mute'
-    const client = start({ timings: { ...timings, welcomeTimeoutMs: 2000, enrollTimeoutMs: 60 } })
+    const client = start({ timings: { ...timings, welcomeTimeoutMs: 2000, askTimeoutMs: 60 } })
     await until(() => conns[0]?.frames.some((f) => f.type === 'hello') ?? false)
-    await expect(client.enroll({ type: 'enroll.preview', key })).rejects.toThrow('not connected')
+    await expect(client.enroll({ type: 'enroll.redeem', key, email, name: 'box' })).rejects.toThrow('not connected')
+    await expect(client.unlink('u1')).rejects.toThrow('not connected')
 
     const [conn] = conns
     if (!conn) throw new Error('no connection')
     send(conn, { type: 'welcome', machineId: 'm' })
     await until(() => client.status === 'connected')
-    const preview = client.enroll({ type: 'enroll.preview', key })
-    const redeem = client.enroll({ type: 'enroll.redeem', key, name: 'box' })
-    const sent = () => conn.frames.filter((f) => f.type === 'enroll.preview' || f.type === 'enroll.redeem')
+    const redeem = client.enroll({ type: 'enroll.redeem', key, email, name: 'box' })
+    const unlink = client.unlink('u1')
+    const sent = () => conn.frames.filter((f) => f.type === 'enroll.redeem' || f.type === 'unlink')
     await until(() => sent().length === 2)
-    const [p, r] = sent()
-    if (p?.type !== 'enroll.preview' || r?.type !== 'enroll.redeem') throw new Error('frames out of order')
-    expect(p).toEqual({ type: 'enroll.preview', id: p.id, key })
-    expect(r).toEqual({ type: 'enroll.redeem', id: r.id, key, name: 'box' })
-    expect(p.id).not.toBe(r.id)
+    const [r, u] = sent()
+    if (r?.type !== 'enroll.redeem' || u?.type !== 'unlink') throw new Error('frames out of order')
+    expect(r).toEqual({ type: 'enroll.redeem', id: r.id, key, email, name: 'box' })
+    expect(u).toEqual({ type: 'unlink', id: u.id, accountId: 'u1' })
+    expect(r.id).not.toBe(u.id)
     // An answer of the wrong kind for the id is ignored; the right one resolves it.
     const relayKeys = [{ kid: 'k1', publicKey: 'P'.repeat(43) }]
-    send(conn, { type: 'enroll.redeemed', id: p.id, machineId: 'm', accountId: 'u1', account, relayKeys })
-    const expiresAt = new Date(Date.now() + 60_000).toISOString()
-    send(conn, { type: 'enroll.previewed', id: p.id, account, fingerprint: 'kkkk', expiresAt })
+    send(conn, { type: 'enroll.redeemed', id: u.id, machineId: 'm', accountId: 'u1', account, relayKeys })
+    send(conn, { type: 'unlinked', id: r.id })
+    send(conn, { type: 'unlinked', id: u.id })
     send(conn, { type: 'enroll.failed', id: r.id, code: 'rate_limited' })
-    expect(await preview).toEqual({ type: 'enroll.previewed', id: p.id, account, fingerprint: 'kkkk', expiresAt })
     expect(await redeem).toEqual({ type: 'enroll.failed', id: r.id, code: 'rate_limited' })
+    expect(await unlink).toEqual({ type: 'unlinked', id: u.id })
 
-    await expect(client.enroll({ type: 'enroll.preview', key })).rejects.toThrow('did not answer')
-    const lost = client.enroll({ type: 'enroll.preview', key })
+    await expect(client.unlink('u1')).rejects.toThrow('did not answer')
+    const lost = client.enroll({ type: 'enroll.redeem', key, email, name: 'box' })
     conn.ws.close(1000)
     await expect(lost).rejects.toThrow('closed')
     expect(logs.join('\n')).not.toContain(key)
+    expect(logs.join('\n')).not.toContain(email)
+  })
+
+  test('whenConnected resolves on the welcome, and rejects when the first attempt fails or the client stops', async () => {
+    const client = start()
+    await client.whenConnected(1000)
+    expect(client.status).toBe('connected')
+    await client.whenConnected(1000)
+
+    const probe = Bun.serve({ port: 0, fetch: () => new Response('') })
+    const nowhere = new TunnelClient({
+      url: parseServerUrl(`ws://127.0.0.1:${probe.port}`) ?? '',
+      key,
+      authorize: () => null,
+      handle: async () => new Response('ok'),
+      openSocket: () => ({ code: 1008, reason: 'none' }),
+      timings,
+    })
+    probe.stop(true)
+    clients.push(nowhere)
+    nowhere.start()
+    await expect(nowhere.whenConnected(1000)).rejects.toThrow('reconnecting')
+
+    mode = 'mute'
+    const muted = start()
+    const waiting = muted.whenConnected(1000)
+    muted.stop()
+    await expect(waiting).rejects.toThrow('off')
+    await expect(muted.whenConnected(1000)).rejects.toThrow('off')
   })
 
   test('passes session.ended on only after welcome, and ignores a malformed one without dropping the tunnel', async () => {

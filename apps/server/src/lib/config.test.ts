@@ -8,6 +8,7 @@ const accountsEnv = {
   SMTP_URL: 'smtp://127.0.0.1:1025',
   MAIL_FROM: 'Orch <no-reply@example.com>',
   RELAY_SIGNING_KEY: `k1:${'s'.repeat(43)}`,
+  SERVER_TUNNEL_URL: 'ws://127.0.0.1:4600',
 }
 
 function errorOf(env: Record<string, string | undefined>): string {
@@ -35,6 +36,7 @@ describe('loadServerConfig', () => {
       mailFrom: accountsEnv.MAIL_FROM,
       relaySigningKey: { kid: 'k1', seed: 's'.repeat(43) },
       relayExtraPublicKeys: [{ kid: 'k2', publicKey: 'p'.repeat(43) }],
+      serverTunnelUrl: 'ws://127.0.0.1:4600',
     })
     expect(config.trustedOrigins).toEqual(['https://a.example', 'http://b:8080'])
   })
@@ -62,6 +64,28 @@ describe('loadServerConfig', () => {
     for (const value of [secret, 'not a url', 'http://127.0.0.1:1025', 'bad.example', 'db-password', 'relay-seed']) {
       expect(message).not.toContain(value)
     }
+  })
+
+  test('takes SERVER_TUNNEL_URL only as wss://<host> or ws:// on loopback, with no path, and names it otherwise', () => {
+    const tunnelUrl = (value: string | undefined) =>
+      loadServerConfig({ ...accountsEnv, SERVER_TUNNEL_URL: value }).accounts?.serverTunnelUrl
+    expect(tunnelUrl('wss://Relay.Example.com/')).toBe('wss://relay.example.com')
+    expect(tunnelUrl('ws://[::1]:4600')).toBe('ws://[::1]:4600')
+    for (const value of [
+      undefined,
+      '',
+      'ws://relay.example.com',
+      'https://relay.example.com',
+      'wss://relay.example.com/base',
+      'wss://relay.example.com/?a=1',
+      'wss://user:pass@relay.example.com',
+    ]) {
+      const message = errorOf({ ...accountsEnv, SERVER_TUNNEL_URL: value })
+      expect(message).toContain('SERVER_TUNNEL_URL')
+      if (value) expect(message).not.toContain(value)
+    }
+    // Accounts off need none.
+    expect(loadServerConfig({ SERVER_TUNNEL_URL: 'nonsense' }).accounts).toBeNull()
   })
 
   test('counts bytes, not characters, for the secret', () => {

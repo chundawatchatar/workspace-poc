@@ -4,17 +4,17 @@ import {
   decodeFrame,
   encodeFrame,
   type enrollFailedFrame,
-  type enrollPreviewedFrame,
-  type enrollPreviewFrame,
   type enrollRedeemedFrame,
   type enrollRedeemFrame,
   helloSignedMessage,
   type MachineFrame,
   type ServerFrame,
   serverFrame,
-  TUNNEL_PATH,
   TUNNEL_PROTOCOL_VERSION,
   type TunnelState,
+  type unlinkedFrame,
+  type unlinkFailedFrame,
+  type unlinkFrame,
 } from '@orch/shared'
 import type { z } from 'zod'
 import type { Principal } from '../../lib/principal'
@@ -24,44 +24,30 @@ import { type OpenChannel, type OpenSocket, TunnelChannels } from './tunnel-chan
 import { type Authorize, type SealedSessionLookup, type TunnelHandler, TunnelHttp } from './tunnel-http.service'
 import { TunnelOutbox } from './tunnel-outbox.service'
 
-const LOOPBACK_HOSTS = ['127.0.0.1', '[::1]', 'localhost']
+/** An `enroll.redeem` frame to send, without its `id`, which `enroll` picks. */
+export type EnrollRequest = Omit<z.infer<typeof enrollRedeemFrame>, 'id'>
 
-/**
- * The tunnel URL for a `SERVER_URL` value, or null when it is not one: `wss:`
- * for any host, `ws:` only for a loopback host. A base path is kept, and
- * credentials, a query or a fragment are refused.
- */
-export function parseServerUrl(value: string): string | null {
-  let url: URL
-  try {
-    url = new URL(value)
-  } catch {
-    return null
-  }
-  if (url.protocol !== 'wss:' && !(url.protocol === 'ws:' && LOOPBACK_HOSTS.includes(url.hostname))) return null
-  if (!url.hostname || url.username || url.password || url.search || url.hash) return null
-  url.pathname = url.pathname.replace(/\/+$/, '') + TUNNEL_PATH
-  return url.href
+/** The server's answer to an `EnrollRequest`: `enroll.redeemed`, or `enroll.failed`. */
+export type EnrollAnswer = z.infer<typeof enrollRedeemedFrame> | z.infer<typeof enrollFailedFrame>
+
+/** The server's answer to `unlink`: `unlinked`, or `unlink.failed`. */
+export type UnlinkAnswer = z.infer<typeof unlinkedFrame> | z.infer<typeof unlinkFailedFrame>
+
+/** A frame that asks the server something, without its `id`, which the client picks. */
+type AskFrame = EnrollRequest | Omit<z.infer<typeof unlinkFrame>, 'id'>
+
+type Answer = EnrollAnswer | UnlinkAnswer
+
+/** The answers each asking frame waits for. Any other frame with its id is ignored. */
+const ANSWERS: Record<AskFrame['type'], readonly Answer['type'][]> = {
+  'enroll.redeem': ['enroll.redeemed', 'enroll.failed'],
+  unlink: ['unlinked', 'unlink.failed'],
 }
 
-/** An enrollment frame to send, without its `id`, which `enroll` picks. */
-export type EnrollRequest =
-  | Omit<z.infer<typeof enrollPreviewFrame>, 'id'>
-  | Omit<z.infer<typeof enrollRedeemFrame>, 'id'>
-
-/** The server's answer to an `EnrollRequest`: `enroll.previewed` or `enroll.redeemed` to match it, or `enroll.failed`. */
-export type EnrollAnswer =
-  | z.infer<typeof enrollPreviewedFrame>
-  | z.infer<typeof enrollRedeemedFrame>
-  | z.infer<typeof enrollFailedFrame>
-
-/** The answer each enrollment request waits for, besides `enroll.failed`. */
-const ENROLL_ANSWER = { 'enroll.preview': 'enroll.previewed', 'enroll.redeem': 'enroll.redeemed' } as const
-
-/** An enrollment request waiting for its answer. */
-interface PendingEnroll {
-  answer: EnrollAnswer['type']
-  resolve: (frame: EnrollAnswer) => void
+/** A frame waiting for its answer. */
+interface PendingAsk {
+  answers: readonly Answer['type'][]
+  resolve: (frame: Answer) => void
   reject: (error: Error) => void
   timer: Timer
 }
@@ -89,8 +75,8 @@ export interface TunnelTimings extends Backoff {
   silenceTimeoutMs: number
   /** How long a connection must stay welcomed before the backoff starts again from the first attempt. */
   stableAfterMs: number
-  /** How long the server has to answer an enrollment frame. */
-  enrollTimeoutMs: number
+  /** How long the server has to answer an `enroll.redeem` or `unlink` frame. */
+  askTimeoutMs: number
   /** How often the wake watchdog compares the wall clock with its previous tick. */
   wakeCheckMs: number
   /** How far the wall clock may run ahead of the expected tick before the client counts it as waking from sleep. */
@@ -105,7 +91,7 @@ const defaultTimings: TunnelTimings = {
   pingIntervalMs: 20_000,
   silenceTimeoutMs: 45_000,
   stableAfterMs: 60_000,
-  enrollTimeoutMs: 10_000,
+  askTimeoutMs: 10_000,
   wakeCheckMs: 1000,
   wakeJumpMs: 10_000,
   pongTimeoutMs: 5000,
@@ -156,8 +142,8 @@ interface Connection {
   challenged: boolean
   welcomed: boolean
   nonce: number
-  /** Enrollment requests by id, until they are answered, time out or the connection ends. */
-  enrolls: Map<number, PendingEnroll>
+  /** The frames that ask the server something, by id, until they are answered, time out or the connection ends. */
+  asks: Map<number, PendingAsk>
   /** The timeout of each of this client's pings, by nonce, until its `pong` arrives. */
   pongs: Map<number, Timer>
   timers: Timer[]
@@ -182,7 +168,9 @@ export class TunnelClient {
   private readonly random: () => number
   private conn: Connection | null = null
   private attempt = 0
-  private enrollId = 0
+  private askId = 0
+  /** Told each time `status` changes, for `whenConnected`. */
+  private readonly watchers = new Set<(state: TunnelState) => void>()
   private reconnectTimer: Timer | undefined
   private watchdog: Timer | undefined
   /** The wall-clock time of the watchdog's previous tick. */
@@ -209,7 +197,7 @@ export class TunnelClient {
   /**
    * Closes the tunnel with 1000 and cancels every timer and any pending
    * reconnect. With `remoteOff`, a welcomed connection first tells the server
-   * the owner turned remote access off.
+   * the owner disconnected the machine.
    */
   stop(options?: { remoteOff: true }) {
     this.stopped = true
@@ -238,21 +226,58 @@ export class TunnelClient {
   }
 
   /**
-   * Sends an enrollment frame with a fresh id and resolves with the server's
+   * Waits for the connection `start()` dials first: resolves once the server
+   * welcomes it, at once when it already has, and rejects when that attempt
+   * fails, when the client stops, or after `timeoutMs`.
+   */
+  whenConnected(timeoutMs: number): Promise<void> {
+    if (this.state === 'connected') return Promise.resolve()
+    if (this.state !== 'connecting') return Promise.reject(new Error(`the tunnel is ${this.state}`))
+    return new Promise((resolve, reject) => {
+      const done = (error?: Error) => {
+        clearTimeout(timer)
+        this.watchers.delete(watch)
+        if (error) reject(error)
+        else resolve()
+      }
+      const watch = (state: TunnelState) => {
+        if (state === 'connected') done()
+        else if (state !== 'connecting') done(new Error(`the tunnel is ${state}`))
+      }
+      const timer = setTimeout(() => done(new Error('the server did not welcome the tunnel in time')), timeoutMs)
+      this.watchers.add(watch)
+    })
+  }
+
+  /**
+   * Sends `enroll.redeem` with a fresh id and resolves with the server's
    * answer to it. Rejects when the tunnel is not welcomed, when the connection
-   * ends first, or after `enrollTimeoutMs`. The key is never logged.
+   * ends first, or after `askTimeoutMs`. Neither the key nor the email is ever logged.
    */
   enroll(request: EnrollRequest): Promise<EnrollAnswer> {
+    return this.ask(request) as Promise<EnrollAnswer>
+  }
+
+  /**
+   * Asks the server to remove this machine from the list of the account
+   * `accountId`, and resolves with its answer. Rejects as `enroll` does.
+   */
+  unlink(accountId: string): Promise<UnlinkAnswer> {
+    return this.ask({ type: 'unlink', accountId }) as Promise<UnlinkAnswer>
+  }
+
+  /** Sends `frame` with a fresh id and resolves with the first of its answers that comes back with that id. */
+  private ask(frame: AskFrame): Promise<Answer> {
     const conn = this.conn
     if (!conn?.welcomed) return Promise.reject(new Error('the tunnel is not connected'))
-    const id = ++this.enrollId
+    const id = ++this.askId
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        conn.enrolls.delete(id)
+        conn.asks.delete(id)
         reject(new Error('the server did not answer'))
-      }, this.timings.enrollTimeoutMs)
-      conn.enrolls.set(id, { answer: ENROLL_ANSWER[request.type], resolve, reject, timer })
-      this.send(conn, { ...request, id })
+      }, this.timings.askTimeoutMs)
+      conn.asks.set(id, { answers: ANSWERS[frame.type], resolve, reject, timer })
+      this.send(conn, { ...frame, id })
     })
   }
 
@@ -286,7 +311,7 @@ export class TunnelClient {
       challenged: false,
       welcomed: false,
       nonce: 0,
-      enrolls: new Map(),
+      asks: new Map(),
       pongs: new Map(),
       timers: [],
     }
@@ -339,12 +364,13 @@ export class TunnelClient {
       case 'session.ended':
         if (conn.welcomed) this.options.onSessionEnded?.(frame.accountId)
         return
-      case 'enroll.previewed':
       case 'enroll.redeemed':
-      case 'enroll.failed': {
-        const pending = conn.enrolls.get(frame.id)
-        if (!pending || (frame.type !== 'enroll.failed' && frame.type !== pending.answer)) return
-        conn.enrolls.delete(frame.id)
+      case 'enroll.failed':
+      case 'unlinked':
+      case 'unlink.failed': {
+        const pending = conn.asks.get(frame.id)
+        if (!pending?.answers.includes(frame.type)) return
+        conn.asks.delete(frame.id)
         clearTimeout(pending.timer)
         pending.resolve(frame)
         return
@@ -415,11 +441,11 @@ export class TunnelClient {
     conn.http.close()
     conn.channels.close()
     conn.outbox.close()
-    for (const pending of conn.enrolls.values()) {
+    for (const pending of conn.asks.values()) {
       clearTimeout(pending.timer)
       pending.reject(new Error('the tunnel closed'))
     }
-    conn.enrolls.clear()
+    conn.asks.clear()
   }
 
   private drop(conn: Connection, reason: string) {
@@ -502,5 +528,6 @@ export class TunnelClient {
     if (state === this.state) return
     this.state = state
     this.options.onStatus?.(state)
+    for (const watch of [...this.watchers]) watch(state)
   }
 }

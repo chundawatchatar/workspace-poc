@@ -28,6 +28,9 @@ export const TEST_TRUSTED_ORIGIN = 'https://app.example'
 /** The test password every `verifiedUser` signs up with. */
 export const TEST_PASSWORD = 'correct horse battery'
 
+/** The tunnel address test apps send with every new enrollment key. */
+export const TEST_SERVER_TUNNEL_URL = 'ws://127.0.0.1:4600'
+
 /** The relay signing key test apps use. A fixed, public test value. */
 export const TEST_RELAY_SIGNING_KEY = { kid: 'test-1', seed: Buffer.alloc(32, 7).toString('base64url') }
 
@@ -204,7 +207,7 @@ export function accountsTestApp(
       modules: [
         createAuthModule({ auth, clientIp: clientIpReader({ trustProxy: false }) }),
         createAccountModule(),
-        createMachinesModule({ registry, now, relayTickets }),
+        createMachinesModule({ registry, now, relayTickets, serverTunnelUrl: TEST_SERVER_TUNNEL_URL }),
       ],
     },
   })

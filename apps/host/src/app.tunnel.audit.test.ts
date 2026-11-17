@@ -24,7 +24,6 @@ import {
   remoteAccess,
   sealedSocket,
   send,
-  server,
   stub,
   until,
   useTunnelHarness,
@@ -56,7 +55,6 @@ const nonceOf = (proof: string) => JSON.parse(Buffer.from(proof.split('.')[1] ??
 describe('remote access audit log', () => {
   test('records sockets opened and closed and every refusal, with no secret, path or header in the file', async () => {
     let conn: Conn = await welcomed()
-    await remoteAccess.link({ key: `oek_${'k'.repeat(43)}`, serverUrl: `ws://127.0.0.1:${server.port}` })
     const stranger = await testDevice()
     const secrets: string[] = []
     const closes = () => conn.frames.filter((f) => f.type === 'ws.close')
@@ -80,7 +78,8 @@ describe('remote access audit log', () => {
       sealedSocket(conn, e2e, channel, TERM, { as: { ticket: offered } })
     keep(key)
 
-    // Linking cleared the approvals, so the device waits once more and is approved again.
+    // A revoked device waits once more, and is approved again.
+    remoteAccess.removeDevice(device.id)
     request(9, [
       [RELAY_TICKET_HEADER, ticket()],
       [DEVICE_PROOF_HEADER, await proof(device, 'GET', MACHINE_KEY)],

@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { closeSync, existsSync, fstatSync, readFileSync, statSync } from 'node:fs'
 import { instanceResponse, routes } from '@orch/shared'
 import type { SettingFlag } from '../modules/settings/settings.service'
-import { createHostCaller } from '../remote-cli'
+import { connectionSummary, createHostCaller, readLinkedAccount } from '../remote-cli'
 import { printableLines } from '../remote-cli-output'
 import { BACKGROUND_FLAG, settingFlagArgs } from './args'
 import { ensureDataFolder } from './data-folder'
@@ -252,29 +252,43 @@ export async function restart(options: StartOptions): Promise<number> {
 }
 
 /**
- * `corch status`: prints whether the host runs, its URL, its pid and the terminal daemon it reports. Exits 0 when
- * it runs and 3 when it doesn't.
+ * `corch status`: prints whether the host runs, its URL, its pid and the terminal daemon it reports, and whether the
+ * machine is connected to an account, and to which, from the running host or else from `linked-account.json`. Exits
+ * 0 when the host runs and 3 when it doesn't.
  */
 export async function status(dataDir: string): Promise<number> {
   const state = await hostState(dataDir)
-  if (state.kind === 'starting') {
-    console.log(`corch is starting (pid ${state.pid ?? 'unknown'})`)
-    return NOT_RUNNING_EXIT
-  }
-  if (state.kind === 'none') {
-    console.log('corch is not running')
+  if (state.kind !== 'running') {
+    console.log(
+      state.kind === 'starting' ? `corch is starting (pid ${state.pid ?? 'unknown'})` : 'corch is not running',
+    )
+    console.log(`  remote access: ${connectionFromFile(dataDir)}`)
     return NOT_RUNNING_EXIT
   }
   const { url, pid } = state.run
   console.log(`corch is running\n  URL: ${url}\n  pid: ${pid}`)
-  const answer = await createHostCaller(url)(routes.system.daemon, {}).catch(() => null)
-  if (!answer?.ok) {
+  const call = createHostCaller(url)
+  const answer = await call(routes.system.daemon, {}).catch(() => null)
+  if (answer?.ok) {
+    const daemon = answer.data
+    const uptime = daemon.uptimeMs === null ? '' : `, up ${Math.round(daemon.uptimeMs / 1000)} s`
+    const compatibility = daemon.compatibility ?? 'not heard from'
+    console.log(`  terminal daemon: ${compatibility}, ${daemon.liveTerminals} live terminal(s)${uptime}`)
+  } else {
     console.log('  terminal daemon: unknown (the host did not say)')
-    return 0
   }
-  const daemon = answer.data
-  const uptime = daemon.uptimeMs === null ? '' : `, up ${Math.round(daemon.uptimeMs / 1000)} s`
-  const compatibility = daemon.compatibility ?? 'not heard from'
-  console.log(`  terminal daemon: ${compatibility}, ${daemon.liveTerminals} live terminal(s)${uptime}`)
+  const remote = await call(routes.remoteAccess.status, {}).catch(() => null)
+  const connection = remote?.ok ? connectionSummary(remote.data.linkedAccount) : 'unknown (the host did not say)'
+  console.log(`  remote access: ${connection}`)
   return 0
+}
+
+/** Whether `linked-account.json` connects this machine to an account, for a host that doesn't run. */
+function connectionFromFile(dataDir: string): string {
+  let problem = ''
+  const account = readLinkedAccount(dataDir, (line) => {
+    problem = line
+  })
+  if (account === undefined) return `unknown (${problem})`
+  return account ? `${connectionSummary(account)} (host not running)` : 'not connected'
 }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   ACCESS_KEY_HEADER,
@@ -9,6 +9,7 @@ import {
   DEVICE_NOT_APPROVED_CODE,
   DEVICE_PROOF_HEADER,
   decodeFrame,
+  disconnectResponse,
   encodeFrame,
   machineFingerprint,
   machineIdFromPublicKey,
@@ -21,6 +22,7 @@ import {
   startBrowserHandshake,
 } from '@orch/shared'
 import {
+  ACCOUNT_ID,
   clients,
   conns,
   dataOn,
@@ -245,16 +247,16 @@ describe('tunneled sockets', () => {
     expect(body(1)).not.toContain(machineKey.privateKey)
   })
 
-  test('every remote access route and the instance id answer 403 through the tunnel and leaves the setting and tunnel alone, but works locally', async () => {
+  test('every remote access route and the instance id answer 403 through the tunnel and leave the setting and tunnel alone, but work locally', async () => {
     const conn = await welcomed()
     const saved = readFileSync(settingsFile, 'utf8')
-    const { status, update } = routes.remoteAccess
+    const { status, disconnect } = routes.remoteAccess
     const e2e = await openE2eSession(conn, 1)
     for (const [index, endpoint] of [...Object.values(routes.remoteAccess), routes.system.instance].entries()) {
       const reply = await sealedRequest(conn, e2e, index + 2, endpoint.method, endpoint.path)
       expect([endpoint.path, reply.status]).toEqual([endpoint.path, 403])
     }
-    expect(conn.frames.some((f) => f.type.startsWith('enroll.'))).toBe(false)
+    expect(conn.frames.some((f) => f.type.startsWith('enroll.') || f.type === 'unlink')).toBe(false)
     expect(readFileSync(settingsFile, 'utf8')).toBe(saved)
     expect(clients).toHaveLength(1)
     expect(clients[0]?.status).toBe('connected')
@@ -264,44 +266,43 @@ describe('tunneled sockets', () => {
     const near = await fetch(`http://127.0.0.1:${local.port}${status.path}`)
     const text = await near.text()
     expect(remoteAccessStatus.parse(JSON.parse(text))).toEqual({
-      enabled: true,
       serverUrl: `ws://127.0.0.1:${server.port}`,
       serverUrlIsDefault: false,
+      defaultServerUrl: 'wss://orch.example.com',
       clientUrl: 'https://orch.example',
       serverUrlSetBy: null,
       clientUrlSetBy: null,
-      savedServerUrl: `ws://127.0.0.1:${server.port}`,
-      savedClientUrl: 'https://orch.example',
-      restartNeeded: false,
       machineId,
       machineFingerprint: machineFingerprint(machineId),
       tunnel: 'connected',
-      linkedAccount: null,
+      linkedAccount: {
+        name: 'Ada',
+        maskedEmail: 'a***@example.com',
+        serverUrl: `ws://127.0.0.1:${server.port}`,
+        linkedAt: expect.any(String),
+      },
     })
     for (const hidden of [
       machineKey.privateKey,
       machineKey.pem,
       key,
+      ACCOUNT_ID,
       readFileSync(join(dir, 'access-keys.json'), 'utf8').match(/"hash": "([^"]+)"/)?.[1],
     ]) {
       expect(text).not.toContain(hidden ?? 'missing')
     }
 
-    const off = await fetch(`http://127.0.0.1:${local.port}${update.path}`, {
-      method: update.method,
+    const off = await fetch(`http://127.0.0.1:${local.port}${disconnect.path}`, {
+      method: disconnect.method,
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ enabled: false, serverUrl: `ws://127.0.0.1:${server.port}`, clientUrl: null }),
+      body: '{}',
     })
-    // The cleared client address is saved for the next start; the one in use stays until then.
-    expect(remoteAccessStatus.parse(await off.json())).toMatchObject({
-      enabled: false,
-      tunnel: 'off',
-      clientUrl: 'https://orch.example',
-      savedClientUrl: null,
-      restartNeeded: true,
+    expect(disconnectResponse.parse(await off.json())).toMatchObject({
+      removedFromAccount: true,
+      status: { tunnel: 'off', linkedAccount: null, serverUrl: `ws://127.0.0.1:${server.port}` },
     })
     expect(clients[0]?.status).toBe('off')
-    expect(JSON.parse(readFileSync(settingsFile, 'utf8'))).toMatchObject({ enabled: false })
+    expect(existsSync(join(dir, 'linked-account.json'))).toBe(false)
   })
 })
 

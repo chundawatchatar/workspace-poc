@@ -1,8 +1,7 @@
-import type { RemoteAccessStatus, UpdateRemoteAccessBody } from '@orch/shared'
+import { parseServerUrl, type RemoteAccessStatus, sameServerUrl } from '@orch/shared'
 import { clientUrlFromServerUrl, parseClientUrl } from '../access/access.service'
-import { readSettingsFile, saveAddresses } from '../settings/settings.repository'
+import { saveAddresses } from '../settings/settings.repository'
 import { DEFAULT_SERVER_URL, derivedClientUrl, type Setting, type Settings } from '../settings/settings.service'
-import { parseServerUrl } from '../tunnel/tunnel.service'
 import { InvalidRemoteAccessSetting } from './remote-access.errors'
 
 /** The dev host's environment variables that override the saved addresses. Empty values count as unset. */
@@ -12,9 +11,9 @@ export interface RemoteAccessEnv {
 }
 
 /**
- * The relay and client addresses in use, as loaded at start. The client
- * address is null only when it is derived from a relay address that is not a
- * `ws(s)://` one, which only `SERVER_URL` can set.
+ * The relay and client addresses in use. The client address is null only when
+ * it is derived from a relay address that is not a `ws(s)://` one, which only
+ * `SERVER_URL` can set.
  */
 export interface RemoteAddresses {
   relayUrl: Setting<string>
@@ -48,149 +47,89 @@ export function devAddresses(
   }
 }
 
-/**
- * The server address to save from what the user entered: trimmed, or null when
- * empty, which means the default. Throws `InvalidRemoteAccessSetting` for an
- * address `parseServerUrl` refuses.
- */
-export function enteredServerUrl(value: string): string | null {
-  const trimmed = value.trim()
-  if (trimmed && !parseServerUrl(trimmed)) {
-    throw new InvalidRemoteAccessSetting(
-      'The server address must be wss://<host>, or ws:// on 127.0.0.1, [::1] or localhost',
-    )
-  }
-  return trimmed || null
-}
+/** What the host says about a server address it refuses. It never quotes the address. */
+export const SERVER_URL_RULE = 'The server address must be wss://<host>, or ws:// on 127.0.0.1, [::1] or localhost'
 
 /** The client address connect links are built on, from the one in use, without a trailing slash. Null when there is none. */
 export function linkClientUrl(clientUrl: Setting<string | null>): string | null {
   return clientUrl.value === null ? null : parseClientUrl(clientUrl.value)
 }
 
-/** The addresses saved in the settings file. Null means none is saved there. */
-interface FileAddresses {
-  relayUrl: string | null
-  clientUrl: string | null
-}
-
 /** The part of the remote access status about addresses. */
 type AddressStatus = Pick<
   RemoteAccessStatus,
-  | 'serverUrl'
-  | 'serverUrlIsDefault'
-  | 'clientUrl'
-  | 'serverUrlSetBy'
-  | 'clientUrlSetBy'
-  | 'savedServerUrl'
-  | 'savedClientUrl'
-  | 'restartNeeded'
+  'serverUrl' | 'serverUrlIsDefault' | 'defaultServerUrl' | 'clientUrl' | 'serverUrlSetBy' | 'clientUrlSetBy'
 >
 
 /**
- * The relay and client addresses of a running host: the ones in use, fixed at
- * start, and the ones saved in the settings file, which the host uses from its
- * next start. An address a flag or the environment sets is never saved.
+ * The relay and client addresses of a running host: the ones it started with,
+ * until Connect makes another server address the one in use and saves it in
+ * the settings file. An address a flag or the environment sets is never
+ * changed or saved.
  */
 export class RemoteAccessAddresses {
-  private saved: FileAddresses = { relayUrl: null, clientUrl: null }
+  private current: RemoteAddresses
 
   constructor(
-    readonly inUse: RemoteAddresses,
+    inUse: RemoteAddresses,
     private readonly file: string,
     private readonly defaultServerUrl = DEFAULT_SERVER_URL,
-  ) {}
+  ) {
+    this.current = inUse
+  }
 
-  /** Reads the saved addresses. A file that can't be read is logged, and counts as saving none. */
-  load() {
-    try {
-      const file = readSettingsFile(this.file)
-      const text = (value: unknown) => (typeof value === 'string' ? value : null)
-      this.saved = { relayUrl: text(file?.relayUrl), clientUrl: text(file?.clientUrl) }
-    } catch (error) {
-      console.error(`the saved addresses are unknown: ${error instanceof Error ? error.message : 'unreadable'}`)
-    }
+  /** The addresses in use. */
+  get inUse(): RemoteAddresses {
+    return this.current
   }
 
   /** The tunnel URL of the server address in use. Null when it is not valid, which only `SERVER_URL` can cause. */
   tunnelUrl(): string | null {
-    return parseServerUrl(this.inUse.relayUrl.value)
+    return parseServerUrl(this.current.relayUrl.value)
   }
 
   /** True when the address in use is the default's, compared as tunnel URLs. */
   isDefault(): boolean {
-    const inUse = this.tunnelUrl()
-    return inUse !== null && inUse === parseServerUrl(this.defaultServerUrl)
+    return sameServerUrl(this.current.relayUrl.value, this.defaultServerUrl)
   }
 
   status(): AddressStatus {
-    const { relayUrl, clientUrl } = this.inUse
+    const { relayUrl, clientUrl } = this.current
     return {
       serverUrl: relayUrl.value,
       serverUrlIsDefault: this.isDefault(),
+      defaultServerUrl: this.defaultServerUrl,
       clientUrl: clientUrl.source === 'derived' ? null : clientUrl.value,
       serverUrlSetBy: relayUrl.setBy,
       clientUrlSetBy: clientUrl.setBy,
-      savedServerUrl: this.saved.relayUrl,
-      savedClientUrl: this.saved.clientUrl,
-      restartNeeded: this.restartNeeded(),
     }
   }
 
   /**
-   * Saves the entered addresses that no flag or variable sets to the settings
-   * file, keeping its other keys. Throws `InvalidRemoteAccessSetting` for an
-   * address the host refuses, or a settings file it can't rewrite, before
-   * anything is saved. With `enabled`, an overridden relay address must be valid.
+   * Makes `serverUrl`, a valid address, the server address in use, and saves
+   * it as `relayUrl` in the settings file, keeping the file's other keys. The
+   * default is saved as no address at all, so a later default applies. A
+   * derived client address follows it. An address a flag or variable sets is
+   * left as it is. Throws `InvalidRemoteAccessSetting` when the settings file
+   * can't be rewritten, before anything changes.
    */
-  save({ enabled, serverUrl, clientUrl }: UpdateRemoteAccessBody) {
-    const { relayUrl, clientUrl: client } = this.inUse
-    if (relayUrl.setBy && enabled && !this.tunnelUrl()) {
-      throw new InvalidRemoteAccessSetting(
-        `${relayUrl.setBy} is not a valid server address. Fix it and restart the host`,
-      )
-    }
-    const next = { ...this.saved }
-    if (!relayUrl.setBy) next.relayUrl = enteredServerUrl(serverUrl)
-    if (!client.setBy) {
-      const trimmed = clientUrl?.trim() ?? ''
-      next.clientUrl = trimmed ? parseClientUrl(trimmed) : null
-      if (trimmed && !next.clientUrl) {
-        throw new InvalidRemoteAccessSetting('The client address must be an http:// or https:// URL')
-      }
-    }
-    if (next.relayUrl === this.saved.relayUrl && next.clientUrl === this.saved.clientUrl) return
+  use(serverUrl: string) {
+    if (this.current.relayUrl.setBy) return
+    const isDefault = sameServerUrl(serverUrl, this.defaultServerUrl)
     try {
-      // An overridden address is left out, so the file keeps whatever it holds for it.
-      saveAddresses(this.file, {
-        ...(relayUrl.setBy ? {} : { relayUrl: next.relayUrl }),
-        ...(client.setBy ? {} : { clientUrl: next.clientUrl }),
-      })
+      saveAddresses(this.file, { relayUrl: isDefault ? null : serverUrl })
     } catch (error) {
       throw new InvalidRemoteAccessSetting(
-        `The addresses could not be saved: ${error instanceof Error ? error.message : 'unknown error'}`,
+        `The server address could not be saved: ${error instanceof Error ? error.message : 'unknown error'}`,
       )
     }
-    this.saved = next
+    const relayUrl: Setting<string> = isDefault
+      ? { value: this.defaultServerUrl, source: 'default', setBy: null }
+      : { value: serverUrl, source: 'file', setBy: null }
+    const { clientUrl } = this.current
+    this.current = {
+      relayUrl,
+      clientUrl: clientUrl.source === 'derived' ? derivedClientUrl(relayUrl.value) : clientUrl,
+    }
   }
-
-  /**
-   * True when an address saved in the settings file, and set by no flag or
-   * environment variable, differs from the one in use, so it applies only once
-   * the host restarts.
-   */
-  private restartNeeded(): boolean {
-    const { relayUrl, clientUrl } = this.inUse
-    const nextRelay = relayUrl.setBy ? relayUrl.value : (this.saved.relayUrl ?? this.defaultServerUrl)
-    if (!relayUrl.setBy && !sameUrl(parseServerUrl, nextRelay, relayUrl.value)) return true
-    if (clientUrl.setBy) return false
-    const nextClient = this.saved.clientUrl ?? clientUrlFromServerUrl(nextRelay)
-    return !sameUrl(parseClientUrl, nextClient, clientUrl.value)
-  }
-}
-
-/** True when `a` and `b` are the same address once `parse` normalises them, or the same text when it refuses one. */
-function sameUrl(parse: (value: string) => string | null, a: string | null, b: string | null): boolean {
-  if (a === null || b === null) return a === b
-  return (parse(a) ?? a) === (parse(b) ?? b)
 }

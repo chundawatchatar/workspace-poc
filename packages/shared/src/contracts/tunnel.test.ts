@@ -6,7 +6,10 @@ import {
   MAX_TUNNEL_FRAME_BYTES,
   machineFrame,
   machineIdFromPublicKey,
+  parseServerUrl,
+  sameServerUrl,
   serverFrame,
+  TUNNEL_PATH,
   TUNNEL_PROTOCOL_VERSION,
   type TunnelFrame,
   wsPayloadBytes,
@@ -45,8 +48,8 @@ describe('tunnel frames', () => {
       { type: 'http.end', id: 2, error: 'stream failed' },
       { type: 'auth.failed', id: 3 },
       { type: 'auth.failed', channel: 7 },
-      { type: 'enroll.preview', id: 5, key: 'oek_anything' },
-      { type: 'enroll.redeem', id: 6, key: 'not even a key', name: 'Laptop' },
+      { type: 'enroll.redeem', id: 6, key: 'not even a key', email: 'not an email', name: 'Laptop' },
+      { type: 'unlink', id: 8, accountId: 'u1' },
     ]
     const server: TunnelFrame[] = [
       { type: 'challenge', nonce },
@@ -57,13 +60,6 @@ describe('tunnel frames', () => {
       { type: 'ws.open', channel: 1, path: '/ws/term/abc?cols=80', headers: [] },
       { type: 'ws.sealed', channel: 2, data: allBytes },
       {
-        type: 'enroll.previewed',
-        id: 5,
-        account: { name: 'Alice', maskedEmail: 'a***@example.com' },
-        fingerprint: 'AbCd',
-        expiresAt: '2026-01-01T00:15:00.000Z',
-      },
-      {
         type: 'enroll.redeemed',
         id: 6,
         machineId: 'm-1',
@@ -72,6 +68,8 @@ describe('tunnel frames', () => {
         relayKeys: [{ kid: 'k1', publicKey: 'P'.repeat(43) }],
       },
       { type: 'enroll.failed', id: 7, code: 'invalid_key' },
+      { type: 'unlinked', id: 8 },
+      { type: 'unlink.failed', id: 9, code: 'rate_limited' },
     ]
     const both: TunnelFrame[] = [
       { type: 'ws.data', channel: 1, data: 'héllo' },
@@ -95,8 +93,8 @@ describe('tunnel frames', () => {
     check([...server, ...both], serverFrame)
   })
 
-  test('the protocol is at version 4, and ws.sealed goes as a binary frame whose data decodes byte-equal', () => {
-    expect(TUNNEL_PROTOCOL_VERSION).toBe(4)
+  test('the protocol is at version 5, and ws.sealed goes as a binary frame whose data decodes byte-equal', () => {
+    expect(TUNNEL_PROTOCOL_VERSION).toBe(5)
     const encoded = encodeFrame({ type: 'ws.sealed', channel: 9, data: allBytes })
     expect(encoded).toBeInstanceOf(Uint8Array)
     const decoded = decodeFrame(serverFrame, encoded)
@@ -163,12 +161,23 @@ describe('tunnel frames', () => {
       [machineFrame, JSON.stringify({ type: 'auth.failed' })],
       [machineFrame, JSON.stringify({ type: 'auth.failed', id: 3, key: 'k' })],
       [serverFrame, JSON.stringify({ type: 'auth.failed', id: 3 })],
-      [machineFrame, JSON.stringify({ type: 'enroll.preview', id: 0, key: 'k' })],
-      [machineFrame, JSON.stringify({ type: 'enroll.preview', id: 1, key: 'k', machineId: 'm-2' })],
-      [machineFrame, JSON.stringify({ type: 'enroll.preview', id: 1, key: 'k'.repeat(257) })],
-      [machineFrame, JSON.stringify({ type: 'enroll.redeem', id: 1, key: 'k', name: '   ' })],
-      [machineFrame, JSON.stringify({ type: 'enroll.redeem', id: 1, key: 'k' })],
-      [serverFrame, JSON.stringify({ type: 'enroll.preview', id: 1, key: 'k' })],
+      [machineFrame, JSON.stringify({ type: 'enroll.redeem', id: 0, key: 'k', email: 'e', name: 'Box' })],
+      [
+        machineFrame,
+        JSON.stringify({ type: 'enroll.redeem', id: 1, key: 'k', email: 'e', name: 'Box', machineId: 'm-2' }),
+      ],
+      [machineFrame, JSON.stringify({ type: 'enroll.redeem', id: 1, key: 'k'.repeat(257), email: 'e', name: 'Box' })],
+      [machineFrame, JSON.stringify({ type: 'enroll.redeem', id: 1, key: 'k', email: 'e'.repeat(321), name: 'Box' })],
+      [machineFrame, JSON.stringify({ type: 'enroll.redeem', id: 1, key: 'k', email: 'e', name: '   ' })],
+      [machineFrame, JSON.stringify({ type: 'enroll.redeem', id: 1, key: 'k', name: 'Box' })],
+      [serverFrame, JSON.stringify({ type: 'enroll.redeem', id: 1, key: 'k', email: 'e', name: 'Box' })],
+      [machineFrame, JSON.stringify({ type: 'unlink', id: 1 })],
+      [machineFrame, JSON.stringify({ type: 'unlink', id: 1, accountId: '' })],
+      [machineFrame, JSON.stringify({ type: 'unlink', id: 1, accountId: 'u1', machineId: 'm-2' })],
+      [serverFrame, JSON.stringify({ type: 'unlink', id: 1, accountId: 'u1' })],
+      [machineFrame, JSON.stringify({ type: 'unlinked', id: 1 })],
+      [serverFrame, JSON.stringify({ type: 'unlinked', id: 1, removed: true })],
+      [serverFrame, JSON.stringify({ type: 'unlink.failed', id: 1, code: 'invalid_key' })],
       [machineFrame, JSON.stringify({ type: 'enroll.failed', id: 1, code: 'invalid_key' })],
       [serverFrame, JSON.stringify({ type: 'enroll.failed', id: 1, code: 'expired' })],
     ]
@@ -217,5 +226,37 @@ describe('hello helpers', () => {
     const expected = new Bun.CryptoHasher('sha256').update(raw).digest('base64url')
     expect(await machineIdFromPublicKey(key)).toBe(expected)
     expect(expected).toMatch(/^[A-Za-z0-9_-]{43}$/)
+  })
+})
+
+describe('parseServerUrl', () => {
+  test('accepts wss for any host and ws only on loopback, keeping a base path', () => {
+    expect(parseServerUrl('wss://relay.example.com')).toBe(`wss://relay.example.com${TUNNEL_PATH}`)
+    expect(parseServerUrl('wss://relay.example.com:8443/base/')).toBe(`wss://relay.example.com:8443/base${TUNNEL_PATH}`)
+    expect(parseServerUrl('ws://127.0.0.1:4600')).toBe(`ws://127.0.0.1:4600${TUNNEL_PATH}`)
+    expect(parseServerUrl('ws://[::1]:4600')).toBe(`ws://[::1]:4600${TUNNEL_PATH}`)
+    expect(parseServerUrl('ws://localhost:4600')).toBe(`ws://localhost:4600${TUNNEL_PATH}`)
+    for (const value of [
+      'ws://example.com',
+      'ws://10.0.0.1',
+      'ws://localhost.example.com',
+      'ws://127.0.0.1.example.com',
+      'http://127.0.0.1:4600',
+      'https://relay.example.com',
+      'relay.example.com',
+      'wss://',
+      'wss://user:pass@relay.example.com',
+      'wss://relay.example.com/?a=1',
+      'wss://relay.example.com/#x',
+      '',
+    ]) {
+      expect(parseServerUrl(value)).toBeNull()
+    }
+  })
+
+  test('sameServerUrl compares tunnel URLs and never matches an address that is not one', () => {
+    expect(sameServerUrl(' wss://orch.example.com/ ', 'wss://orch.example.com')).toBe(true)
+    expect(sameServerUrl('wss://orch.example.com', 'wss://other.example.com')).toBe(false)
+    expect(sameServerUrl('ws://example.com', 'ws://example.com')).toBe(false)
   })
 })

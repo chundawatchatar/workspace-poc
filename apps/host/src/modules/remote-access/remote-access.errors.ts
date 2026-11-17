@@ -25,8 +25,11 @@ export class AmbiguousDevice extends Error {
   }
 }
 
-/** Why linking with a key failed, with the HTTP status to answer. Its message is meant for the user and never holds the key. */
-export class LinkError extends Error {
+/**
+ * Why connecting to an account failed, with the HTTP status to answer. Its
+ * message is meant for the user and never holds the key or the email.
+ */
+export class ConnectError extends Error {
   constructor(
     readonly status: 400 | 409 | 429 | 502 | 503,
     message: string,

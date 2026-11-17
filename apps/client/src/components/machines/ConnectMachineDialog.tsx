@@ -4,17 +4,13 @@ import { Copy } from '@orch/ui/icons'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createEnrollment, machinesQuery, newMachine } from '../../lib/accountMachines'
+import { connectCommand } from '../../lib/connectCommand'
 
 /** What the dialog says when a key can't be created. */
 const CREATE_FAILED = 'Creating a key failed. Try again.'
 
 /** What the dialog says when the clipboard is missing or refuses. */
 const COPY_FAILED = 'Copying failed. Select the text and copy it yourself.'
-
-/** The command a machine runs to link itself with `key`. */
-function linkCommand(key: string) {
-  return `bun run host:remote link ${key}`
-}
 
 /** The time left until `expiresAt`, as `mm:ss`, rounded up to the second and never below `00:00`. */
 function formatCountdown(msLeft: number) {
@@ -32,12 +28,21 @@ type Step =
   | { kind: 'linked'; machine: ServerMachine }
 
 /**
- * Creates an enrollment key as it opens and shows it once, with what the user needs to link a machine with it: the
- * key and the command to run there, each with a Copy button, its fingerprint and the time left. The key lives only in
- * this component's state, so it is gone once the dialog closes. While open, it reads the account's machines every 2
- * seconds and says so when a new one appears.
+ * Creates an enrollment key as it opens and shows it once, with what the user needs to connect a machine with it: the
+ * `corch connect` command to run there, with the signed-in `email` and the server's tunnel address, and the key alone
+ * for the machine's Remote access dialog, each with a Copy button, the key's last 4 characters and the time left. The
+ * key lives only in this component's state, so it is gone once the dialog closes. While open, it reads the account's
+ * machines every 2 seconds and says so when a new one appears.
  */
-export function ConnectMachineDialog({ userId, onClose }: { userId: string; onClose: () => void }) {
+export function ConnectMachineDialog({
+  userId,
+  email,
+  onClose,
+}: {
+  userId: string
+  email: string
+  onClose: () => void
+}) {
   const queryClient = useQueryClient()
   const [step, setStep] = useState<Step>({ kind: 'creating' })
   const [now, setNow] = useState(() => Date.now())
@@ -112,10 +117,10 @@ export function ConnectMachineDialog({ userId, onClose }: { userId: string; onCl
           <Button onClick={() => void create()}>Create a new key</Button>
         </div>
       )}
-      {ready && !expired && <KeyDetails enrollment={ready.enrollment} msLeft={ready.expiresAt - now} />}
+      {ready && !expired && <KeyDetails enrollment={ready.enrollment} email={email} msLeft={ready.expiresAt - now} />}
       {step.kind === 'linked' && (
         <div className="flex flex-col items-start gap-3">
-          <p role="status">{step.machine.name} is linked</p>
+          <p role="status">{step.machine.name} is connected</p>
           <Button onClick={onClose}>Done</Button>
         </div>
       )}
@@ -123,25 +128,33 @@ export function ConnectMachineDialog({ userId, onClose }: { userId: string; onCl
   )
 }
 
-function KeyDetails({ enrollment, msLeft }: { enrollment: CreateEnrollmentResponse; msLeft: number }) {
-  const command = linkCommand(enrollment.key)
+function KeyDetails({
+  enrollment,
+  email,
+  msLeft,
+}: {
+  enrollment: CreateEnrollmentResponse
+  email: string
+  msLeft: number
+}) {
+  const command = connectCommand({ email, key: enrollment.key, serverUrl: enrollment.serverUrl })
   return (
     <div className="flex flex-col gap-3 text-[13px]">
       <p className="text-dim">
-        Run this command on the machine you want to connect. The key works once, and the machine shows its fingerprint
-        so you can check it is this one.
+        Run this command on the machine you want to connect. Before it connects, it shows the server, your email and the
+        key's last 4 characters, so you can check they match. The key works once.
       </p>
       <CopyField label="Command" value={command} copyLabel="Copy command" />
-      <CopyField label="Key" value={enrollment.key} copyLabel="Copy key" />
+      <CopyField label="Key, for the machine's Remote access dialog" value={enrollment.key} copyLabel="Copy key" />
       <div className="flex items-center justify-between gap-3 text-dim">
         <span>
-          Fingerprint <span className="font-mono text-ink">{enrollment.fingerprint}</span>
+          Key ends in <span className="font-mono text-ink">{enrollment.fingerprint}</span>
         </span>
         <span>
           Expires in <span className="font-mono text-ink">{formatCountdown(msLeft)}</span>
         </span>
       </div>
-      <p className="text-xs text-faint">Waiting for the machine to link…</p>
+      <p className="text-xs text-faint">Waiting for the machine to connect…</p>
     </div>
   )
 }

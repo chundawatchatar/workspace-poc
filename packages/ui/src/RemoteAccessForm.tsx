@@ -3,8 +3,8 @@ import { useState } from 'react'
 import { Check, Copy, Link } from './icons'
 import { Modal } from './Modal'
 import { RemoteAccessActivity, type RemoteAccessActivityProps } from './RemoteAccessActivity'
+import { RemoteAccessConnect, type RemoteAccessConnectProps } from './RemoteAccessConnect'
 import { RemoteAccessDevices, type RemoteAccessDevicesProps } from './RemoteAccessDevices'
-import { RemoteAccessLink, type RemoteAccessLinkProps } from './RemoteAccessLink'
 import { RemoteAccessSessions, type RemoteAccessSessionsProps } from './RemoteAccessSessions'
 
 /** How the status dot is coloured. */
@@ -23,48 +23,39 @@ interface Props {
   /** What the status line says, such as "Connected". */
   statusLabel: string
   statusTone: RemoteAccessTone
-  /** The server address field: the saved one, or the one in use when a flag or the environment sets it. */
-  serverUrl: string
-  /** The client address field, like `serverUrl`. Empty means links use the one derived from the server address. */
-  clientUrl: string
-  onServerUrlChange: (value: string) => void
-  onClientUrlChange: (value: string) => void
-  /** Saves the fields, leaving remote access on or off as it is. */
-  onSave: () => void
-  /** Saves the fields and turns remote access on or off. */
-  onToggle: (enabled: boolean) => void
   /** Replaces the access key and shows the new connect link. */
   onNewLink: () => void
   /** The connect link from the last `onNewLink`. Null means none is shown. */
   link: string | null
-  /** Linking this machine to an account with a key. The linked account and `busy` come from this form's props. */
-  accountLink: Omit<RemoteAccessLinkProps, 'linkedAccount' | 'busy'>
-  /** The browsers approved for the linked account, and those waiting. Shown only while an account is linked. */
+  /**
+   * Connecting to an account and disconnecting from it. The account, the
+   * address's setter, the default address and `busy` come from this form's props.
+   */
+  connection: Omit<RemoteAccessConnectProps, 'linkedAccount' | 'serverUrlSetBy' | 'defaultServerUrl' | 'busy'>
+  /** The browsers approved for the connected account, and those waiting. Shown only while connected. */
   devices: Omit<RemoteAccessDevicesProps, 'busy'>
   /** The newest remote access recorded on this machine. Shown once the status has loaded. */
   activity: RemoteAccessActivityProps
-  /** The browsers with tunneled sockets open. Shown while an account is linked or any session is listed. */
+  /** The browsers with tunneled sockets open. Shown while connected or any session is listed. */
   sessions?: Omit<RemoteAccessSessionsProps, 'busy'>
   error: string | null
-  /** True while a save, a new link or a link step is on its way, so the buttons wait. */
+  /** What the owner still has to do after an action that worked, such as removing the machine in the client. */
+  notice: string | null
+  /** True while a connect, a disconnect, a new link or a device change is on its way, so the buttons wait. */
   busy: boolean
   onClose: () => void
 }
 
 /**
- * The remote access setting: the server and client addresses, an on/off
- * switch, where the tunnel stands, a button for a fresh connect link, the
- * account this machine is linked to, the browsers approved for it, and the
- * recent remote access. An address set by a flag or the host's environment is
- * shown read-only. A saved address applies from the host's next start, which
- * the form says while one waits.
+ * The Remote access dialog: where the connection stands, with the machine's id
+ * and key fingerprint, the Connect fields or the connected account with
+ * Disconnect, the browsers approved for the account, the open sessions, the
+ * recent remote access and a button for a fresh connect link. A server
+ * address set by a flag or the host's environment is shown read-only.
  */
 export function RemoteAccessForm(props: Props) {
-  const { status, link, error, busy } = props
+  const { status, link, error, notice, busy } = props
   const [copied, setCopied] = useState(false)
-  const enabled = status?.enabled ?? false
-  const serverSetBy = status?.serverUrlSetBy ?? null
-  const clientSetBy = status?.clientUrlSetBy ?? null
   const field =
     'w-full rounded-md border border-line bg-bg px-2.5 py-1.5 font-mono text-[13px] outline-none focus:border-accent read-only:text-dim'
 
@@ -81,80 +72,34 @@ export function RemoteAccessForm(props: Props) {
 
   return (
     <Modal title="Remote access" width="w-[520px] max-w-[94vw]" onClose={props.onClose}>
-      <form
-        className="space-y-3"
-        onSubmit={(event) => {
-          event.preventDefault()
-          if (!busy) props.onSave()
-        }}
-      >
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-2 text-[13px]">
-            <span className={`h-2 w-2 shrink-0 rounded-full ${TONE_CLASS[props.statusTone]}`} />
-            <span>{props.statusLabel}</span>
-            {status?.machineId && (
-              <span className="truncate font-mono text-[11px] text-faint" title={status.machineId}>
-                {status.machineId}
-              </span>
-            )}
-            {status?.machineFingerprint && (
-              <span
-                className="shrink-0 font-mono text-[11px] text-dim"
-                title="Machine key fingerprint. The client asks you to type it before it opens this machine through your account."
-              >
-                Machine key {status.machineFingerprint}
-              </span>
-            )}
-          </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={enabled}
-            aria-label="Remote access"
-            disabled={busy || !status}
-            onClick={() => props.onToggle(!enabled)}
-            className={`relative h-5 w-9 shrink-0 rounded-full transition-colors disabled:opacity-60 ${
-              enabled ? 'bg-accent' : 'bg-line'
-            }`}
-          >
+      <div className="space-y-3">
+        <div className="flex min-w-0 items-center gap-2 text-[13px]">
+          <span className={`h-2 w-2 shrink-0 rounded-full ${TONE_CLASS[props.statusTone]}`} />
+          <span role="status">{props.statusLabel}</span>
+          {status?.machineId && (
+            <span className="truncate font-mono text-[11px] text-faint" title={status.machineId}>
+              {status.machineId}
+            </span>
+          )}
+          {status?.machineFingerprint && (
             <span
-              className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
-                enabled ? 'translate-x-4' : ''
-              }`}
-            />
-          </button>
+              className="shrink-0 font-mono text-[11px] text-dim"
+              title="Machine key fingerprint. The client asks you to type it before it opens this machine through your account."
+            >
+              Machine key {status.machineFingerprint}
+            </span>
+          )}
         </div>
 
-        <label className="block">
-          <span className="mb-1 block text-xs text-dim">Server address</span>
-          <input
-            autoFocus={serverSetBy === null}
-            value={props.serverUrl}
-            onChange={(event) => props.onServerUrlChange(event.target.value)}
-            readOnly={serverSetBy !== null}
-            className={field}
-            placeholder={status?.serverUrlIsDefault ? status.serverUrl : 'wss://relay.example.com'}
-            spellCheck={false}
+        {status && (
+          <RemoteAccessConnect
+            {...props.connection}
+            linkedAccount={status.linkedAccount}
+            serverUrlSetBy={status.serverUrlSetBy}
+            defaultServerUrl={status.defaultServerUrl}
+            busy={busy}
           />
-          {serverSetBy !== null && <span className="mt-1 block text-xs text-faint">Set by {serverSetBy}.</span>}
-        </label>
-        <label className="block">
-          <span className="mb-1 block text-xs text-dim">Client address (optional)</span>
-          <input
-            value={props.clientUrl}
-            onChange={(event) => props.onClientUrlChange(event.target.value)}
-            readOnly={clientSetBy !== null}
-            className={field}
-            placeholder="Defaults to the server address over http(s)"
-            spellCheck={false}
-          />
-          {clientSetBy !== null && <span className="mt-1 block text-xs text-faint">Set by {clientSetBy}.</span>}
-        </label>
-        {status?.restartNeeded && (
-          <p className="text-xs text-warn">Saved. The host uses the new address from its next start.</p>
         )}
-
-        {status && <RemoteAccessLink {...props.accountLink} linkedAccount={status.linkedAccount} busy={busy} />}
         {status?.linkedAccount && <RemoteAccessDevices {...props.devices} busy={busy} />}
         {props.sessions && (status?.linkedAccount || (props.sessions.sessions?.sessions.length ?? 0) > 0) && (
           <RemoteAccessSessions {...props.sessions} busy={busy} />
@@ -180,6 +125,7 @@ export function RemoteAccessForm(props: Props) {
         )}
 
         {error && <p className="text-xs text-bad">{error}</p>}
+        {notice && <p className="text-xs text-warn">{notice}</p>}
 
         <div className="flex items-center justify-between gap-2 pt-1">
           <button
@@ -191,24 +137,15 @@ export function RemoteAccessForm(props: Props) {
             <Link size={13} />
             New connect link
           </button>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              className="rounded-md px-3 py-1.5 text-xs text-dim hover:bg-raised"
-              onClick={props.onClose}
-            >
-              Close
-            </button>
-            <button
-              type="submit"
-              disabled={busy || !status}
-              className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-on-accent disabled:opacity-60"
-            >
-              Save
-            </button>
-          </div>
+          <button
+            type="button"
+            className="rounded-md px-3 py-1.5 text-xs text-dim hover:bg-raised"
+            onClick={props.onClose}
+          >
+            Close
+          </button>
         </div>
-      </form>
+      </div>
     </Modal>
   )
 }

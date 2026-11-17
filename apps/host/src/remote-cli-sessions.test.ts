@@ -10,15 +10,12 @@ import { fingerprintOf } from './modules/remote-access/device-proof.service'
 import { type CallHost, type HostAnswer, runRemote } from './remote-cli'
 
 const status: RemoteAccessStatus = {
-  enabled: true,
   serverUrl: 'wss://orch.example.com',
   serverUrlIsDefault: true,
+  defaultServerUrl: 'wss://orch.example.com',
   clientUrl: null,
   serverUrlSetBy: null,
   clientUrlSetBy: null,
-  savedServerUrl: null,
-  savedClientUrl: null,
-  restartNeeded: false,
   machineId: 'm1',
   machineFingerprint: 'ABCD-EFGH-JKMN-PQRS',
   tunnel: 'connected',

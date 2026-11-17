@@ -17,7 +17,7 @@ export interface ConnectionLimiterDeps {
   tunnelPerIp?: BucketLimit
   /** Rejected access keys per IP. Defaults to 10, refilling 1 per minute. */
   badKeysPerIp?: BucketLimit
-  /** Enrollment previews and redeems per machine id. Defaults to 10, refilling 1 per 30 s. */
+  /** `enroll.redeem` and `unlink` frames per machine id. Defaults to 10, refilling 1 per 30 s. */
   enrollPerMachine?: BucketLimit
   /** How often full buckets are dropped. Defaults to 60 s. */
   sweepIntervalMs?: number
@@ -86,7 +86,7 @@ class TokenBuckets {
  * Rate limits for connection attempts, kept in memory for this server only.
  * Browser requests and sockets take a token from their IP's bucket, then from
  * their machine's. Tunnel upgrades have their own per-IP bucket, and
- * enrollment frames their own per-machine one. An IP whose
+ * `enroll.redeem` and `unlink` frames their own per-machine one. An IP whose
  * bad-key bucket is empty is refused everywhere until it refills. It sees only
  * IPs, machine ids and `auth.failed` reports, never a key or a relayed request.
  */
@@ -137,7 +137,7 @@ export class ConnectionLimiter {
   }
 
   /**
-   * Admits an enrollment preview or redeem from the tunnel of `machineId`.
+   * Admits an `enroll.redeem` or `unlink` frame from the tunnel of `machineId`.
    * Every attempt takes a token, whatever its result. Keyed by machine id,
    * not IP, since many machines can share one address.
    */

@@ -17,6 +17,7 @@ import { accountsTestApp, cookiePair } from '../auth/auth.testing'
 import { ConnectionLimiter } from '../limits/limits.service'
 import { answerChallenge, createTestMachineKey } from '../tunnel/tunnel.testing'
 import { hashEnrollmentKey, maskEmail } from './enrollment.service'
+import { MachinesService } from './machines.service'
 
 let domain: TestDomain
 let ctx: ReturnType<typeof accountsTestApp>
@@ -97,8 +98,9 @@ async function until(check: () => boolean, timeoutMs = 2000) {
   }
 }
 
-type EnrollAnswer = Extract<ServerFrame, { type: 'enroll.previewed' | 'enroll.redeemed' | 'enroll.failed' }>
-const isAnswer = (frame: ServerFrame): frame is EnrollAnswer => frame.type.startsWith('enroll.')
+type Answer = Extract<ServerFrame, { type: 'enroll.redeemed' | 'enroll.failed' | 'unlinked' | 'unlink.failed' }>
+const isAnswer = (frame: ServerFrame): frame is Answer =>
+  frame.type.startsWith('enroll.') || frame.type.startsWith('unlink')
 
 /** A welcomed test machine with a fresh machine key. Every frame it sends gets its own id. */
 async function machine() {
@@ -115,31 +117,47 @@ async function machine() {
   })
   await until(() => frames.some((frame) => frame.type === 'welcome'))
   let nextId = 1
-  const answer = async (id: number): Promise<EnrollAnswer> => {
+  const answer = async (id: number): Promise<Answer> => {
     const find = () => frames.filter(isAnswer).find((frame) => frame.id === id)
     await until(() => find() !== undefined)
-    return find() as EnrollAnswer
+    return find() as Answer
   }
   return {
     machineId: key.machineId,
     raw,
-    preview(key: string) {
+    /** The answers so far, by id. */
+    answered: (id: number) => frames.filter(isAnswer).some((frame) => frame.id === id),
+    redeem(key: string, email: string, name = 'Box') {
       const id = nextId++
-      ws.send(encodeFrame({ type: 'enroll.preview', id, key }))
+      ws.send(encodeFrame({ type: 'enroll.redeem', id, key, email, name }))
       return answer(id)
     },
-    redeem(key: string, name: string) {
+    unlink(accountId: string) {
       const id = nextId++
-      ws.send(encodeFrame({ type: 'enroll.redeem', id, key, name }))
+      ws.send(encodeFrame({ type: 'unlink', id, accountId }))
       return answer(id)
+    },
+    /** Sends a frame as raw JSON, bypassing the types, and answers its id. */
+    sendRaw(frame: Record<string, unknown>) {
+      const id = nextId++
+      ws.send(JSON.stringify({ ...frame, id }))
+      return id
     },
   }
 }
 
 const unknownKey = () => `oek_${Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url')}`
 
+/** Links `machineId` to `user` the way redeeming a key does, without a tunnel. */
+function link(user: User, machineId: string, name: string) {
+  return new MachinesService(domain.forUser({ userId: user.userId }).machines, ctx.registry).link(machineId, name)
+}
+
+/** The machine ids `user` lists. */
+const idsOf = async (user: User) => (await machinesOf(user)).map((m) => m.machineId).sort()
+
 describe('enrollment over the tunnel', () => {
-  test('previews show the masked owner without using the key, and redeeming links only the tunnel machine', async () => {
+  test("redeeming with the owner's email, in any case and with spaces, links only the tunnel machine", async () => {
     const logs = (['log', 'info', 'warn', 'error'] as const).map((method) => spyOn(console, method))
     const ada = await signedIn('Ada Lovelace')
     const bob = await signedIn('Bob Builder')
@@ -148,14 +166,9 @@ describe('enrollment over the tunnel', () => {
     const account = { name: 'Ada Lovelace', maskedEmail: maskEmail(ada.email) }
     expect(maskEmail('alice@example.com')).toBe('a***@example.com')
 
-    const previewed = { account, fingerprint: created.fingerprint, expiresAt: created.expiresAt }
-    expect(await box.preview(created.key)).toEqual({ type: 'enroll.previewed', id: 1, ...previewed })
-    expect(await box.preview(created.key)).toEqual({ type: 'enroll.previewed', id: 2, ...previewed })
-    expect((await enrollmentRow(created.key))?.usedAt).toBeNull()
-
-    expect(await box.redeem(created.key, '  Build box  ')).toEqual({
+    expect(await box.redeem(created.key, `  ${ada.email.toUpperCase()} `, '  Build box  ')).toEqual({
       type: 'enroll.redeemed',
-      id: 3,
+      id: 1,
       machineId: box.machineId,
       accountId: ada.userId,
       account,
@@ -169,55 +182,107 @@ describe('enrollment over the tunnel', () => {
     // A second key for a machine the owner already has keeps its name and refreshes `lastOpenedAt`.
     await Bun.sleep(5)
     const again = await createKey(ada)
-    expect((await box.redeem(again.key, 'Other name')).type).toBe('enroll.redeemed')
+    expect((await box.redeem(again.key, ada.email, 'Other name')).type).toBe('enroll.redeemed')
     const [relinked] = await machinesOf(ada)
     expect(relinked).toMatchObject({ machineId: box.machineId, name: 'Build box', createdAt: linked?.createdAt })
     expect(Date.parse(relinked?.lastOpenedAt ?? '')).toBeGreaterThan(Date.parse(linked?.lastOpenedAt ?? ''))
 
-    const secrets = [created.key, hashEnrollmentKey(created.key), ada.email, ada.name]
+    const secrets = [created.key, hashEnrollmentKey(created.key), ada.email, ada.email.toUpperCase(), ada.name]
     const seen = [...lookups, ...logs.flatMap((spy) => spy.mock.calls.map((call) => call.join(' ')))]
     expect(seen.filter((line) => secrets.some((secret) => line.includes(secret)))).toEqual([])
-    expect(box.raw.some((text) => text.includes(ada.email) || text.includes(created.key))).toBe(false)
+    const answers = box.raw.filter((text) => text.includes('enroll.'))
+    expect(answers.some((text) => text.includes(ada.email) || text.includes(created.key))).toBe(false)
   })
 
-  test('unknown, used, expired and malformed keys all get the same invalid_key answer', async () => {
+  test('unknown, used, expired and malformed keys and wrong emails all get invalid_key, and a wrong email uses nothing', async () => {
+    const logs = (['log', 'info', 'warn', 'error'] as const).map((method) => spyOn(console, method))
     const ada = await signedIn('Ada')
+    const bob = await signedIn('Bob')
     const used = await createKey(ada)
-    expect((await (await machine()).redeem(used.key, 'First')).type).toBe('enroll.redeemed')
+    expect((await (await machine()).redeem(used.key, ada.email, 'First')).type).toBe('enroll.redeemed')
     const expired = await createKey(ada)
+    const pending = await createKey(ada)
     offsetMs = 15 * 60_000 + 1000
+    const fresh = await createKey(ada)
 
     const box = await machine()
-    const answers: EnrollAnswer[] = []
+    const answers: Answer[] = []
     for (const key of [unknownKey(), used.key, expired.key, 'oek_short', '']) {
-      answers.push(await box.preview(key), await box.redeem(key, 'Box'))
+      answers.push(await box.redeem(key, ada.email))
     }
+    // Another account's email, an email with no account, and a malformed one, with a key that still works. Another
+    // machine sends them, since each machine has only 10 tries at once.
+    const typo = await machine()
+    const wrong = [bob.email, 'nobody@test.example', 'not an email', '', `${ada.email}x`]
+    for (const email of wrong) answers.push(await typo.redeem(fresh.key, email))
     expect(answers.map(({ id: _, ...rest }) => rest)).toEqual(
       answers.map(() => ({ type: 'enroll.failed', code: 'invalid_key' })),
     )
     expect((await enrollmentRow(expired.key))?.usedAt).toBeNull()
-    expect((await machinesOf(ada)).map((m) => m.machineId)).not.toContain(box.machineId)
+    expect((await enrollmentRow(pending.key))?.usedAt).toBeNull()
+    expect((await enrollmentRow(fresh.key))?.usedAt).toBeNull()
+    expect(await idsOf(ada)).not.toContain(box.machineId)
+
+    // The same key still links once it comes with the owner's email.
+    expect((await typo.redeem(fresh.key, ada.email)).type).toBe('enroll.redeemed')
+    expect(await idsOf(ada)).toContain(typo.machineId)
+    const seen = [...lookups, ...logs.flatMap((spy) => spy.mock.calls.map((call) => call.join(' ')))]
+    for (const secret of [fresh.key, ada.email, bob.email]) {
+      expect(seen.filter((line) => line.includes(secret))).toEqual([])
+    }
   })
 
   test('two machines redeeming one key at once get exactly one success', async () => {
     const ada = await signedIn('Ada')
     const { key } = await createKey(ada)
     const [one, two] = [await machine(), await machine()]
-    const answers = await Promise.all([one.redeem(key, 'One'), two.redeem(key, 'Two')])
+    const answers = await Promise.all([one.redeem(key, ada.email, 'One'), two.redeem(key, ada.email, 'Two')])
     expect(answers.map((answer) => answer.type).sort()).toEqual(['enroll.failed', 'enroll.redeemed'])
     const winner = answers[0]?.type === 'enroll.redeemed' ? one : two
-    expect((await machinesOf(ada)).map((m) => m.machineId)).toEqual([winner.machineId])
+    expect(await idsOf(ada)).toEqual([winner.machineId])
   })
 
   test('a machine out of enrollment tokens is refused before any lookup, and another machine is still admitted', async () => {
     const box = await machine()
-    for (let i = 0; i < 10; i++) expect(await box.preview(unknownKey())).toMatchObject({ code: 'invalid_key' })
+    for (let i = 0; i < 9; i++)
+      expect(await box.redeem(unknownKey(), 'a@test.example')).toMatchObject({ code: 'invalid_key' })
+    expect(await box.unlink('u1')).toEqual({ type: 'unlinked', id: 10 })
     const before = lookups.length
-    expect(await box.preview(unknownKey())).toEqual({ type: 'enroll.failed', id: 11, code: 'rate_limited' })
-    expect(await box.redeem(unknownKey(), 'Box')).toEqual({ type: 'enroll.failed', id: 12, code: 'rate_limited' })
+    expect(await box.redeem(unknownKey(), 'a@test.example')).toEqual({
+      type: 'enroll.failed',
+      id: 11,
+      code: 'rate_limited',
+    })
+    expect(await box.unlink('u1')).toEqual({ type: 'unlink.failed', id: 12, code: 'rate_limited' })
     expect(lookups.length).toBe(before)
 
     // Same IP, another machine: the bucket is per machine id.
-    expect(await (await machine()).preview(unknownKey())).toMatchObject({ code: 'invalid_key' })
+    expect(await (await machine()).redeem(unknownKey(), 'a@test.example')).toMatchObject({ code: 'invalid_key' })
+  })
+})
+
+describe('unlink over the tunnel', () => {
+  test("removes only the tunnel machine's row from the named account, and answers the same either way", async () => {
+    const ada = await signedIn('Ada')
+    const bob = await signedIn('Bob')
+    const [box, other] = [await machine(), await machine()]
+    await link(ada, box.machineId, 'Box')
+    await link(ada, other.machineId, 'Other')
+    await link(bob, box.machineId, 'Box at Bob')
+
+    // Another machine can't remove this one, whichever account it names.
+    expect(await other.unlink(bob.userId)).toEqual({ type: 'unlinked', id: 1 })
+    expect(await idsOf(bob)).toEqual([box.machineId])
+    // No frame field names a machine: one that tries is dropped unanswered, and removes nothing.
+    const smuggled = other.sendRaw({ type: 'unlink', accountId: ada.userId, machineId: box.machineId })
+    expect(await other.unlink('no-such-account')).toEqual({ type: 'unlinked', id: 3 })
+    expect(other.answered(smuggled)).toBe(false)
+    expect(await idsOf(ada)).toEqual([box.machineId, other.machineId].sort())
+
+    // The tunnel's own machine goes from the named account only, and a second time answers the same.
+    expect(await box.unlink(ada.userId)).toEqual({ type: 'unlinked', id: 1 })
+    expect(await idsOf(ada)).toEqual([other.machineId])
+    expect(await idsOf(bob)).toEqual([box.machineId])
+    expect(await box.unlink(ada.userId)).toEqual({ type: 'unlinked', id: 2 })
   })
 })

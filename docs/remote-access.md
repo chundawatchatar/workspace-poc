@@ -43,67 +43,103 @@ on accounts is in [accounts](accounts.md).
 
 ## 2. Connect a machine
 
-Open the local app at `http://<WEB_HOST>:<WEB_PORT>` and pick "Remote access…" from the
-command palette. Fill in:
+Remote access needs an account (section 6 and [accounts](accounts.md)): the
+tunnel to the server runs exactly while this machine is connected to one.
 
-- "Server address": `ws://<SERVER_HOST>:<SERVER_PORT>`
-- "Client address (optional)": `http://<CLIENT_HOST>:<CLIENT_PORT>` when you use the Vite
-  client from `bun run dev:client`. Leave it empty when the server serves the
-  client build.
+1. Sign in to the client at `http://<CLIENT_HOST>:<CLIENT_PORT>` and press
+   "Connect a machine" on the home page. It creates a one-time key, valid for
+   15 minutes, and shows the command to run on the machine:
 
-Then turn the switch on. The dialog shows whether the tunnel is connected. With
-no server address set, the host uses its built-in default (section 5).
+   ```bash
+   corch connect --email <your email> --key <key> --server ws://<SERVER_HOST>:<SERVER_PORT>
+   ```
+
+   The server address is the server's `SERVER_TUNNEL_URL`. The email is quoted
+   when it holds a character a shell would read otherwise.
+2. On the machine, run it: `corch connect ...` for an installed `corch`, or
+   `bun run host:remote connect ...` with the same flags for the dev host
+   (section "From the terminal"). Or open the local app at
+   `http://<WEB_HOST>:<WEB_PORT>`, pick "Remote access…" from the command palette,
+   and fill in "Server address" (prefilled with the address in use), "Email" and
+   "Key", then press Connect.
+3. Both first show what to check: the email, the server address, with a warning
+   when it isn't the built-in default, and "Key ends in" with the key's last 4
+   characters, which the client showed too. Connect only to a server you run or
+   trust.
+
+Connect then, in this order:
+
+1. saves the server address as `relayUrl` in the host's settings file,
+   `config.json` in its data folder, unless a flag or variable sets it (the
+   built-in default is saved as no address, so a later default applies);
+2. clears the approved and waiting browsers;
+3. opens the tunnel to that address at once, with no restart, and waits for it
+   to connect;
+4. redeems the key with the email over the tunnel;
+5. saves the account in `linked-account.json`. The dialog then shows the
+   account, its server and "Connected".
+
+On any failure (the server can't be reached, the key or the email is refused,
+too many tries, a timeout) nothing is linked and the tunnel is stopped. The
+answer never holds the key or the email.
+
+A host started with a valid `linked-account.json` counts as connected and opens
+the tunnel at start, so it reconnects on its own. One without it never opens a
+tunnel, whatever `SERVER_URL` says. The status line reads "Not connected",
+"Connecting…", "Connected", "Reconnecting…", or "Connection lost" when the
+machine is connected but its tunnel stopped (another host took over its
+machine key, or the server speaks another protocol version).
 
 The host accepts `ws://` only for a loopback host (`127.0.0.1`, `[::1]` or
 `localhost`). Any other server needs `wss://`.
 
-The dialog saves the addresses in the host's settings file, `config.json` in
-its data folder, as `relayUrl` and `clientUrl`; the packaged `corch` reads the
-same keys (see [the `corch` guide](corch.md#settings-and-corch-config)). A host
-reads its addresses once, when it starts:
+The packaged `corch` reads the same `relayUrl` and `clientUrl` keys (see
+[the `corch` guide](corch.md#settings-and-corch-config)). While the machine is
+connected, its server address stays as it is: `corch config set relayUrl` and
+`corch config unset relayUrl` refuse and say to run `corch disconnect` first.
+The client address, for connect links, has no field in the dialog: set it with
+`CLIENT_URL` in dev, or `corch config set clientUrl`, `--client-url` or
+`CORCH_CLIENT_URL` for `corch`, and restart the host.
 
-- A changed relay or client address, from the setting, `corch config set` or
-  `host:remote server`, applies from the next start. Until then an open tunnel
-  stays on the old relay, and `host:remote status` says
-  `Saved address:  changed. The host uses the saved addresses from its next start.`
-- Turning remote access off applies at once: the tunnel and every remote
-  session close. Turning it on applies at once too, with the addresses in use.
-
-An older data folder that kept the addresses in `remote-access.json` has them
-moved into `config.json` once, when a host starts with it or a command
-changes its remote access settings.
-
-The other way, in dev only, is to set the addresses in the host's environment,
-by uncommenting `SERVER_URL` and `CLIENT_URL` in `.env` and giving them the same
-values:
+In dev, `SERVER_URL` and `CLIENT_URL` in `.env` fix the addresses:
 
 ```bash
 SERVER_URL=ws://<SERVER_HOST>:<SERVER_PORT>
 CLIENT_URL=http://<CLIENT_HOST>:<CLIENT_PORT>
 ```
 
-`SERVER_URL` and `CLIENT_URL` override the saved addresses, and `SERVER_URL`
-still turns the tunnel on at start whatever the switch says. A packaged host
-reads neither, and never turns the tunnel on just because a relay address is
-set: only the saved switch turns it on. It takes its addresses from
-`--relay-url` and `--client-url`, the `CORCH_RELAY_URL` and `CORCH_CLIENT_URL`
-variables, or `config.json`, in that order.
+They no longer turn the tunnel on: only connecting does. With `SERVER_URL` set,
+the dialog shows the server address read-only ("Set by SERVER_URL."), Connect
+uses it, and a different one is refused. A packaged host reads neither: it takes
+its addresses from `--relay-url` and `--client-url`, the `CORCH_RELAY_URL` and
+`CORCH_CLIENT_URL` variables, or `config.json`, in that order.
+
+Disconnect, in the dialog (it asks first), with `corch disconnect` or with
+`bun run host:remote disconnect`, asks the server to remove the machine from the
+account's list when it can (section 5), then forgets the account and its
+approved and waiting browsers, closes the sockets the account opened, and stops
+the tunnel. When the server didn't remove it (the tunnel was down, the server
+didn't answer or failed, or `linked-account.json` predates account ids), the
+dialog and the command say to remove it from the list in the client.
 
 The host keeps its remote access files in its data folder, `apps/host/.data/`
 in dev (gitignored) and `~/.corch` or `~/.local/share/corch` for `corch` (see
 [the `corch` guide](corch.md#the-data-folder)):
 
 - `config.json`: the saved addresses, among the host's other settings.
-- `remote-access.json`: whether remote access is on, so every later start
-  reconnects on its own.
 - `machine-key`: the machine's Ed25519 private key (PKCS#8 PEM, readable only
   by you). It never leaves the machine: the host signs the server's challenge
   with it, and the machine id is the hash of its public key. Keep it: deleting
   it gives the machine a new id, and old connect links and account links stop
   working.
 - `access-keys.json`: the access keys, as hashes only.
-- `linked-account.json`: the account this machine is linked to, if any
+- `linked-account.json`: the account this machine is connected to, if any
   (section 5).
+- `devices.json`: the browsers approved for that account (section 5).
+
+`remote-access.json`, which held the old on/off switch, is no longer read, and
+you can delete it. A data folder from before `config.json` that still keeps its
+addresses there has them moved into `config.json` once, as before.
 
 The host itself stays local. It listens on a loopback address only
 (`127.0.0.1` for `corch`), and answers only
@@ -114,7 +150,7 @@ tunnel is the only way in from another machine.
 
 ## 3. Open it from a browser
 
-The first time remote access is on, the host creates an access key and prints
+The first time the tunnel opens, the host creates an access key and prints
 the connect link once, in the host's log: the terminal running `bun run dev`,
 or `corch logs` for a `corch` running in the background:
 
@@ -157,9 +193,9 @@ this order:
 3. The server address, with `ws` swapped for `http` (and `wss` for `https`).
 
 The trap: with `bun run dev:client` and no client address, the link points at
-`http://<SERVER_HOST>:<SERVER_PORT>`, which serves the app only after a client build. Enter
-`http://<CLIENT_HOST>:<CLIENT_PORT>` as the client address, press "Save", restart the host so it
-uses the new address, and make a new connect link (section 4).
+`http://<SERVER_HOST>:<SERVER_PORT>`, which serves the app only after a client build. Set
+`CLIENT_URL=http://<CLIENT_HOST>:<CLIENT_PORT>` (or `corch config set clientUrl` for `corch`),
+restart the host so it uses the new address, and make a new connect link (section 4).
 
 ## 4. Rotate the key
 
@@ -170,44 +206,32 @@ dialog, or run:
 bun run host:rotate-key    # corch rotate-key for an installed corch
 ```
 
-Both print a new link. With a running host that has remote access, both also
+Both print a new link. With a running host whose tunnel is open, both also
 close every session that used the old key. With the host stopped, the script
 rewrites `access-keys.json`, and the host uses the new key at its next start.
 
-## 5. Link the machine to an account
+## 5. The account, its browsers and Disconnect
 
-A signed-in user links this machine to their account with a one-time
-enrollment key, the only way to put a machine on an account's list. A connect
-link only opens the machine in the browser that holds its key: it adds nothing
-to the account, even when that browser is signed in. Create the key on the
-client's home page, then, on this machine, open "Remote access…", paste it into "Link key"
-and press "Preview". Linking needs remote access on and the tunnel connected,
-since the key is checked over the tunnel; the host never opens a tunnel just
-to check one.
+A machine joins an account's list only by redeeming a one-time enrollment key
+over its own tunnel, with the account's email (section 2). A connect link only
+opens the machine in the browser that holds its key: it adds nothing to the
+account, even when that browser is signed in.
 
-The server address the key is checked with is the one the host started with:
-`SERVER_URL` in dev (`--relay-url` or `CORCH_RELAY_URL` for `corch`), else the
-saved "Server address", else the built-in default (`DEFAULT_SERVER_URL` in
-`apps/host/src/modules/settings/settings.service.ts`, a placeholder until there
-is a real deploy). Nothing in the key can change it,
-and the host refuses a link when the address changed after the preview.
+The server links the machine only when the email is the key owner's, in any
+letter case and with any spaces around it. Another account's email, an email
+with no account and a malformed one get the same `invalid_key` answer as an
+unknown, used or expired key, and the key stays unused, so a typo can be fixed
+without a new key. The machine id is always the tunnel's own, from its signed
+`hello`, never anything in a frame or the key. Each machine gets 10 tries,
+then one more every 30 seconds (an `unlink` counts too).
 
-Before anything is used, the dialog shows three values to check:
+The host saves the account (name, masked email, server address, when it was
+linked, the account's user id and the server's relay public keys, never the key
+or the email) in `linked-account.json`. The user id and the public keys stay on
+the machine: the dialog and the status never show them. A connected machine
+must disconnect before it connects again.
 
-- the server address, with a warning when it isn't the built-in default. Link
-  only to a server you run or trust;
-- the account the key belongs to: its name and masked email;
-- the key's fingerprint, its last 4 characters, which the client showed when it
-  created the key.
-
-"Link" redeems the key, so it can't be used again. The host then saves the
-account (name, masked email, server address, when it was linked, the
-account's user id and the server's relay public keys, never the key) in
-`linked-account.json` in the data folder, and the dialog shows it with an "Unlink"
-button. The user id and the public keys stay on the machine: the dialog and the
-status never show them. A linked machine must unlink before it links again.
-
-Once linked, any browser signed in to that account opens the machine from the
+Once connected, any browser signed in to that account opens the machine from the
 client's home page, with no connect link. The first time a browser opens it this
 way, nothing printed by the host vouches for the machine id the server listed,
 so once the machine answers its key the page asks you to type the fingerprint
@@ -227,7 +251,7 @@ it unchanged; the host checks it:
   ticket's key id;
 - it names this machine and the linked account, and hasn't expired (30 seconds
   of clock skew are allowed);
-- the account was linked through the server address in use;
+- the account was connected through the server address in use;
 - on a socket, the ticket hasn't opened another socket already.
 
 A ticket alone opens nothing. Each browser profile keeps its own device key
@@ -276,15 +300,24 @@ links need the same approval: through the tunnel a request that carries a key
 is judged by the key (a ticket never rescues a wrong one), then by a fresh
 proof from an approved browser. A connect link opened in a browser that was
 never approved stops at the same fingerprint hint until you approve it here. A `linked-account.json` saved before this (with no user id or public
-keys) still loads and shows the account, but accepts no ticket: unlink and link
-again with a new enrollment key. The server and the host must be updated
-together for this, since `enroll.redeemed` now carries the account's id and the
-public keys.
+keys) still loads and shows the account, but accepts no ticket: disconnect and
+connect again with a new enrollment key.
 
-"Unlink" deletes that file and the approved devices, so this machine forgets
-the account and its browsers (connect links opened in them must be approved again), and closes the sockets the account has open. It is local only: the server still lists the
-machine until you unlink it from the client's home page, but the machine
-refuses that account's tickets from then on.
+Disconnect first asks the server, when the tunnel is connected and the account's
+user id is known, to remove the machine from that account's list: the host
+sends `unlink` with the user id, and waits up to 10 seconds for `unlinked` or
+`unlink.failed`. The server removes only the row of that account for the
+tunnel's own machine id, through the account's scoped repository, and answers
+`unlinked` whether or not there was one, so no frame can remove another
+machine. With accounts off it answers `unlink.failed` with `unavailable`. Then,
+whatever the answer, the host deletes `linked-account.json` and `devices.json`,
+so it forgets the account and its browsers (connect links opened in them must
+be approved again), closes the sockets the account has open, and stops the
+tunnel, telling the server with `remote.off` so the list can show "remote
+access off" until it is removed. A machine the server didn't remove stays on
+the list until you remove it from the client's home page, but it refuses that
+account's tickets from then on. The tunnel protocol is at version 5 for these
+frames; a host on an older version gets "unsupported version" from the server.
 
 Accepted risks: the server still says who is signed in, so it decides who owns
 an enrollment key and who gets relay tickets, but a leaked `RELAY_SIGNING_KEY`
@@ -299,7 +332,7 @@ machine, and through the server the machine refuses any that aren't (logged as
 fetching the machine's key and the handshake itself. So a compromised server
 can neither read nor inject into a session. What remains: a compromised server
 could serve its own page, which can't be ruled out for a web app (the open
-sessions list, the activity log and turning remote access off are your cover);
+sessions list, the activity log and Disconnect are your cover);
 it still sees timing, sizes and which device connects; it sees the access key or
 ticket and the browser's proof in the clear on those two requests, so it can
 capture an access key from a connect link, though that alone opens nothing
@@ -312,14 +345,11 @@ host checks that account against its own link and, if it matches, closes the
 sockets that account's tickets opened with code 4410; key sockets, the link
 and the devices stay as they are. Browsers still signed in reconnect with a
 fresh ticket, and the revoked one can't get one. The operator script
-`sessions:revoke-user` and an expired session send no frame, and unlinking on
-the server closes nothing either; unlinking on the host closes the account's
-sockets. A refused ticket sends
+`sessions:revoke-user` and an expired session send no frame, and removing the
+machine on the server closes nothing either; disconnecting on the host closes
+the account's sockets. A refused ticket sends
 `auth.failed`, so it counts against the browser's bad-key limit like a wrong
 key.
-
-`bun run host:remote link <key>` does the same from a terminal (next part). It
-also needs the running host with the tunnel connected.
 
 ### From the terminal
 
@@ -327,11 +357,9 @@ On a machine where you don't open the host page (over SSH, a headless box, a
 setup script), `bun run host:remote` does what the dialog does:
 
 ```bash
-bun run host:remote status             # server address, remote access, machine id and key, linked account
-bun run host:remote server wss://host  # set the server address
-bun run host:remote on                 # or off
-bun run host:remote link <key>         # add --yes to skip the question
-bun run host:remote unlink
+bun run host:remote status             # server address, connection, machine id and key, account
+bun run host:remote connect --email <email> --key <key> [--server <url>]   # add --yes to skip the question
+bun run host:remote disconnect                      # add --yes to skip the question
 bun run host:remote devices                         # waiting and approved devices, newest first
 bun run host:remote devices approve <fingerprint>   # add --yes to skip the question
 bun run host:remote devices remove <fingerprint>    # dismiss a waiting device, or revoke an approved one
@@ -341,24 +369,29 @@ bun run host:remote log                             # who opened this machine th
 
 An installed `corch` has the same commands as `corch remote <command>`
 (`corch remote help` lists them), acting on its own data folder, and
-`corch config set relayUrl <url>` saves the server address as `server` does.
-See [the `corch` guide](corch.md#remote-access).
+`corch connect` and `corch disconnect` with the same flags. See
+[the `corch` guide](corch.md#remote-access). The old `link`, `unlink`, `server`,
+`on` and `off` commands are gone and print the usage.
 
 With the host running, every command goes through its local-only Remote access
-endpoints, so the host stays the one owner of the setting. `link` prints the
-server address (with the warning), the account and the fingerprint, then asks
-`Link this machine to <name>? [y/N]`; `--yes` skips the question but still
-prints them. `on` makes the host print a new connect link in its own log, as
-the switch does, and `off` closes the tunnel at once. `server` saves the
-address in `config.json` for the host's next start; the running tunnel keeps
-the address it has. A host whose server address comes from `SERVER_URL`,
-`--relay-url` or `CORCH_RELAY_URL` refuses `server`: change that instead.
+endpoints, so the host stays the one owner of remote access. `connect` checks
+the key, the email and `--server` before it calls the host, and refuses a
+malformed one with a message that doesn't repeat it. Without `--server` it uses
+the built-in default, or the address `SERVER_URL`, `--relay-url` or
+`CORCH_RELAY_URL` sets, which a different `--server` can't change. It prints
+the server (with the warning), the email and `Key ends in: <last 4>`, then asks
+`Connect this machine to this account? [y/N]`; any answer but y or yes sends
+nothing and exits 1, and `--yes` skips the question but still prints them.
+`disconnect` asks `Disconnect this machine from <name> (<masked email>)? [y/N]`
+the same way, and prints `Remove it in the client` when the server didn't
+remove the machine from the account's list. Nothing either command prints holds
+the key, and the email shows only in the line you check.
 
 `devices` lists each device by its fingerprint, such as `ABCD-EFGH-JKMN-PQRS`,
 with `waiting, seen 3 min ago` or `approved 2 days ago`, and `status` adds a
 `Devices:` line with both counts. `devices approve <fingerprint>` asks
-`Approve <fingerprint>? It will be able to open this machine through the linked
-account. [y/N]`; `--yes` skips the question. It sends the typed fingerprint to
+`Approve <fingerprint>? It will be able to open this machine remotely. [y/N]`;
+`--yes` skips the question. It sends the typed fingerprint to
 the host, which approves the one waiting device it matches, in any case, with or
 without the dashes; a fingerprint the host matches to no waiting device, or to
 more than one, prints the host's message and exits 1, and one already approved
@@ -370,18 +403,16 @@ open. The commands print fingerprints only, never a device's id or public key.
 key laptop  3 sockets  since <local time>`, or `No remote sessions are open`;
 with the host stopped it says no host is running, so none are open, and exits 0.
 
-With the host stopped, the command reads and writes the data folder itself
-(`config.json` for `server`, `remote-access.json` for `on` and `off`), and the
-host picks the change up at its next start. `status` shows the tunnel as
-"host not running", and `SERVER_URL` in the command's own environment only
-changes what `status` shows. `link` needs the running host, and so does
-`devices approve`, since waiting devices live only in the running host's memory.
-`devices` then lists the approved devices from `devices.json`, and `status`
-shows the waiting count as unknown. `devices remove` rewrites `devices.json`
-without that device, and the host loads it at its next start. The command never
-rewrites a `remote-access.json` or `devices.json` that isn't valid, never creates
-a missing `devices.json`, and `status` never creates the machine key or the
-access keys.
+With the host stopped, the command reads the data folder itself. `status` shows
+the tunnel as "host not running", and `SERVER_URL` in the command's own
+environment only changes what `status` shows. `connect` and `disconnect` say no
+host is running and exit 1, and so does `devices approve`, since waiting devices
+live only in the running host's memory. `devices` then lists the approved
+devices from `devices.json`, and `status` shows the waiting count as unknown.
+`devices remove` rewrites `devices.json` without that device, and the host loads
+it at its next start. The command never rewrites a `devices.json` that isn't
+valid, never creates a missing one, and `status` never creates the machine key
+or the access keys.
 
 The key is passed on the command line, so it can end up in your shell history
 and in `ps`. It is single-use and expires after 15 minutes, which makes that an
@@ -396,10 +427,10 @@ public half, so a machine set up before the change comes back under a new id.
 The account's list and the old connect link still name the old id, so do this
 once, in this order:
 
-1. Unlink the machine from the client's home page.
-2. On the machine, run `bun run host:remote unlink`.
+1. Remove the machine from the client's home page.
+2. On the machine, run `bun run host:remote disconnect`.
 3. Delete `machine-secret` from the data folder. The host no longer reads it.
-4. Link the machine again with a new enrollment key (above).
+4. Connect the machine again with a new enrollment key (section 2).
 5. Get a new connect link with `bun run host:rotate-key` (section 4), because
    the old link names the old id.
 
@@ -426,8 +457,10 @@ To reset the database, remove the volume as well: `docker compose down -v`, then
 
 The server loads the root `.env` itself through `loadRootEnv()` from `@orch/shared/env`, however it is started.
 Variables already set in the shell win over the file. With `DATABASE_URL` set it also needs `BETTER_AUTH_SECRET` (at
-least 32 bytes), `BETTER_AUTH_URL`, `SMTP_URL` and `MAIL_FROM`, which `.env.example` fills with dev values, and it
-exits with a message naming the problem when one is missing, the database is unreachable, or a migration is pending.
+least 32 bytes), `BETTER_AUTH_URL`, `SMTP_URL`, `MAIL_FROM`, `RELAY_SIGNING_KEY` and `SERVER_TUNNEL_URL` (the address
+machines open their tunnel to, `wss://<host>` or `ws://` on a loopback host, with no path, sent with every new
+enrollment key), which `.env.example` fills with dev values, and it exits with a message naming the problem when one
+is missing or not valid, the database is unreachable, or a migration is pending.
 
 Migrations, Better Auth, sessions and reading the emails are covered in [accounts](accounts.md).
 
@@ -437,8 +470,9 @@ This guide stops at one computer. The next phase ("Later: deploy" in the
 factory backlog) must handle:
 
 - TLS in front of the server.
-- `wss://` server addresses and `https://` client addresses. This is also what a
-  second computer needs, since `ws://` works only on loopback.
+- `wss://` server addresses and `https://` client addresses, `SERVER_TUNNEL_URL`
+  among them. This is also what a second computer needs, since `ws://` works only
+  on loopback.
 - A `SERVER_HOST` beyond loopback, so the server is reachable from the network.
 - `SERVER_TRUST_PROXY=1` behind a proxy that sets `X-Forwarded-For`, so the rate
   limits see the client's IP and not the proxy's.

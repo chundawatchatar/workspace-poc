@@ -1,6 +1,6 @@
+import { parseServerUrl } from '@orch/shared'
 import { z } from 'zod'
 import { clientUrlFromServerUrl, parseClientUrl } from '../access/access.service'
-import { parseServerUrl } from '../tunnel/tunnel.service'
 
 /**
  * The server address used when nothing sets one. `orch.example.com` is a

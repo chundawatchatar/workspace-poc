@@ -10,7 +10,6 @@ import { fingerprintOf } from './device-proof.service'
 import { DevicesRepository } from './devices.repository'
 import type { DevicesService } from './devices.service'
 import { LinkedAccountRepository } from './linked-account.repository'
-import { RemoteAccessRepository } from './remote-access.repository'
 import { createRemoteAccessRoutes } from './remote-access.routes'
 import { RemoteAccessService } from './remote-access.service'
 import { startAddresses } from './remote-access.testing'
@@ -26,7 +25,6 @@ let service: RemoteAccessService
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'orch-remote-routes-'))
   service = new RemoteAccessService({
-    repository: new RemoteAccessRepository(join(dir, 'remote-access.json')),
     linkedAccounts: new LinkedAccountRepository(join(dir, 'linked-account.json')),
     devices: new DevicesRepository(join(dir, 'devices.json')),
     audit: new AuditLogService(new AuditLogRepository(join(dir, 'remote-audit.jsonl'))),
@@ -35,7 +33,6 @@ beforeEach(() => {
     keysFile: join(dir, 'access-keys.json'),
     settingsFile: join(dir, 'config.json'),
     addresses: startAddresses({}, join(dir, 'config.json')),
-    autoEnable: true,
     handle: async () => new Response('ok'),
     openSocket: () => ({ code: 1008, reason: 'none' }),
   })

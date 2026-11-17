@@ -12,10 +12,16 @@ describe('parseCliArgs', () => {
       command: { name: 'run', flags: { '--log-level': 'debug' }, background: true },
       dataDir: null,
     })
-    expect(parseCliArgs(['remote', 'link', 'k', '--data-dir', '/d', '--yes'])).toEqual({
-      command: { name: 'remote', args: ['link', 'k', '--yes'] },
+    expect(parseCliArgs(['remote', 'devices', 'approve', 'F', '--data-dir', '/d', '--yes'])).toEqual({
+      command: { name: 'remote', args: ['devices', 'approve', 'F', '--yes'] },
       dataDir: '/d',
     })
+    // `corch connect` and `corch disconnect` run as their `corch remote` commands.
+    expect(parseCliArgs(['connect', '--email', 'e', '--data-dir=/d', '--key', 'k'])).toEqual({
+      command: { name: 'remote', args: ['connect', '--email', 'e', '--key', 'k'] },
+      dataDir: '/d',
+    })
+    expect(parseCliArgs(['disconnect', '--yes'])?.command).toEqual({ name: 'remote', args: ['disconnect', '--yes'] })
     expect(parseCliArgs(['terminals', 'stop'])?.command).toEqual({ name: 'terminals-stop' })
     expect(parseCliArgs(['logs'])?.command).toEqual({ name: 'logs', all: false })
     expect(parseCliArgs(['logs', '--all'])?.command).toEqual({ name: 'logs', all: true })
@@ -26,7 +32,7 @@ describe('parseCliArgs', () => {
     expect(parseCliArgs(['service', 'uninstall'])?.command).toEqual({ name: 'service', action: 'uninstall' })
   })
 
-  test('reads the config subcommands, with --yes anywhere after the name', () => {
+  test('reads the config subcommands', () => {
     const action = (...argv: string[]) => {
       const command = parseCliArgs(['config', ...argv])?.command
       return command?.name === 'config' ? command.action : null
@@ -34,14 +40,8 @@ describe('parseCliArgs', () => {
     expect(action('list')).toEqual({ name: 'list' })
     expect(action('path', '--data-dir', '/d')).toEqual({ name: 'path' })
     expect(action('get', 'port')).toEqual({ name: 'get', key: 'port' })
-    expect(action('set', 'port', '5000')).toEqual({ name: 'set', key: 'port', value: '5000', yes: false })
-    expect(action('set', '--yes', 'relayUrl', 'wss://r')).toEqual({
-      name: 'set',
-      key: 'relayUrl',
-      value: 'wss://r',
-      yes: true,
-    })
-    expect(action('unset', 'clientUrl', '--yes')).toEqual({ name: 'unset', key: 'clientUrl', yes: true })
+    expect(action('set', 'port', '5000')).toEqual({ name: 'set', key: 'port', value: '5000' })
+    expect(action('unset', 'clientUrl')).toEqual({ name: 'unset', key: 'clientUrl' })
   })
 
   test('names an unknown command, so the caller can say which', () => {
@@ -58,6 +58,8 @@ describe('parseCliArgs', () => {
       ['config', 'set', 'port'],
       ['config', 'set', 'port', '5000', '--port', '1'],
       ['config', 'unset', 'port', 'x'],
+      ['config', 'set', 'relayUrl', 'wss://r', '--yes'],
+      ['config', 'unset', 'relayUrl', '--yes'],
       ['config', 'frob'],
       ['start', '--bogus'],
       ['start', '--port'],

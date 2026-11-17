@@ -1,46 +1,45 @@
 import { describe, expect, mock, test } from 'bun:test'
-import type { DevicesResponse, PreviewLinkResponse, RemoteAccessStatus } from '@orch/shared'
+import type { DevicesResponse, LinkedAccount, RemoteAccessStatus } from '@orch/shared'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { type ComponentProps, useState } from 'react'
 import { RemoteAccessForm } from './RemoteAccessForm'
 
 const status: RemoteAccessStatus = {
-  enabled: false,
-  serverUrl: 'wss://relay.example.com',
-  serverUrlIsDefault: false,
+  serverUrl: 'wss://orch.example.com',
+  serverUrlIsDefault: true,
+  defaultServerUrl: 'wss://orch.example.com',
   clientUrl: null,
   serverUrlSetBy: null,
   clientUrlSetBy: 'CLIENT_URL',
-  savedServerUrl: 'wss://relay.example.com',
-  savedClientUrl: null,
-  restartNeeded: false,
   machineId: 'm-1',
   machineFingerprint: 'ABCD-EFGH-JKMN-PQRS',
   tunnel: 'off',
   linkedAccount: null,
 }
 
-const preview: PreviewLinkResponse = {
+const linkedAccount: LinkedAccount = {
+  name: 'Ada Lovelace',
+  maskedEmail: 'a***@example.com',
   serverUrl: 'wss://relay.example.com',
-  serverUrlIsDefault: false,
-  account: { name: 'Ada Lovelace', maskedEmail: 'a***@example.com' },
-  fingerprint: 'Wx9z',
-  expiresAt: '2026-11-04T12:15:00.000Z',
+  linkedAt: '2026-11-04T12:00:00.000Z',
 }
+
+const key = `oek_${'k'.repeat(39)}Wx9z`
 
 type Props = ComponentProps<typeof RemoteAccessForm>
 
-/** The link section's props, with a mock for every callback. */
-function accountLinkProps(overrides: Partial<Props['accountLink']> = {}): Props['accountLink'] {
+/** The connect section's props, with a mock for every callback. */
+function connection(overrides: Partial<Props['connection']> = {}): Props['connection'] {
   return {
-    linkKey: '',
-    onLinkKeyChange: mock(),
-    onPreview: mock(),
-    preview: null,
-    onLink: mock(),
-    onCancel: mock(),
-    onUnlink: mock(),
+    serverUrl: 'wss://orch.example.com',
+    email: '',
+    enrollmentKey: '',
+    onServerUrlChange: mock(),
+    onEmailChange: mock(),
+    onEnrollmentKeyChange: mock(),
+    onConnect: mock(),
+    onDisconnect: mock(),
     ...overrides,
   }
 }
@@ -48,17 +47,11 @@ function accountLinkProps(overrides: Partial<Props['accountLink']> = {}): Props[
 function setup(overrides: Partial<Props> = {}) {
   const props: Props = {
     status,
-    statusLabel: 'Off',
+    statusLabel: 'Not connected',
     statusTone: 'off',
-    serverUrl: 'wss://relay.example.com',
-    clientUrl: '',
-    onServerUrlChange: mock(),
-    onClientUrlChange: mock(),
-    onSave: mock(),
-    onToggle: mock(),
     onNewLink: mock(),
     link: null,
-    accountLink: accountLinkProps(),
+    connection: connection(),
     devices: {
       devices: undefined,
       fingerprint: '',
@@ -69,30 +62,28 @@ function setup(overrides: Partial<Props> = {}) {
     },
     activity: { entries: [], failed: false },
     error: null,
+    notice: null,
     busy: false,
     onClose: mock(),
     ...overrides,
   }
-  // The form doesn't hold the server address or the key itself; this stands in for the page that does.
+  // The form doesn't hold the fields itself; this stands in for the page that does.
   function Page() {
-    const [serverUrl, setServerUrl] = useState(props.serverUrl)
-    const [linkKey, setLinkKey] = useState(props.accountLink.linkKey)
+    const [serverUrl, setServerUrl] = useState(props.connection.serverUrl)
+    const [email, setEmail] = useState(props.connection.email)
+    const [enrollmentKey, setEnrollmentKey] = useState(props.connection.enrollmentKey)
     const [fingerprint, setFingerprint] = useState(props.devices.fingerprint)
     return (
       <RemoteAccessForm
         {...props}
-        serverUrl={serverUrl}
-        onServerUrlChange={(value) => {
-          setServerUrl(value)
-          props.onServerUrlChange(value)
-        }}
-        accountLink={{
-          ...props.accountLink,
-          linkKey,
-          onLinkKeyChange: (value) => {
-            setLinkKey(value)
-            props.accountLink.onLinkKeyChange(value)
-          },
+        connection={{
+          ...props.connection,
+          serverUrl,
+          email,
+          enrollmentKey,
+          onServerUrlChange: setServerUrl,
+          onEmailChange: setEmail,
+          onEnrollmentKeyChange: setEnrollmentKey,
         }}
         devices={{
           ...props.devices,
@@ -109,116 +100,105 @@ function setup(overrides: Partial<Props> = {}) {
 }
 
 describe('RemoteAccessForm', () => {
-  test('the switch turns it on, Save sends the edited address, and a new link can be copied', async () => {
+  test('Connect waits for all three fields, shows what to check with only the key ending, and connects on Connect', async () => {
     const user = userEvent.setup()
-    const { props } = setup({ link: 'https://app.example.com/#machine=m-1&key=k' })
+    const { props } = setup()
     // The fingerprint the client asks the owner to compare shows beside the machine id.
     expect(screen.getByText('m-1')).toBeInTheDocument()
     expect(screen.getByText('Machine key ABCD-EFGH-JKMN-PQRS')).toHaveAttribute(
       'title',
       expect.stringMatching(/fingerprint/),
     )
+    // The switch, the client address and Save are gone.
+    expect(screen.queryByRole('switch')).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: /Client address/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
 
-    await user.click(screen.getByRole('switch', { name: 'Remote access' }))
-    expect(props.onToggle).toHaveBeenCalledWith(true)
-
+    const connect = screen.getByRole('button', { name: 'Connect' })
+    expect(connect).toBeDisabled()
     const server = screen.getByRole('textbox', { name: 'Server address' })
+    expect(server).toHaveValue('wss://orch.example.com')
+    expect(server).not.toHaveAttribute('readonly')
     await user.clear(server)
-    await user.type(server, 'wss://other.example.com{Enter}')
-    expect(props.onServerUrlChange).toHaveBeenLastCalledWith('wss://other.example.com')
-    expect(props.onSave).toHaveBeenCalledTimes(1)
+    await user.type(server, 'wss://relay.example.com')
+    await user.type(screen.getByRole('textbox', { name: 'Email' }), ' ada@example.com ')
+    expect(connect).toBeDisabled()
+    await user.type(screen.getByRole('textbox', { name: 'Key' }), `${key}{Enter}`)
 
-    // An address from the host's environment is shown but can't be edited.
-    expect(screen.getByRole('textbox', { name: /Client address/ })).toHaveAttribute('readonly')
-    expect(screen.getByText('Set by CLIENT_URL.')).toBeInTheDocument()
-    expect(screen.queryByText(/from its next start/)).not.toBeInTheDocument()
+    const check = screen.getByRole('region', { name: 'Check before connecting' })
+    for (const text of ['ada@example.com', 'wss://relay.example.com', 'Wx9z']) expect(check).toHaveTextContent(text)
+    expect(check.textContent).not.toContain(key)
+    expect(document.body.textContent).not.toContain(key)
+    expect(within(check).getByRole('alert')).toHaveTextContent('not the default server')
+    expect(props.connection.onConnect).not.toHaveBeenCalled()
 
+    // Back keeps what was typed.
+    await user.click(screen.getByRole('button', { name: 'Back' }))
+    expect(screen.getByRole('textbox', { name: 'Key' })).toHaveValue(key)
+    await user.click(screen.getByRole('button', { name: 'Connect' }))
+    await user.click(
+      within(screen.getByRole('region', { name: 'Check before connecting' })).getByRole('button', { name: 'Connect' }),
+    )
+    expect(props.connection.onConnect).toHaveBeenCalledTimes(1)
+  })
+
+  test('an address a flag or variable sets is read-only and names it, and the default gets no warning', async () => {
+    const user = userEvent.setup()
+    for (const setBy of ['SERVER_URL', '--relay-url', 'CORCH_RELAY_URL']) {
+      const { unmount } = setup({ status: { ...status, serverUrlSetBy: setBy } })
+      expect(screen.getByRole('textbox', { name: 'Server address' })).toHaveAttribute('readonly')
+      expect(screen.getByText(`Set by ${setBy}.`)).toBeInTheDocument()
+      unmount()
+    }
+    setup({ connection: connection({ email: 'a@example.com', enrollmentKey: key }) })
+    await user.click(screen.getByRole('button', { name: 'Connect' }))
+    expect(screen.getByRole('region', { name: 'Check before connecting' })).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  test('while busy, nothing can be sent again, and a notice shows beside the result', async () => {
+    const user = userEvent.setup()
+    const notice = "The server did not remove this machine from your account's list. Remove it in the client."
+    const { props } = setup({ busy: true, notice })
+    expect(screen.getByRole('button', { name: 'New connect link' })).toBeDisabled()
+    await user.type(screen.getByRole('textbox', { name: 'Email' }), 'a@example.com')
+    await user.type(screen.getByRole('textbox', { name: 'Key' }), `${key}{Enter}`)
+    expect(screen.getByRole('button', { name: 'Connect' })).toBeDisabled()
+    expect(screen.queryByRole('region', { name: 'Check before connecting' })).not.toBeInTheDocument()
+    expect(props.connection.onConnect).not.toHaveBeenCalled()
+    expect(screen.getByText(notice)).toBeInTheDocument()
+  })
+
+  test('connected shows the account and its server, no field to edit, and Disconnect asks first', async () => {
+    const user = userEvent.setup()
+    const { props } = setup({
+      status: { ...status, tunnel: 'connected', linkedAccount },
+      statusLabel: 'Connected',
+      statusTone: 'good',
+      link: 'https://app.example.com/#machine=m-1&key=k',
+    })
+    expect(screen.getByRole('status')).toHaveTextContent('Connected')
+    const panel = screen.getByRole('region', { name: 'Connected account' })
+    expect(panel).toHaveTextContent('Ada Lovelace (a***@example.com)')
+    expect(panel).toHaveTextContent('wss://relay.example.com')
+    for (const name of ['Server address', 'Email', 'Key']) {
+      expect(screen.queryByRole('textbox', { name })).not.toBeInTheDocument()
+    }
+
+    await user.click(within(panel).getByRole('button', { name: 'Disconnect' }))
+    const confirm = within(panel).getByRole('group', { name: 'Confirm disconnect' })
+    await user.click(within(confirm).getByRole('button', { name: 'Cancel' }))
+    expect(props.connection.onDisconnect).not.toHaveBeenCalled()
+    await user.click(within(panel).getByRole('button', { name: 'Disconnect' }))
+    await user.click(within(panel).getByRole('button', { name: 'Disconnect' }))
+    expect(props.connection.onDisconnect).toHaveBeenCalledTimes(1)
+
+    // A new connect link can still be copied.
     await user.click(screen.getByRole('button', { name: 'Copy the link' }))
     expect(await navigator.clipboard.readText()).toBe('https://app.example.com/#machine=m-1&key=k')
   })
 
-  test('an address a flag or variable sets is read-only and names it, and a saved one waiting says so', () => {
-    for (const setBy of ['SERVER_URL', '--relay-url', 'CORCH_RELAY_URL']) {
-      const { unmount } = setup({
-        status: { ...status, serverUrlSetBy: setBy, clientUrlSetBy: null, restartNeeded: true },
-      })
-      expect(screen.getByRole('textbox', { name: /^Server address/ })).toHaveAttribute('readonly')
-      expect(screen.getByText(`Set by ${setBy}.`)).toBeInTheDocument()
-      expect(screen.getByRole('textbox', { name: /Client address/ })).not.toHaveAttribute('readonly')
-      expect(screen.getByText('Saved. The host uses the new address from its next start.')).toBeInTheDocument()
-      unmount()
-    }
-  })
-
-  test('while busy, nothing can be sent again', async () => {
-    const user = userEvent.setup()
-    const { props } = setup({ busy: true })
-
-    expect(screen.getByRole('switch', { name: 'Remote access' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'New connect link' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
-    await user.type(screen.getByRole('textbox', { name: 'Server address' }), '{Enter}')
-    expect(props.onSave).not.toHaveBeenCalled()
-  })
-
-  test('a pasted key previews on Enter or Preview without saving the setting', async () => {
-    const user = userEvent.setup()
-    const { props } = setup()
-
-    expect(screen.getByRole('button', { name: 'Preview' })).toBeDisabled()
-    await user.type(screen.getByRole('textbox', { name: 'Link key' }), 'oek_abc{Enter}')
-    expect(props.accountLink.onLinkKeyChange).toHaveBeenLastCalledWith('oek_abc')
-    expect(props.accountLink.onPreview).toHaveBeenCalledTimes(1)
-    expect(props.onSave).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Preview' }))
-    expect(props.accountLink.onPreview).toHaveBeenCalledTimes(2)
-  })
-
-  test('the preview shows what to check, warns about a server other than the default, and links only on Link', async () => {
-    const user = userEvent.setup()
-    const accountLink = accountLinkProps({ preview })
-    setup({ accountLink, error: 'This key is unknown, used or expired' })
-
-    const panel = screen.getByRole('region', { name: 'Check before linking' })
-    for (const text of ['wss://relay.example.com', 'Ada Lovelace', 'a***@example.com', 'Wx9z']) {
-      expect(panel).toHaveTextContent(text)
-    }
-    expect(screen.getByRole('alert')).toHaveTextContent('not the default server')
-    expect(screen.getByText('This key is unknown, used or expired')).toBeInTheDocument()
-    expect(screen.queryByRole('textbox', { name: 'Link key' })).not.toBeInTheDocument()
-
-    await user.click(screen.getByRole('button', { name: 'Cancel' }))
-    expect(accountLink.onCancel).toHaveBeenCalledTimes(1)
-    expect(accountLink.onLink).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Link' }))
-    expect(accountLink.onLink).toHaveBeenCalledTimes(1)
-  })
-
-  test('the default server gets no warning', () => {
-    setup({ accountLink: accountLinkProps({ preview: { ...preview, serverUrlIsDefault: true } }) })
-    expect(screen.getByRole('region', { name: 'Check before linking' })).toBeInTheDocument()
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-  })
-
-  test('a linked machine shows its account and server with Unlink, and no key field', async () => {
-    const user = userEvent.setup()
-    const linkedAccount = {
-      name: 'Ada Lovelace',
-      maskedEmail: 'a***@example.com',
-      serverUrl: 'wss://relay.example.com',
-      linkedAt: '2026-11-04T12:00:00.000Z',
-    }
-    const { props } = setup({ status: { ...status, linkedAccount } })
-
-    const panel = screen.getByRole('region', { name: 'Linked account' })
-    expect(panel).toHaveTextContent('Linked to Ada Lovelace (a***@example.com)')
-    expect(panel).toHaveTextContent('wss://relay.example.com')
-    expect(screen.queryByRole('textbox', { name: 'Link key' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Unlink' }))
-    expect(props.accountLink.onUnlink).toHaveBeenCalledTimes(1)
-  })
-
-  test('Sessions shows once an account is linked or a session is listed', () => {
+  test('Sessions shows once an account is connected or a session is listed', () => {
     const none = { sessions: { sessions: [] }, onEnd: mock() }
     const { unmount } = setup({ sessions: none })
     expect(screen.queryByRole('region', { name: 'Sessions' })).not.toBeInTheDocument()
@@ -237,12 +217,6 @@ describe('RemoteAccessForm', () => {
 
   test('a waiting browser can only be dismissed, and is approved only by typing its fingerprint', async () => {
     const user = userEvent.setup()
-    const linkedAccount = {
-      name: 'Ada Lovelace',
-      maskedEmail: 'a***@example.com',
-      serverUrl: 'wss://relay.example.com',
-      linkedAt: '2026-11-04T12:00:00.000Z',
-    }
     const devices: DevicesResponse = {
       pending: [{ id: 'd'.repeat(43), fingerprint: 'ABCD-EFGH-JKMN-PQRS', firstSeenAt: '2026-11-04T12:00:00.000Z' }],
       approved: [],
@@ -271,7 +245,7 @@ describe('RemoteAccessForm', () => {
     await user.clear(field)
     await user.type(field, 'abcd-efgh-jkmn-pqrs{Enter}')
     expect(onDevices.onApprove).toHaveBeenCalledWith('abcd-efgh-jkmn-pqrs')
-    expect(props.onSave).not.toHaveBeenCalled()
+    expect(props.connection.onDisconnect).not.toHaveBeenCalled()
     await user.click(approve.getByRole('button', { name: 'Approve' }))
     expect(onDevices.onApprove).toHaveBeenCalledTimes(2)
   })

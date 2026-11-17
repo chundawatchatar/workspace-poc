@@ -224,14 +224,15 @@ describe('tunnel socket', () => {
     expect(registry.isRemoteOff(id)).toBe(false)
   })
 
-  test('answers enrollment frames with `unavailable` while accounts are off', async () => {
+  test('answers enroll.redeem and unlink with `unavailable` while accounts are off', async () => {
     const machine = await hello(keyA, { pong: true })
-    machine.send({ type: 'enroll.preview', id: 1, key: 'oek_any' })
-    machine.send({ type: 'enroll.redeem', id: 2, key: 'oek_any', name: 'Box' })
-    await until(() => machine.frames.filter((f) => f.type === 'enroll.failed').length === 2)
-    expect(machine.frames.filter((f) => f.type === 'enroll.failed')).toEqual([
+    machine.send({ type: 'enroll.redeem', id: 1, key: 'oek_any', email: 'a@example.com', name: 'Box' })
+    machine.send({ type: 'unlink', id: 2, accountId: 'u1' })
+    const answers = () => machine.frames.filter((f) => f.type === 'enroll.failed' || f.type === 'unlink.failed')
+    await until(() => answers().length === 2)
+    expect(answers()).toEqual([
       { type: 'enroll.failed', id: 1, code: 'unavailable' },
-      { type: 'enroll.failed', id: 2, code: 'unavailable' },
+      { type: 'unlink.failed', id: 2, code: 'unavailable' },
     ])
   })
 })

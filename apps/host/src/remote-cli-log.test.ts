@@ -18,15 +18,12 @@ const [alice, bob, carol] = [1, 2, 3].map((seed) => ({
 }))
 
 const status: RemoteAccessStatus = {
-  enabled: true,
   serverUrl: 'wss://relay.example.com',
   serverUrlIsDefault: false,
+  defaultServerUrl: 'wss://orch.example.com',
   clientUrl: null,
   serverUrlSetBy: null,
   clientUrlSetBy: null,
-  savedServerUrl: null,
-  savedClientUrl: null,
-  restartNeeded: false,
   machineId: 'm1',
   machineFingerprint: 'ABCD-EFGH-JKMN-PQRS',
   tunnel: 'connected',

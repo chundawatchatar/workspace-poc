@@ -16,7 +16,6 @@ import { AuditLogRepository, auditLogPath } from './modules/remote-access/audit-
 import { AuditLogService } from './modules/remote-access/audit-log.service'
 import { DevicesRepository, devicesPath } from './modules/remote-access/devices.repository'
 import { LinkedAccountRepository, linkedAccountPath } from './modules/remote-access/linked-account.repository'
-import { RemoteAccessRepository, remoteAccessPath } from './modules/remote-access/remote-access.repository'
 import { RemoteAccessService } from './modules/remote-access/remote-access.service'
 import { settingsPath } from './modules/settings/settings.repository'
 import type { Settings } from './modules/settings/settings.service'
@@ -43,9 +42,9 @@ export interface HostOptions {
   build: string
   /** The built local UI to serve on the host's own port, or null for none. */
   ui: UiSite | null
-  /** True for the packaged `corch`: the tunnel turns on only from its saved flag, and hints name `corch` commands. */
+  /** True for the packaged `corch`, whose hints name `corch` commands. */
   packaged: boolean
-  /** The dev host's `SERVER_URL` and `CLIENT_URL`; the packaged host passes none. */
+  /** The dev host's `SERVER_URL` and `CLIENT_URL`, which fix the addresses; the packaged host passes none. */
   addresses: RemoteAccessEnv
   /** The loopback address to listen on. */
   hostname: string
@@ -97,7 +96,6 @@ export function startHost(options: HostOptions): { url: string; instanceId: stri
 
   // The service reads `app` and `sockets` only once a tunnel carries traffic, after `createApp` has returned.
   const remoteAccess = new RemoteAccessService({
-    repository: new RemoteAccessRepository(remoteAccessPath(dataDir)),
     linkedAccounts: new LinkedAccountRepository(linkedAccountPath(dataDir)),
     devices: new DevicesRepository(devicesPath(dataDir)),
     audit: new AuditLogService(new AuditLogRepository(auditLogPath(dataDir))),
@@ -106,8 +104,6 @@ export function startHost(options: HostOptions): { url: string; instanceId: stri
     keysFile: accessKeysPath(dataDir),
     settingsFile: settingsPath(dataDir),
     addresses: devAddresses(settings, options.addresses),
-    // A packaged host turns the tunnel on only from its saved flag; `SERVER_URL` turning it on is for dev.
-    autoEnable: !packaged,
     handle: async (request, principal) => app.fetch(request, tunnelEnv(principal)),
     openSocket: (path, headers, conn, principal) => sockets.open(path, headers, conn, principal),
   })

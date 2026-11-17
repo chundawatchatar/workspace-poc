@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { type RemoteAccessStatus, routes, type UpdateRemoteAccessBody } from '@orch/shared'
+import type { LinkedAccount, RemoteAccessStatus } from '@orch/shared'
 import { linkedAccountPath } from '../modules/remote-access/linked-account.repository'
 import { remoteAccessPath } from '../modules/remote-access/remote-access.repository'
 import { settingsPath } from '../modules/settings/settings.repository'
@@ -23,59 +23,51 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }))
 interface Options {
   env?: Record<string, string>
   callHost?: CallHost | null
-  answer?: string | null
 }
 
-/** Runs one subcommand against the temporary folder, collecting what it prints and the questions it asks. */
-async function run(action: ConfigAction, { env = {}, callHost = null, answer = null }: Options = {}) {
+/** Runs one subcommand against the temporary folder, collecting what it prints. */
+async function run(action: ConfigAction, { env = {}, callHost = null }: Options = {}) {
   const out: string[] = []
   const err: string[] = []
-  const asked: string[] = []
   const code = await runConfig(action, {
     dataDir: dir,
     env,
     callHost,
-    prompt: async (question) => {
-      asked.push(question)
-      return answer
-    },
     out: (line) => out.push(line),
     err: (line) => err.push(line),
   })
-  return { code, out: out.join('\n'), err: err.join('\n'), asked }
+  return { code, out: out.join('\n'), err: err.join('\n') }
 }
 
-const set = (key: string, value: string, yes = false): ConfigAction => ({ name: 'set', key, value, yes })
-const unset = (key: string, yes = false): ConfigAction => ({ name: 'unset', key, yes })
+const set = (key: string, value: string): ConfigAction => ({ name: 'set', key, value })
+const unset = (key: string): ConfigAction => ({ name: 'unset', key })
 
-/** A running host whose remote access is `enabled`, through `relay`. It records every `update` it gets. */
-function fakeHost(enabled: boolean, relay = 'wss://old.example.com') {
-  const updates: UpdateRemoteAccessBody[] = []
-  let status: RemoteAccessStatus = {
-    enabled,
-    serverUrl: relay,
+const account: LinkedAccount = {
+  name: 'Ada',
+  maskedEmail: 'a***@example.com',
+  serverUrl: 'wss://old.example.com',
+  linkedAt: '2026-11-04T12:00:00.000Z',
+}
+
+/** A running host, connected to `account` or not. It answers every call with its status. */
+function fakeHost(linkedAccount: LinkedAccount | null): CallHost {
+  const status: RemoteAccessStatus = {
+    serverUrl: 'wss://old.example.com',
     serverUrlIsDefault: false,
+    defaultServerUrl: 'wss://orch.example.com',
     clientUrl: null,
     serverUrlSetBy: null,
     clientUrlSetBy: null,
-    savedServerUrl: relay,
-    savedClientUrl: null,
-    restartNeeded: false,
     machineId: null,
     machineFingerprint: null,
-    tunnel: enabled ? 'connected' : 'off',
-    linkedAccount: null,
+    tunnel: linkedAccount ? 'connected' : 'off',
+    linkedAccount,
   }
-  const callHost = (async (endpoint: unknown, input: unknown) => {
-    if (endpoint === routes.remoteAccess.update) {
-      const body = input as UpdateRemoteAccessBody
-      updates.push(body)
-      status = { ...status, enabled: body.enabled, tunnel: body.enabled ? 'connecting' : 'off' }
-    }
-    return { ok: true, data: status }
-  }) as CallHost
-  return { callHost, updates }
+  return (async () => ({ ok: true, data: status })) as CallHost
 }
+
+const DISCONNECT_FIRST =
+  'This machine is connected to an account through its server address. Run corch disconnect first.'
 
 describe('corch config list, get and path', () => {
   test('list shows each value in effect and where it came from; get prints the value alone', async () => {
@@ -159,57 +151,32 @@ describe('corch config set and unset', () => {
     expect(readJson(remoteAccessPath(dir))).toEqual({ enabled: true })
   })
 
-  test('warns that a linked account belongs to the old server when the relay changes', async () => {
-    const account = {
-      name: 'Ada',
-      maskedEmail: 'a***',
-      serverUrl: 'wss://old.example.com',
-      linkedAt: new Date().toISOString(),
-    }
-    writeFileSync(linkedAccountPath(dir), JSON.stringify(account))
+  test('refuses to change relayUrl while linked-account.json connects the machine, and other keys still change', async () => {
     writeFileSync(config(), JSON.stringify({ relayUrl: 'wss://old.example.com' }))
-    const changed = await run(set('relayUrl', 'wss://new.example.com'))
-    expect(changed.out).toContain('linked to an account through wss://old.example.com')
-    expect((await run(set('port', '5000'))).out).not.toContain('linked')
+    writeFileSync(linkedAccountPath(dir), JSON.stringify(account))
+    for (const action of [set('relayUrl', 'wss://new.example.com'), unset('relayUrl')]) {
+      expect(await run(action)).toMatchObject({ code: 1, err: DISCONNECT_FIRST })
+    }
+    expect((await run(set('port', '5000'))).code).toBe(0)
+    expect(readJson(config())).toEqual({ relayUrl: 'wss://old.example.com', port: 5000 })
+
+    writeFileSync(linkedAccountPath(dir), 'not json')
+    const broken = await run(set('relayUrl', 'wss://new.example.com'))
+    expect([broken.code, broken.err]).toEqual([1, expect.stringContaining('linked-account.json is not valid')])
   })
 })
 
 describe('corch config with a running host', () => {
-  test('says the change applies after a restart, and asks nothing when remote access is off', async () => {
-    const host = fakeHost(false)
-    const saved = await run(set('relayUrl', 'wss://new.example.com'), { callHost: host.callHost })
+  test('says the change applies after a restart, and refuses relayUrl while the host is connected', async () => {
+    const saved = await run(set('relayUrl', 'wss://new.example.com'), { callHost: fakeHost(null) })
     expect(saved.out).toContain('The running host uses the change after corch restart.')
-    expect(saved.asked).toEqual([])
-    expect(host.updates).toEqual([])
-  })
+    expect(readJson(config())).toEqual({ relayUrl: 'wss://new.example.com' })
 
-  test('offers to turn remote access off when the relay changes; any answer but y leaves it on', async () => {
-    writeFileSync(config(), JSON.stringify({ relayUrl: 'wss://old.example.com', port: 4700 }))
-    for (const answer of ['n', null]) {
-      const host = fakeHost(true)
-      const kept = await run(set('relayUrl', `wss://new-${answer}.example.com`), { callHost: host.callHost, answer })
-      expect(kept.code).toBe(0)
-      expect(kept.out).toContain('The open tunnel stays connected to wss://old.example.com until corch restart.')
-      expect(kept.asked).toEqual(['Turn remote access off now? [y/N] '])
-      expect(host.updates).toEqual([])
-      expect(readJson(config()).relayUrl).toBe(`wss://new-${answer}.example.com`)
-    }
-  })
-
-  test('y or --yes turns it off through the host, sending the newly saved addresses', async () => {
-    writeFileSync(config(), JSON.stringify({ relayUrl: 'wss://old.example.com', clientUrl: 'https://app.example.com' }))
-    const asked = fakeHost(true)
-    const answered = await run(set('relayUrl', 'wss://new.example.com'), { callHost: asked.callHost, answer: 'y' })
-    expect(asked.updates).toEqual([
-      { enabled: false, serverUrl: 'wss://new.example.com', clientUrl: 'https://app.example.com' },
-    ])
-    expect(answered.out).toContain('Remote access:  off, tunnel off')
-
-    // Unsetting the relay changes it too, to the default.
-    const yes = fakeHost(true, 'wss://new.example.com')
-    const unsetYes = await run(unset('relayUrl', true), { callHost: yes.callHost })
-    expect(unsetYes.asked).toEqual([])
-    expect(yes.updates).toEqual([{ enabled: false, serverUrl: '', clientUrl: 'https://app.example.com' }])
-    expect(readJson(config())).toEqual({ clientUrl: 'https://app.example.com' })
+    // The running host decides, whatever the file says.
+    writeFileSync(linkedAccountPath(dir), JSON.stringify(account))
+    expect((await run(unset('relayUrl'), { callHost: fakeHost(null) })).code).toBe(0)
+    const refused = await run(set('relayUrl', 'wss://other.example.com'), { callHost: fakeHost(account) })
+    expect(refused).toMatchObject({ code: 1, err: DISCONNECT_FIRST })
+    expect(readJson(config())).toEqual({})
   })
 })

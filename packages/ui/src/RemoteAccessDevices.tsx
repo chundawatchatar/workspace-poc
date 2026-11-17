@@ -69,7 +69,7 @@ export function RemoteAccessDevices(props: RemoteAccessDevicesProps) {
         role="group"
         aria-label="Approve a browser"
         onKeyDown={(event) => {
-          // The field sits inside the settings form, so Enter approves instead of saving.
+          // Enter in the field approves, as the button does.
           if (event.key !== 'Enter') return
           event.preventDefault()
           approve()

@@ -1,4 +1,4 @@
-import { type RelayKey, relayKey } from '@orch/shared'
+import { parseServerUrl, type RelayKey, relayKey } from '@orch/shared'
 import { z } from 'zod'
 
 /** The settings for the accounts side: the database, Better Auth and the mailer. */
@@ -14,6 +14,12 @@ export interface AccountsConfig {
   relaySigningKey: { kid: string; seed: string }
   /** `RELAY_EXTRA_PUBLIC_KEYS`: public keys machines also trust, for a key rotation. */
   relayExtraPublicKeys: RelayKey[]
+  /**
+   * `SERVER_TUNNEL_URL`: the address machines open their tunnel to on this
+   * server, `wss://<host>` or `ws://` on a loopback host, with no path. Every
+   * new enrollment key comes with it.
+   */
+  serverTunnelUrl: string
 }
 
 /** The server's validated settings. */
@@ -90,6 +96,18 @@ const relaySigningKey = required
     return { kid, seed }
   })
 
+/**
+ * A server address as `parseServerUrl` takes it, with no path, query or
+ * fragment, normalised to `scheme://host[:port]`.
+ */
+const serverTunnelUrl = required
+  .refine((value) => {
+    if (!parseServerUrl(value)) return false
+    const url = new URL(value)
+    return url.pathname === '/' || url.pathname === ''
+  }, 'must be wss://<host>, or ws:// on 127.0.0.1, [::1] or localhost, with no path')
+  .transform((value) => new URL(value).origin)
+
 const relayExtraPublicKeys = z
   .string()
   .optional()
@@ -128,6 +146,7 @@ const accountsSchema = z.object({
   MAIL_FROM: z.preprocess(blankAsUnset, required),
   RELAY_SIGNING_KEY: z.preprocess(blankAsUnset, relaySigningKey),
   RELAY_EXTRA_PUBLIC_KEYS: z.preprocess(blankAsUnset, relayExtraPublicKeys),
+  SERVER_TUNNEL_URL: z.preprocess(blankAsUnset, serverTunnelUrl),
 })
 
 /**
@@ -155,6 +174,7 @@ export function loadServerConfig(env: Record<string, string | undefined>): Serve
           mailFrom: accounts.data.MAIL_FROM,
           relaySigningKey: accounts.data.RELAY_SIGNING_KEY,
           relayExtraPublicKeys: accounts.data.RELAY_EXTRA_PUBLIC_KEYS,
+          serverTunnelUrl: accounts.data.SERVER_TUNNEL_URL,
         }
       : null,
   }

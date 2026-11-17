@@ -1,11 +1,12 @@
 import { z } from 'zod'
 import { defineContract } from './contract'
-import { enrollmentKeySchema } from './serverMachines'
+import { accountEmailSchema, enrollmentKeySchema } from './serverMachines'
 
 /**
  * Where the tunnel to the server stands: `connecting` while it dials or waits
  * for `welcome`, `reconnecting` while it waits to dial again, `stopped` once
- * the server refused it for good, and `off` when remote access is off.
+ * the server refused it for good, and `off` while the machine is not connected
+ * to an account.
  */
 export const tunnelState = z.enum(['off', 'connecting', 'connected', 'reconnecting', 'stopped'])
 export type TunnelState = z.infer<typeof tunnelState>
@@ -19,63 +20,50 @@ export const linkedAccount = linkAccount.extend({ serverUrl: z.string(), linkedA
 export type LinkedAccount = z.infer<typeof linkedAccount>
 
 export const remoteAccessStatus = z.object({
-  /** True while remote access is on, whether the setting or the dev host's `SERVER_URL` turned it on. */
-  enabled: z.boolean(),
-  /** The server address in use since the host started: a flag or the environment, else the saved one, else the default. */
+  /**
+   * The server address in use: a flag or the environment, else the one saved in
+   * the host's settings file, else the default. Connect saves the one it uses.
+   */
   serverUrl: z.string(),
   /** True when the server address in use is the built-in default. */
   serverUrlIsDefault: z.boolean(),
+  /** The built-in default server address. */
+  defaultServerUrl: z.string(),
   /** The client address for connect links in use. Null means it is derived from `serverUrl`. */
   clientUrl: z.string().nullable(),
   /** The flag or environment variable that sets the server address, such as `SERVER_URL`. Null means none does. */
   serverUrlSetBy: z.string().nullable(),
   /** The flag or environment variable that sets the client address, such as `CLIENT_URL`. Null means none does. */
   clientUrlSetBy: z.string().nullable(),
-  /** The server address saved in the host's settings file. Null means none is saved, so the default is used. */
-  savedServerUrl: z.string().nullable(),
-  /** The client address saved in the host's settings file. Null means none is saved, so it is derived. */
-  savedClientUrl: z.string().nullable(),
-  /** True when a saved address that nothing overrides differs from the one in use, so it applies from the host's next start. */
-  restartNeeded: z.boolean(),
   /** The id the server knows this machine by. Null until a machine key exists. */
   machineId: z.string().nullable(),
   /** `machineFingerprint(machineId)`, which the owner compares with the one the client shows. Null exactly when `machineId` is. */
   machineFingerprint: z.string().nullable(),
   tunnel: tunnelState,
-  /** The account this machine is linked to. Null means none. */
+  /** The account this machine is connected to. Null means it is not connected. */
   linkedAccount: linkedAccount.nullable(),
 })
 export type RemoteAccessStatus = z.infer<typeof remoteAccessStatus>
 
-export const updateRemoteAccessBody = z.object({
-  enabled: z.boolean(),
-  /** `wss://<host>`, or `ws://` on a loopback host. Empty means the built-in default. */
-  serverUrl: z.string(),
-  /** An `http(s)://` address. Null or empty means connect links use the one derived from `serverUrl`. */
-  clientUrl: z.string().nullable(),
+/**
+ * What Connect takes: the account's email and an enrollment key from the
+ * client, and the server address, `wss://<host>` or `ws://` on a loopback host.
+ * No message about them ever quotes them.
+ */
+export const connectBody = z.strictObject({
+  email: accountEmailSchema,
+  key: enrollmentKeySchema,
+  serverUrl: z.string().max(2048),
 })
-export type UpdateRemoteAccessBody = z.infer<typeof updateRemoteAccessBody>
-
-export const previewLinkBody = z.strictObject({ key: enrollmentKeySchema })
-export type PreviewLinkBody = z.infer<typeof previewLinkBody>
+export type ConnectBody = z.infer<typeof connectBody>
 
 /**
- * What the user checks before a key is used. `serverUrl` is the host's own
- * address in use, never anything from the key.
+ * What Disconnect answers: the status, now not connected, and whether the
+ * server removed this machine from the account's list. False means the owner
+ * removes it in the client.
  */
-export const previewLinkResponse = z.object({
-  serverUrl: z.string(),
-  serverUrlIsDefault: z.boolean(),
-  account: linkAccount,
-  fingerprint: z.string(),
-  /** An ISO string. */
-  expiresAt: z.iso.datetime(),
-})
-export type PreviewLinkResponse = z.infer<typeof previewLinkResponse>
-
-/** `serverUrl` is the address the user confirmed; the host refuses the link when it is no longer the one in use. */
-export const linkBody = z.strictObject({ key: enrollmentKeySchema, serverUrl: z.string() })
-export type LinkBody = z.infer<typeof linkBody>
+export const disconnectResponse = z.object({ status: remoteAccessStatus, removedFromAccount: z.boolean() })
+export type DisconnectResponse = z.infer<typeof disconnectResponse>
 
 /** A device id: the base64url SHA-256 of the device's canonical public JWK. */
 export const deviceId = z.string().regex(/^[A-Za-z0-9_-]{43}$/)
@@ -217,40 +205,26 @@ export const remoteAccessContract = defineContract({
   status: {
     method: 'GET',
     path: '/api/remote-access/status',
-    description: 'Reports the remote access setting and the state of the tunnel. Local callers only.',
+    description:
+      'Reports the server address, the account this machine is connected to and the state of the tunnel. Local callers only.',
     input: z.object({}),
     output: remoteAccessStatus,
   },
-  update: {
+  connect: {
     method: 'POST',
-    path: '/api/remote-access/settings',
+    path: '/api/remote-access/connect',
     description:
-      'Saves the remote access setting and opens, moves or closes the tunnel to match. An address the host refuses gets a 400. Local callers only.',
-    input: updateRemoteAccessBody,
+      'Connects this machine to the account whose key and email it gets: saves the server address, opens the tunnel to it and redeems the key over it. A connected machine, or an address other than the one a flag or variable sets, gets a 409; an address the host refuses gets a 400. On any failure nothing is linked and the tunnel is stopped. Local callers only.',
+    input: connectBody,
     output: remoteAccessStatus,
   },
-  previewLink: {
+  disconnect: {
     method: 'POST',
-    path: '/api/remote-access/link/preview',
+    path: '/api/remote-access/disconnect',
     description:
-      'Asks the server over the tunnel which account an enrollment key belongs to, without using it. Needs a connected tunnel and no linked account. Local callers only.',
-    input: previewLinkBody,
-    output: previewLinkResponse,
-  },
-  link: {
-    method: 'POST',
-    path: '/api/remote-access/link',
-    description:
-      'Redeems an enrollment key over the tunnel and remembers the account. A `serverUrl` other than the one in use gets a 409. Local callers only.',
-    input: linkBody,
-    output: remoteAccessStatus,
-  },
-  unlink: {
-    method: 'POST',
-    path: '/api/remote-access/unlink',
-    description: 'Forgets the linked account on this machine. The server still lists the machine. Local callers only.',
+      "Asks the server over the tunnel to remove this machine from the account's list, when it can, then forgets the account and its browsers on this machine and stops the tunnel. A machine that is not connected changes nothing. Local callers only.",
     input: z.strictObject({}),
-    output: remoteAccessStatus,
+    output: disconnectResponse,
   },
   devices: {
     method: 'GET',
