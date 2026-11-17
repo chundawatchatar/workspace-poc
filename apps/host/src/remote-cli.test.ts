@@ -300,10 +300,9 @@ describe('host:remote with the host running', () => {
       const no = await run(url, ['devices', 'approve', typed], { answers: [answer] })
       expect(no.code).toBe(1)
       expect(no.text).toContain('Approve only a fingerprint shown in your own browser.')
-      expect(no.text).toContain(
-        `Approve ${typed}? It will be able to open this machine through the linked account. [y/N]`,
-      )
-      expect(no.text).toContain('Not approved')
+      expect(no.text).toContain(`Approve ${typed}? It will be able to open this machine remotely. [y/N]`)
+      // No answer at all, as when stdin isn't a terminal, says how to approve instead of a bare refusal.
+      expect(no.text).toContain(answer === null ? 'No answer could be read, so nothing was approved' : 'Not approved')
     }
     expect(host.calls).toEqual([])
 

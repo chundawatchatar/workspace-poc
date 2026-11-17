@@ -58,10 +58,14 @@ async function approve(devices: DevicesResponse, typed: string, yes: boolean, de
   }
   if (!yes) {
     deps.out('Approve only a fingerprint shown in your own browser.')
-    const answer = await deps.prompt(
-      `Approve ${fingerprint}? It will be able to open this machine through the linked account. [y/N] `,
-    )
-    if (!/^(y|yes)$/i.test(answer?.trim() ?? '')) {
+    const answer = await deps.prompt(`Approve ${fingerprint}? It will be able to open this machine remotely. [y/N] `)
+    if (answer === null) {
+      deps.err(
+        'No answer could be read, so nothing was approved. Run this in a terminal, or add --yes once the fingerprint matches the one your browser shows.',
+      )
+      return 1
+    }
+    if (!/^(y|yes)$/i.test(answer.trim())) {
       deps.err('Not approved')
       return 1
     }
@@ -69,9 +73,7 @@ async function approve(devices: DevicesResponse, typed: string, yes: boolean, de
   const approved = await deps.callHost(routes.remoteAccess.approveDevice, { fingerprint: typed.trim() })
   if (!approved?.ok) return refused(approved, deps.err)
   const shown = approved.data.approved.find((device) => fingerprintKey(device.fingerprint) === wanted)?.fingerprint
-  deps.out(
-    `Approved ${shown ? printable(shown) : fingerprint}. It can open this machine through the linked account now.`,
-  )
+  deps.out(`Approved ${shown ? printable(shown) : fingerprint}. It can open this machine remotely now.`)
   return 0
 }
 

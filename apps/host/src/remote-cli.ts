@@ -247,7 +247,11 @@ async function linkThroughHost(command: Extract<Command, { name: 'link' }>, deps
   printPreview(preview.data, deps.out)
   if (!command.yes) {
     const answer = await deps.prompt(`Link this machine to ${printable(preview.data.account.name)}? [y/N] `)
-    if (!/^(y|yes)$/i.test(answer?.trim() ?? '')) {
+    if (answer === null) {
+      deps.err('No answer could be read, so nothing was linked. Run this in a terminal, or add --yes.')
+      return 1
+    }
+    if (!/^(y|yes)$/i.test(answer.trim())) {
       deps.err('Not linked')
       return 1
     }
