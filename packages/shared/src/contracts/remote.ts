@@ -3,24 +3,21 @@ import { API_PREFIX, WS_PREFIX } from './contract'
 
 // How a browser reaches a machine through the cloud server. The server forwards
 // `/m/<machineId>/api/*` and `/m/<machineId>/ws/*` to the machine, and the
-// machine checks the access key, or a relay ticket the server signed for the
-// account, either one together with a proof from a device approved on the
-// machine. None of them ever goes in a URL, so they stay out of server logs,
-// proxies and browser history.
-
-/** The request header that carries a machine's access key on HTTP requests. */
-export const ACCESS_KEY_HEADER = 'x-orch-access-key'
+// machine checks the relay ticket the server signed for the account, together
+// with a proof from a device approved on the machine. Neither ever goes in a
+// URL, so they stay out of server logs, proxies and browser history.
 
 /**
  * The first text message on every remote socket, sent before anything else,
- * since browsers can't set socket headers. It carries the access key, or
- * `account: true` to be judged by the relay ticket the socket opened with,
- * and either way `device`, a fresh device proof for the socket (`'WS'` and its path).
+ * since browsers can't set socket headers. `account: true` asks to be judged
+ * by the relay ticket the socket opened with, and `device` is a fresh device
+ * proof for the socket (`'WS'` and its path).
  */
-export const socketAuthMessage = z.union([
-  z.object({ type: z.literal('auth'), key: z.string().min(1), device: z.string().min(1).max(4096) }),
-  z.object({ type: z.literal('auth'), account: z.literal(true), device: z.string().min(1).max(4096) }),
-])
+export const socketAuthMessage = z.object({
+  type: z.literal('auth'),
+  account: z.literal(true),
+  device: z.string().min(1).max(4096),
+})
 
 export type SocketAuthMessage = z.infer<typeof socketAuthMessage>
 
@@ -66,7 +63,7 @@ export const CLOSE_E2E_SESSION_UNKNOWN = 4409
 /** The close code a browser socket gets when its machine has no live tunnel, or the tunnel drops. */
 export const CLOSE_MACHINE_OFFLINE = 4502
 
-/** The close code a browser socket gets when its access key is missing, wrong or late, or its access was revoked. */
+/** The close code a browser socket gets when its credentials are missing, refused or late, or its access was revoked. */
 export const CLOSE_ACCESS_DENIED = 4401
 
 /**

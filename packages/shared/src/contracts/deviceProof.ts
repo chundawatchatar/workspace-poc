@@ -3,8 +3,7 @@ import { z } from 'zod'
 // Device proofs let a machine admit only browsers its owner approved on the
 // machine itself. Each browser keeps a non-exportable P-256 key pair and signs
 // a fresh proof for every relayed request and socket, alongside the relay
-// ticket or the access key, so a key or ticket the server captured opens
-// nothing on its own. The server never holds a device's private key, so it can't make one.
+// ticket, so a ticket the server captured opens nothing on its own. The server never holds a device's private key, so it can't make one.
 // A proof is a compact JWS (`header.payload.signature`, base64url, `alg: ES256`).
 
 /** The request header that carries a device proof on HTTP requests. */

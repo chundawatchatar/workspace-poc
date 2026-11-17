@@ -10,14 +10,14 @@ const sessions: SessionsResponse = {
     {
       deviceId: `a${'d'.repeat(42)}`,
       fingerprint: 'ABCD-EFGH',
-      credentials: [{ kind: 'account' }, { kind: 'key', name: 'laptop' }],
+      credentials: [{ kind: 'account' }],
       sockets: 3,
       startedAt,
     },
     {
       deviceId: `b${'d'.repeat(42)}`,
       fingerprint: 'JKMN-PQRS',
-      credentials: [{ kind: 'key', name: 'phone' }],
+      credentials: [{ kind: 'account' }],
       sockets: 1,
       startedAt,
     },
@@ -31,10 +31,8 @@ describe('RemoteAccessSessions', () => {
     render(<RemoteAccessSessions sessions={sessions} onEnd={onEnd} busy={false} />)
 
     const [first, second] = within(screen.getByRole('list', { name: 'Open sessions' })).getAllByRole('listitem')
-    expect(first).toHaveTextContent(
-      `ABCD-EFGHAccount, Key laptop · 3 sockets · since ${formatLocalDateTime(startedAt)}`,
-    )
-    expect(second).toHaveTextContent('Key phone · 1 socket')
+    expect(first).toHaveTextContent(`ABCD-EFGHAccount · 3 sockets · since ${formatLocalDateTime(startedAt)}`)
+    expect(second).toHaveTextContent('Account · 1 socket')
     expect(screen.getByText(/stays approved/)).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'End JKMN-PQRS' }))

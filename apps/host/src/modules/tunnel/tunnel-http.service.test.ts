@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test'
 import {
-  ACCESS_KEY_HEADER,
   DEVICE_NOT_APPROVED_CODE,
   DEVICE_PROOF_HEADER,
   E2E_REQUIRED_CODE,
@@ -27,7 +26,9 @@ import {
   tunneledRequest,
 } from './tunnel-http.service'
 
-const principal: Principal = { kind: 'key', keyId: 'k1', name: 'default', deviceId: 'd1' }
+const principal: Principal = { kind: 'account', accountId: 'u1', deviceId: 'd1', ticketExp: 0 }
+/** The header older browsers sent an access key in, which the host no longer reads. */
+const OLD_KEY_HEADER = 'x-orch-access-key'
 const allowAll: Authorize = () => principal
 
 /** The two routes served unsealed through the tunnel, as their exact paths. */
@@ -101,13 +102,13 @@ describe('TunnelHttp', () => {
       },
     )
     const good: [string, string][] = [
-      [ACCESS_KEY_HEADER, 'good'],
+      [RELAY_TICKET_HEADER, 't-good'],
       [DEVICE_PROOF_HEADER, 'p-good'],
     ]
     const refused: [string, string, [string, string][]][] = [
       ['GET', routes.system.health.path, good],
       ['GET', routes.system.health.path, []],
-      ['POST', routes.remoteAccess.approveDevice.path, [[RELAY_TICKET_HEADER, 't-good'], ...good.slice(1)]],
+      ['POST', routes.remoteAccess.approveDevice.path, good],
       // The exempt paths with a query string, another method, or another spelling.
       ['GET', `${MACHINE_KEY}?probe=1`, good],
       ['POST', MACHINE_KEY, good],
@@ -140,7 +141,7 @@ describe('TunnelHttp', () => {
     expect(audit).toEqual(ids.map(() => ({ kind: 'refused', reason: 'unsealed' })))
   })
 
-  test('answers an authorized bootstrap request like a direct app.fetch, even from a foreign origin, without the key header', async () => {
+  test('answers an authorized bootstrap request like a direct app.fetch, even from a foreign origin, without the ticket header', async () => {
     const { app, handle } = hostApp()
     let seen: { request: Request; principal: Principal } | undefined
     const { http, frames, audit } = setup(async (req, p) => {
@@ -148,14 +149,14 @@ describe('TunnelHttp', () => {
       return handle(req, p)
     })
     const headers: [string, string][] = [
-      [ACCESS_KEY_HEADER, 'the-key'],
+      [RELAY_TICKET_HEADER, 'the-ticket'],
       ['origin', 'https://orch.example'],
     ]
     http.request({ type: 'http.request', id: 1, method: 'GET', path: MACHINE_KEY, headers })
     await until(() => ended(frames, 1))
 
     expect(seen?.request.url).toBe(`${HOST_ORIGIN}${MACHINE_KEY}`)
-    expect(seen?.request.headers.has(ACCESS_KEY_HEADER)).toBe(false)
+    expect(seen?.request.headers.has(RELAY_TICKET_HEADER)).toBe(false)
     expect(seen?.principal).toEqual(principal)
     const direct = await localRequest(app, MACHINE_KEY)
     expect(frames[0]).toMatchObject({ type: 'http.response', id: 1, status: direct.status })
@@ -167,17 +168,17 @@ describe('TunnelHttp', () => {
     expect(foreign.status).toBe(403)
   })
 
-  test('refuses a missing, wrong, repeated or ticket-rescued key, or one without a proof, with auth.failed, 401 and end, never calling handle', async () => {
+  test('refuses a missing, repeated or bad ticket, or one without a proof, with auth.failed, 401 and end, never calling handle', async () => {
     const seen: Credentials[] = []
-    // Accepts the key `good`, and the ticket `t-good` as the account `u1`, each with the proof `p-good`; the proof
-    // `p-new` stands for a device the machine hasn't approved.
+    // Accepts the ticket `t-good` with the proof `p-good`; the proof `p-new` stands for a device the machine hasn't
+    // approved.
     const authorize: Authorize = (credentials) => {
       seen.push(credentials)
-      const { key, ticket, device } = credentials
-      if (key === null ? ticket !== 't-good' : key !== 'good') return null
+      const { ticket, device } = credentials
+      if (ticket !== 't-good') return null
       if (device?.proof === 'p-new') return DEVICE_NOT_APPROVED
       if (device?.proof !== 'p-good') return null
-      return key ? principal : { kind: 'account', accountId: 'u1', deviceId: 'd1', ticketExp: 0 }
+      return principal
     }
     const handled: Principal[] = []
     const handledHeaders: Headers[] = []
@@ -189,14 +190,15 @@ describe('TunnelHttp', () => {
     const send = (id: number, headers: [string, string][]) =>
       http.request({ type: 'http.request', id, method: 'GET', path: MACHINE_KEY, headers })
     send(1, [])
-    send(2, [[ACCESS_KEY_HEADER, 'bad']])
+    // The access key header older browsers sent is no credential: alone it is a missing ticket, and beside a good
+    // ticket and proof it changes nothing.
+    send(2, [[OLD_KEY_HEADER, 'old']])
     send(3, [
-      [ACCESS_KEY_HEADER, 'good'],
-      [ACCESS_KEY_HEADER, 'good'],
+      [RELAY_TICKET_HEADER, 't-good'],
+      [RELAY_TICKET_HEADER, 't-good'],
     ])
-    // With a key header the key alone decides, even when the ticket and proof would pass.
     send(5, [
-      [ACCESS_KEY_HEADER, 'bad'],
+      [OLD_KEY_HEADER, 'old'],
       [RELAY_TICKET_HEADER, 't-good'],
       [DEVICE_PROOF_HEADER, 'p-good'],
     ])
@@ -219,46 +221,27 @@ describe('TunnelHttp', () => {
       [RELAY_TICKET_HEADER, 't-good'],
       [DEVICE_PROOF_HEADER, 'p-new'],
     ])
-    // A good key needs a proof too: none is refused, a waiting device gets the 403, and an approved one gets in.
-    send(10, [[ACCESS_KEY_HEADER, 'good']])
-    send(11, [
-      [ACCESS_KEY_HEADER, 'good'],
-      [DEVICE_PROOF_HEADER, 'p-new'],
-    ])
-    send(12, [
-      [ACCESS_KEY_HEADER, 'good'],
-      [DEVICE_PROOF_HEADER, 'p-good'],
-    ])
-    const ids = [1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12]
+    const ids = [1, 2, 3, 5, 6, 7, 8, 9]
     await until(() => ids.every((id) => ended(frames, id)))
 
-    expect(handled).toEqual([{ kind: 'account', accountId: 'u1', deviceId: 'd1', ticketExp: 0 }, principal])
-    // The key, ticket and proof have done their job, so the handler never sees them.
+    expect(handled).toEqual([principal, principal])
+    // The ticket and proof have done their job, so the handler never sees them.
     for (const headers of handledHeaders) {
-      expect([ACCESS_KEY_HEADER, RELAY_TICKET_HEADER, DEVICE_PROOF_HEADER].some((name) => headers.has(name))).toBe(
-        false,
-      )
+      expect([RELAY_TICKET_HEADER, DEVICE_PROOF_HEADER].some((name) => headers.has(name))).toBe(false)
     }
     const emptyHash = bodySha256()
     const proofOf = (proof: string) => ({ proof, method: 'GET', path: MACHINE_KEY, bodySha256: emptyHash })
     expect(seen).toEqual([
-      { key: null, ticket: null, device: null },
-      { key: 'bad', ticket: null, device: null },
-      { key: null, ticket: null, device: null },
-      { key: 'bad', ticket: null, device: proofOf('p-good') },
-      { key: null, ticket: 't-bad', device: null },
-      { key: null, ticket: 't-good', device: null },
-      {
-        key: null,
-        ticket: 't-good',
-        device: { proof: 'p-good', method: 'POST', path: E2E_OPEN, bodySha256: bodySha256(body) },
-      },
-      { key: null, ticket: 't-good', device: proofOf('p-new') },
-      { key: 'good', ticket: null, device: null },
-      { key: 'good', ticket: null, device: proofOf('p-new') },
-      { key: 'good', ticket: null, device: proofOf('p-good') },
+      { ticket: null, device: null },
+      { ticket: null, device: null },
+      { ticket: null, device: null },
+      { ticket: 't-good', device: proofOf('p-good') },
+      { ticket: 't-bad', device: null },
+      { ticket: 't-good', device: null },
+      { ticket: 't-good', device: { proof: 'p-good', method: 'POST', path: E2E_OPEN, bodySha256: bodySha256(body) } },
+      { ticket: 't-good', device: proofOf('p-new') },
     ])
-    for (const id of [1, 2, 3, 5, 6, 7, 10]) {
+    for (const id of [1, 2, 3, 6, 7]) {
       expect(frames.filter((f) => 'id' in f && f.id === id)).toEqual([
         { type: 'auth.failed', id },
         { type: 'http.response', id, status: 401, headers: [] },
@@ -266,25 +249,20 @@ describe('TunnelHttp', () => {
       ])
     }
     // A device waiting for approval is no bad credential: a JSON 403 and no `auth.failed`.
-    for (const id of [9, 11]) {
-      expect(frames.filter((f) => 'id' in f && f.id === id).map((f) => f.type)).toEqual([
-        'http.response',
-        'http.body',
-        'http.end',
-      ])
-      expect(frames.find((f) => f.type === 'http.response' && f.id === id)).toMatchObject({ status: 403 })
-      expect(JSON.parse(bodyOf(frames, id))).toMatchObject({ code: DEVICE_NOT_APPROVED_CODE })
-    }
-    // This stub gives no reasons, so each refusal falls back to the credential it was given.
+    expect(frames.filter((f) => 'id' in f && f.id === 9).map((f) => f.type)).toEqual([
+      'http.response',
+      'http.body',
+      'http.end',
+    ])
+    expect(frames.find((f) => f.type === 'http.response' && f.id === 9)).toMatchObject({ status: 403 })
+    expect(JSON.parse(bodyOf(frames, 9))).toMatchObject({ code: DEVICE_NOT_APPROVED_CODE })
+    // This stub gives no reasons, so each refusal falls back to `ticket_refused`.
     expect(audit.map((event) => (event.kind === 'refused' ? event.reason : event.kind))).toEqual([
       'ticket_refused',
-      'key_refused',
-      'ticket_refused',
-      'key_refused',
       'ticket_refused',
       'ticket_refused',
-      'device_not_approved',
-      'key_refused',
+      'ticket_refused',
+      'ticket_refused',
       'device_not_approved',
     ])
   })

@@ -9,7 +9,6 @@ export interface RemoteAccessActivityProps {
 
 /** What each refusal reason says to the owner. */
 const REASON_LABEL: Record<AuditRefusalReason, string> = {
-  key_refused: 'Refused: wrong access key',
   ticket_refused: 'Refused: account ticket not valid',
   ticket_reused: 'Refused: account ticket used again',
   proof_refused: 'Refused: browser proof not valid',
@@ -61,13 +60,12 @@ function ActivityRow({ entry }: { entry: AuditLogEntry }) {
       </div>
     )
   }
-  const who = entry.principal === 'account' ? 'Through the account' : `With access key ${entry.keyId}`
   const closed = entry.closedAt ? `closed ${formatLocalDateTime(entry.closedAt)}` : 'still open or not recorded'
   return (
     <div className="min-w-0">
       <div className="text-xs">
         <span className="font-mono">{entry.fingerprint}</span>
-        <span className="ml-1.5 break-words text-dim">{who}</span>
+        <span className="ml-1.5 break-words text-dim">Through the account</span>
       </div>
       <div className="text-[11px] text-faint">
         Opened {formatLocalDateTime(entry.openedAt)}, {closed}

@@ -1,4 +1,4 @@
-import { ACCESS_KEY_HEADER, DEVICE_PROOF_HEADER, RELAY_TICKET_HEADER } from '@orch/shared'
+import { DEVICE_PROOF_HEADER, RELAY_TICKET_HEADER } from '@orch/shared'
 import type { Context, MiddlewareHandler } from 'hono'
 
 /** The headers every response from the server carries, relayed ones included. */
@@ -14,15 +14,15 @@ export const SECURITY_HEADERS: Readonly<Record<string, string>> = {
  * The CSP for every response that is not the client's own page: relayed
  * machine responses and the build's other files. `sandbox` without
  * `allow-same-origin` gives a document opened from one an opaque origin, so
- * HTML a machine sends can never run as the server's origin and read the
- * access keys the client keeps in `localStorage`.
+ * HTML a machine sends can never run as the server's origin and read what
+ * the client keeps in its storage, such as its pinned machine keys.
  */
 export const SANDBOX_CSP = "sandbox; default-src 'none'; frame-ancestors 'none'"
 
-// What a cross-origin page may send to a machine. The key or ticket header is
+// What a cross-origin page may send to a machine. The ticket header is
 // the one that makes every machine request non-simple, so browsers preflight it.
 const ALLOWED_METHODS = 'GET, HEAD, POST, PUT, PATCH, DELETE'
-const ALLOWED_HEADERS = `${ACCESS_KEY_HEADER}, ${RELAY_TICKET_HEADER}, ${DEVICE_PROOF_HEADER}, content-type`
+const ALLOWED_HEADERS = `${RELAY_TICKET_HEADER}, ${DEVICE_PROOF_HEADER}, content-type`
 const PREFLIGHT_MAX_AGE_SECONDS = '600'
 
 /** Adds `SECURITY_HEADERS` to every response, after the handler has made it. */

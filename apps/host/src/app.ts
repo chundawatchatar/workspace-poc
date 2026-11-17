@@ -44,8 +44,8 @@ export function createApp(deps: AppDeps): HostApp {
     await next()
   })
   // This server starts shells, so it only answers pages served from this machine. A request the
-  // tunnel authorized carries its access key in a header, never a cookie, so the key stands in for
-  // the origin check: a foreign page cannot ride on a browser's ambient credentials.
+  // tunnel authorized carries its relay ticket in a header, never a cookie, so the ticket stands in
+  // for the origin check: a foreign page cannot ride on a browser's ambient credentials.
   app.use('*', async (c, next) => {
     if (!tunnelPrincipal(c.env) && !localOrigin(c.req.header('origin'))) return c.text('forbidden', 403)
     await next()

@@ -23,7 +23,7 @@ export interface MachinesModuleDeps {
   /** The clock enrollment keys and requests expire by. Defaults to the current time. */
   now?: () => Date
   /**
-   * Signs the relay tickets that open a listed machine without its access key, and holds the public keys a machine
+   * Signs the relay tickets that open a listed machine, and holds the public keys a machine
    * gets when its request is accepted.
    */
   relayTickets: Pick<RelayTickets, 'issue' | 'publicKeys'>

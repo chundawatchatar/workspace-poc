@@ -140,7 +140,7 @@ function parseArgs(args: string[]): Command | null {
   return null
 }
 
-/** Runs one `host:remote` command and answers its exit code. Nothing it prints holds an access key or the machine's private key. */
+/** Runs one `host:remote` command and answers its exit code. Nothing it prints holds a credential or the machine's private key. */
 export async function runRemote(args: string[], deps: RemoteCliDeps): Promise<number> {
   const command = parseArgs(args)
   if (!command) {

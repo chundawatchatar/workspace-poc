@@ -24,7 +24,6 @@ import {
   fakeServer,
   HOLD_MS,
   key,
-  keysFile,
   linkedFile,
   logs,
   machineKeyFile,
@@ -32,10 +31,8 @@ import {
   relay,
   relayKeys,
   savedAccount,
-  seedKey,
   service,
   setup,
-  storedKeys,
   tunnels,
   useRemoteAccessHarness,
 } from './remote-access.testing'
@@ -60,7 +57,7 @@ function approvedEarlier() {
 }
 
 describe('RemoteAccessService', () => {
-  test('a saved account opens one tunnel at start and creates no access key; without one nothing opens', async () => {
+  test('a saved account opens one tunnel at start, and without one nothing opens', async () => {
     writeFileSync(join(dir, 'remote-access.json'), JSON.stringify({ enabled: true }))
     const app = setup({ serverUrl: 'ws://127.0.0.1:4600' }, { SERVER_URL: 'ws://127.0.0.1:4600' })
     expect(tunnels).toHaveLength(0)
@@ -79,17 +76,11 @@ describe('RemoteAccessService', () => {
 
     setup({ linked: true, serverUrl: 'ws://127.0.0.1:4600' })
     expect(tunnels.map((t) => t.options.url)).toEqual(['ws://127.0.0.1:4600/tunnel'])
-    expect(existsSync(keysFile())).toBe(false)
     expect(service.status()).toMatchObject({
       tunnel: 'connecting',
       linkedAccount: { ...account, serverUrl: 'ws://127.0.0.1:4600' },
     })
-    service.shutdown()
-
-    // A key saved earlier is kept as it is, and the start-up prints no way to get a new one.
-    seedKey()
-    setup()
-    expect(storedKeys().map((k) => k.name)).toEqual(['default'])
+    // The start-up prints no way to get an access key.
     for (const issued of ['Connect link', 'Access key:', '#machine=', 'host:rotate']) {
       expect(logs.join('\n')).not.toContain(issued)
     }
@@ -183,8 +174,7 @@ describe('RemoteAccessService', () => {
     expect(logs.join('\n')).not.toContain(key)
     expect(logs.join('\n')).not.toContain(email)
     expect(tunnel?.stops).toEqual([])
-    // Connecting issues no access key and logs no connect link.
-    expect(existsSync(keysFile())).toBe(false)
+    // Connecting logs no connect link.
     for (const issued of ['Connect link', 'Access key:', '#machine=']) expect(logs.join('\n')).not.toContain(issued)
 
     // A connected machine refuses another connect, and the account survives a restart.
@@ -326,13 +316,13 @@ describe('RemoteAccessService', () => {
     expect(service.listDevices().approved).toHaveLength(1)
     tunnel.channels = [
       { principal: { kind: 'account', accountId, deviceId: deviceOf(1), ticketExp: 0 }, openedAt: 1 },
-      { principal: { kind: 'key', keyId: 'k1', name: 'laptop', deviceId: deviceOf(2) }, openedAt: 1 },
+      { principal: { kind: 'account', accountId, deviceId: deviceOf(2), ticketExp: 0 }, openedAt: 1 },
     ]
     const answer = await post(app, routes.remoteAccess.disconnect, {})
     expect(answer.json()).toMatchObject({ removedFromAccount: true, status: { tunnel: 'off', linkedAccount: null } })
     expect(tunnel.sent).toEqual([{ type: 'unlink', accountId }])
     expect(tunnel.closed.map(({ reason }) => reason)).toEqual(['disconnected'])
-    expect(tunnel.channels.map((channel) => channel.principal.kind)).toEqual(['key'])
+    expect(tunnel.channels).toEqual([])
     expect(tunnel.stops).toEqual([{ remoteOff: true }])
     expect(existsSync(linkedFile())).toBe(false)
     expect(existsSync(devicesFile())).toBe(false)
@@ -392,9 +382,9 @@ describe('remote sessions', () => {
     const [a, b] = [deviceId(1), deviceId(2)]
     tunnel.channels = [
       { principal: { kind: 'account', accountId, deviceId: a, ticketExp: 0 }, openedAt: Date.UTC(2026, 10, 6, 12, 0) },
-      { principal: { kind: 'key', keyId: 'k1', name: 'laptop', deviceId: a }, openedAt: Date.UTC(2026, 10, 6, 11, 0) },
+      { principal: { kind: 'account', accountId, deviceId: a, ticketExp: 0 }, openedAt: Date.UTC(2026, 10, 6, 11, 0) },
       { principal: { kind: 'account', accountId, deviceId: a, ticketExp: 0 }, openedAt: Date.UTC(2026, 10, 6, 13, 0) },
-      { principal: { kind: 'key', keyId: 'k2', name: 'phone', deviceId: b }, openedAt: Date.UTC(2026, 10, 6, 12, 30) },
+      { principal: { kind: 'account', accountId, deviceId: b, ticketExp: 0 }, openedAt: Date.UTC(2026, 10, 6, 12, 30) },
     ]
     const listed = await localRequest(app, routes.remoteAccess.sessions.path)
     const text = await listed.text()
@@ -403,20 +393,20 @@ describe('remote sessions', () => {
         {
           deviceId: b,
           fingerprint: fingerprintOf(b),
-          credentials: [{ kind: 'key', name: 'phone' }],
+          credentials: [{ kind: 'account' }],
           sockets: 1,
           startedAt: '2026-11-06T12:30:00.000Z',
         },
         {
           deviceId: a,
           fingerprint: fingerprintOf(a),
-          credentials: [{ kind: 'account' }, { kind: 'key', name: 'laptop' }],
+          credentials: [{ kind: 'account' }],
           sockets: 3,
           startedAt: '2026-11-06T11:00:00.000Z',
         },
       ],
     })
-    for (const hidden of ['k1', 'k2', accountId]) expect(text).not.toContain(hidden)
+    expect(text).not.toContain(accountId)
 
     const ended = await post(app, routes.remoteAccess.endSession, { id: a })
     expect(ended.json().sessions.map((session: { deviceId: string }) => session.deviceId)).toEqual([b])
@@ -437,10 +427,8 @@ describe('end-to-end sessions', () => {
     const { tunnel } = connected()
     const ticketExp = Math.floor(Date.now() / 1000) + 60
     const principals: Record<string, [Principal, typeof one]> = {
-      keyOne: [{ kind: 'key', keyId: 'k-one', name: 'default', deviceId: one.id }, one],
       accountOne: [{ kind: 'account', accountId, deviceId: one.id, ticketExp }, one],
       accountTwo: [{ kind: 'account', accountId, deviceId: two.id, ticketExp }, two],
-      keyTwo: [{ kind: 'key', keyId: 'k-other', name: 'phone', deviceId: two.id }, two],
       otherAccount: [{ kind: 'account', accountId: 'acct-bob-2', deviceId: two.id, ticketExp }, two],
     }
     const machineId = service.status().machineId ?? ''
@@ -456,10 +444,10 @@ describe('end-to-end sessions', () => {
       return opened.filter(([, id]) => e2eSessions.get(id) === null).map(([name]) => name)
     }
 
-    expect(await closedBy(() => service.removeDevice(one.id))).toEqual(['keyOne', 'accountOne'])
-    expect(await closedBy(() => service.endSession(two.id))).toEqual(['accountTwo', 'keyTwo', 'otherAccount'])
+    expect(await closedBy(() => service.removeDevice(one.id))).toEqual(['accountOne'])
+    expect(await closedBy(() => service.endSession(two.id))).toEqual(['accountTwo', 'otherAccount'])
     expect(await closedBy(() => tunnel.options.onSessionEnded?.(accountId))).toEqual(['accountOne', 'accountTwo'])
-    // Disconnecting closes the account's sessions, then every other one with the tunnel.
+    // Disconnecting closes every session.
     expect(await closedBy(() => service.disconnect())).toEqual(Object.keys(principals))
   })
 })

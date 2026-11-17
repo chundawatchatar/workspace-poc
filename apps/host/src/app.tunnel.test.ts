@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'bun:test'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { createHash, randomBytes } from 'node:crypto'
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  ACCESS_KEY_HEADER,
   type AppState,
+  auditLogResponse,
   buildSocketUrl,
+  CLOSE_ACCESS_DENIED,
   DEVICE_NOT_APPROVED_CODE,
   DEVICE_PROOF_HEADER,
   decodeFrame,
@@ -14,6 +16,7 @@ import {
   machineIdFromPublicKey,
   machineKeyResponse,
   openE2eSessionResponse,
+  RELAY_TICKET_HEADER,
   remoteAccessStatus,
   routes,
   serverFrame,
@@ -21,6 +24,8 @@ import {
 } from '@orch/shared'
 import {
   ACCOUNT_ID,
+  accountHeaders,
+  accountTicket,
   clients,
   conns,
   dataOn,
@@ -28,8 +33,6 @@ import {
   dir,
   e2eSessions,
   hub,
-  key,
-  keyHeaders,
   local,
   machineId,
   machineKey,
@@ -46,7 +49,12 @@ import {
   welcomed,
 } from './app.tunnel.testing'
 import { testDevice } from './modules/remote-access/device-proof.testing'
-import { helloVerifies, openSealedReply, sealedEnvelope } from './modules/tunnel/tunnel.testing'
+import {
+  helloVerifies,
+  openSealedReply,
+  sealedEnvelope,
+  sealedUncheckedSocketEnvelope,
+} from './modules/tunnel/tunnel.testing'
 import { tunneledRequest } from './modules/tunnel/tunnel-http.service'
 
 // The host's sockets end to end, on the harness in `app.tunnel.testing.ts`.
@@ -109,18 +117,45 @@ describe('tunneled sockets', () => {
     expect(conns).toHaveLength(2)
   })
 
-  test('the host issues no access key: rotate is an unknown route, locally and tunneled, and the saved key still opens', async () => {
+  test('an access key an older host saved opens nothing: a request or socket presenting it is refused, and its file stays as it was', async () => {
     const conn = await welcomed()
-    const saved = readFileSync(join(dir, 'access-keys.json'), 'utf8')
-    const e2e = await openE2eSession(conn, 1)
-    const rotatePath = '/api/access/rotate'
-    expect((await sealedRequest(conn, e2e, 2, 'POST', rotatePath)).status).toBe(404)
-    const response = await fetch(`http://127.0.0.1:${local.port}${rotatePath}`, { method: 'POST' })
-    expect(response.status).toBe(404)
-    expect(await response.text()).not.toContain('key')
+    // The file older hosts kept their access keys in, in its old format, holding a key one would have accepted.
+    const file = join(dir, 'access-keys.json')
+    const key = randomBytes(32).toString('base64url')
+    const hash = createHash('sha256').update(key).digest('base64url')
+    const createdAt = new Date().toISOString()
+    const saved = `${JSON.stringify({ keys: [{ id: 'k1', name: 'default', hash, createdAt, lastUsedAt: null }] }, null, 2)}\n`
+    writeFileSync(file, saved, { mode: 0o600 })
+    const path = routes.system.machineKey.path
+    const proof = await device.proof({ machineId, method: 'GET', path })
+    const headers: [string, string][] = [
+      ['x-orch-access-key', key],
+      [DEVICE_PROOF_HEADER, proof],
+    ]
+    send(conn, { type: 'http.request', id: 1, method: 'GET', path, headers })
+    const of = (id: number) => conn.frames.filter((f) => 'id' in f && f.id === id)
+    await until(() => of(1).some((f) => f.type === 'http.end'))
+    expect(of(1).map((f) => f.type)).toEqual(['auth.failed', 'http.response', 'http.end'])
+    expect(of(1).find((f) => f.type === 'http.response')).toMatchObject({ status: 401, headers: [] })
 
-    expect((await sealedRequest(conn, e2e, 3, 'GET', routes.system.health.path)).status).toBe(200)
-    expect(readFileSync(join(dir, 'access-keys.json'), 'utf8')).toBe(saved)
+    // A sealed socket whose auth message presents the key, on a session the account opened.
+    const e2e = await openE2eSession(conn, 2)
+    const socketPath = '/ws/term/t1'
+    const open = { path: socketPath, auth: { type: 'auth', key, device: await device.socket(machineId, socketPath) } }
+    const sealed = await sealedUncheckedSocketEnvelope(e2e.session, e2e.sessionId, e2e.next(), open)
+    send(conn, { type: 'ws.sealed', channel: 1, data: sealed.data })
+    await until(() => conn.frames.some((f) => f.type === 'ws.close' && f.channel === 1))
+    expect(conn.frames.filter((f) => f.type === 'auth.failed' && f.channel === 1)).toHaveLength(1)
+    expect(conn.frames.find((f) => f.type === 'ws.close')).toMatchObject({ channel: 1, code: CLOSE_ACCESS_DENIED })
+    expect(stub.attached.size).toBe(0)
+
+    const log = await fetch(`http://127.0.0.1:${local.port}${routes.remoteAccess.auditLog.path}`)
+    const { entries } = auditLogResponse.parse(await log.json())
+    expect(entries.map((entry) => (entry.kind === 'refused' ? entry.reason : entry.kind))).toEqual([
+      'no_auth',
+      'ticket_refused',
+    ])
+    expect(readFileSync(file, 'utf8')).toBe(saved)
   })
 
   test('the agent reporting channel is out of reach: tunneled and local requests touch no session', async () => {
@@ -129,7 +164,7 @@ describe('tunneled sockets', () => {
     const body = new TextEncoder().encode(event)
     const request = async (id: number, path: string) => {
       const headers: [string, string][] = [
-        ...(await keyHeaders(key, 'POST', path, event)),
+        ...(await accountHeaders('POST', path, event)),
         ['authorization', `Bearer ${'a'.repeat(64)}`],
         ['content-type', 'application/json'],
       ]
@@ -197,11 +232,11 @@ describe('tunneled sockets', () => {
     const stranger = await testDevice()
     const strangerProof = await stranger.proof({ machineId, method: 'GET', path })
     const requests: [number, [string, string][]][] = [
-      [1, await keyHeaders(key, 'GET', path)],
+      [1, await accountHeaders('GET', path)],
       [
         2,
         [
-          [ACCESS_KEY_HEADER, key],
+          [RELAY_TICKET_HEADER, accountTicket()],
           [DEVICE_PROOF_HEADER, strangerProof],
         ],
       ],
@@ -256,14 +291,8 @@ describe('tunneled sockets', () => {
       connectRequest: null,
       connectOutcome: null,
     })
-    for (const hidden of [
-      machineKey.privateKey,
-      machineKey.pem,
-      key,
-      ACCOUNT_ID,
-      readFileSync(join(dir, 'access-keys.json'), 'utf8').match(/"hash": "([^"]+)"/)?.[1],
-    ]) {
-      expect(text).not.toContain(hidden ?? 'missing')
+    for (const hidden of [machineKey.privateKey, machineKey.pem, ACCOUNT_ID]) {
+      expect(text).not.toContain(hidden)
     }
 
     const off = await fetch(`http://127.0.0.1:${local.port}${disconnect.path}`, {
@@ -298,11 +327,11 @@ describe('tunneled end-to-end handshake', () => {
         id,
         method,
         path,
-        headers: [['content-type', 'application/json'], ...(headers ?? (await keyHeaders(key, method, path, body)))],
+        headers: [['content-type', 'application/json'], ...(headers ?? (await accountHeaders(method, path, body)))],
         body: encoder.encode(body),
       })
     const strangerHeaders = async (body: string): Promise<[string, string][]> => [
-      [ACCESS_KEY_HEADER, key],
+      [RELAY_TICKET_HEADER, accountTicket()],
       [DEVICE_PROOF_HEADER, await stranger.proof({ machineId, method, path, body })],
     ]
     const json = (value: unknown) => JSON.stringify(value)
@@ -331,7 +360,7 @@ describe('tunneled end-to-end handshake', () => {
     const opened = openE2eSessionResponse.parse(JSON.parse(body(1)))
     const session = await browser.finish(opened.hello, machineKey.publicKey)
     const kept = e2eSessions.get(opened.sessionId)
-    expect(kept?.principal).toMatchObject({ kind: 'key', deviceId: device.id })
+    expect(kept?.principal).toMatchObject({ kind: 'account', accountId: ACCOUNT_ID, deviceId: device.id })
     const sealed = await session.seal(encoder.encode('ls'))
     expect(new TextDecoder().decode(await kept?.session.open(sealed))).toBe('ls')
     expect(await kept?.session.seal(encoder.encode('ok')).then((reply) => session.open(reply))).toEqual(
@@ -355,7 +384,7 @@ describe('tunneled end-to-end handshake', () => {
     const payloads = (id: number) => of(id).flatMap((f) => (f.type === 'http.body' ? [f.data] : []))
 
     const health = routes.system.health.path
-    const request = { method: 'GET', path: health, headers: await keyHeaders(key, 'GET', health) }
+    const request = { method: 'GET', path: health, headers: await accountHeaders('GET', health) }
     const { channel, data } = await sealedEnvelope(session, sessionId, 1, request)
     send(conn, { type: 'http.sealed', id: 2, data })
     await ended(2)
@@ -374,7 +403,7 @@ describe('tunneled end-to-end handshake', () => {
     e2eSessions.closeAll()
     const after = await sealedEnvelope(session, sessionId, 2, {
       ...request,
-      headers: await keyHeaders(key, 'GET', health),
+      headers: await accountHeaders('GET', health),
     })
     send(conn, { type: 'http.sealed', id: 4, data: after.data })
     await ended(4)

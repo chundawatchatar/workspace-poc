@@ -41,7 +41,7 @@ describe('sealed sockets through the remote transport', () => {
   test('a socket goes sealed on the next channel, with nothing in clear, and messages round-trip typed and in order', async () => {
     const { machineId, sealed, sockets, transport: make } = await e2eMachine()
     const expiresAt = new Date(Date.now() + RELAY_TICKET_TTL_SECONDS * 1000).toISOString()
-    const transport = await make({ accessKey: undefined, relayTicket: async () => ({ ticket: TICKET, expiresAt }) })
+    const transport = await make({ relayTicket: async () => ({ ticket: TICKET, expiresAt }) })
     await transport.request('/api/health', {})
     const socket = transport.openSocket('/ws/term/t1?cwd=%2Fsecret')
     socket.binaryType = 'arraybuffer'

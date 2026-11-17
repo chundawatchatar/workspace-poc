@@ -4,7 +4,7 @@ import { printable, refused } from './remote-cli-output'
 
 // `bun run host:remote sessions`: the Sessions list of the Remote access
 // setting. Sessions live only in the running host's memory, so a stopped host
-// has none. Nothing here prints a device id, a key id or an account id.
+// has none. Nothing here prints a device id or an account id.
 
 export type SessionsCommand = { name: 'sessions' }
 
@@ -28,11 +28,9 @@ export function sessionsFromFile(deps: RemoteCliDeps): number {
   return 0
 }
 
-/** One session, such as `ABCD-EFGH  account, key laptop  3 sockets  since 6 Nov 2026, 12:00`. */
+/** One session, such as `ABCD-EFGH  account  3 sockets  since 6 Nov 2026, 12:00`. */
 function sessionLine(session: RemoteSession): string {
-  const credentials = session.credentials
-    .map((credential) => (credential.kind === 'account' ? 'account' : `key ${printable(credential.name)}`))
-    .join(', ')
+  const credentials = session.credentials.map((credential) => credential.kind).join(', ')
   const sockets = `${session.sockets} ${session.sockets === 1 ? 'socket' : 'sockets'}`
   return `${printable(session.fingerprint)}  ${credentials}  ${sockets}  since ${formatLocalDateTime(session.startedAt)}`
 }

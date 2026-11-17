@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AuditLogRepository } from './audit-log.repository'
@@ -26,23 +26,38 @@ afterEach(() => {
 })
 
 describe('AuditLogService', () => {
-  test('merges each opened socket with its close, newest first, keeping only ids and fingerprints', () => {
+  test('merges each opened socket with its close, newest first, keeping only ids and fingerprints, and skips key lines', () => {
     service.record({
       kind: 'opened',
       session: 'a',
       principal: { kind: 'account', accountId: 'acct-1', deviceId, ticketExp: 0 },
     })
     clock = MINUTE
-    service.record({ kind: 'opened', session: 'k', principal: { kind: 'key', keyId: 'k1', name: 'laptop', deviceId } })
+    service.record({
+      kind: 'opened',
+      session: 'b',
+      principal: { kind: 'account', accountId: 'acct-1', deviceId, ticketExp: 0 },
+    })
+    // A line an older host wrote for an access key, which no longer parses.
+    const fingerprint = fingerprintOf(deviceId)
+    const old = { kind: 'opened', session: 'k', principal: 'key', keyId: 'k1', fingerprint, at: iso(1) }
+    appendFileSync(join(dir, 'audit.jsonl'), `${JSON.stringify(old)}\n`)
     clock = 2 * MINUTE
     service.record({ kind: 'closed', session: 'a' })
     service.record({ kind: 'refused', reason: 'proof_refused' })
     service.record({ kind: 'closed', session: 'gone' })
 
-    const fingerprint = fingerprintOf(deviceId)
     expect(service.recent()).toEqual([
       { kind: 'refused', reason: 'proof_refused', at: iso(2) },
-      { kind: 'session', session: 'k', principal: 'key', keyId: 'k1', fingerprint, openedAt: iso(1), closedAt: null },
+      {
+        kind: 'session',
+        session: 'b',
+        principal: 'account',
+        accountId: 'acct-1',
+        fingerprint,
+        openedAt: iso(1),
+        closedAt: null,
+      },
       {
         kind: 'session',
         session: 'a',
@@ -75,7 +90,7 @@ describe('AuditLogService', () => {
       session: 'secret-session',
       principal: { kind: 'account', accountId: 'acct-1', deviceId, ticketExp: 0 },
     })
-    blocked.record({ kind: 'refused', reason: 'key_refused' })
+    blocked.record({ kind: 'refused', reason: 'ticket_refused' })
     expect(errors).toHaveBeenCalledTimes(1)
     const message = String(errors.mock.calls[0]?.[0])
     expect(message).toContain(file)

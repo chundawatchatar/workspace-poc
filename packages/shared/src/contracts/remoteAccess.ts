@@ -125,7 +125,6 @@ export type ApproveDeviceBody = z.infer<typeof approveDeviceBody>
  * first message wasn't a valid auth message, or that sent none in time.
  */
 export const auditRefusalReason = z.enum([
-  'key_refused',
   'ticket_refused',
   'ticket_reused',
   'proof_refused',
@@ -139,25 +138,16 @@ export type AuditRefusalReason = z.infer<typeof auditRefusalReason>
 const auditFingerprint = z.string().min(1).max(64)
 /** A local random id that ties a session's `closed` to its `opened`. */
 const auditSession = z.string().min(1).max(64)
-/** Who a tunneled socket opened as: the linked account's id, or an access key's id, never the key or its name. */
+/** Who a tunneled socket opened as: the linked account's id. */
 const auditAccount = z.strictObject({ principal: z.literal('account'), accountId: z.string().min(1).max(200) })
-const auditKey = z.strictObject({ principal: z.literal('key'), keyId: z.string().min(1).max(64) })
 
 /** A line of the audit log for a tunneled socket that opened. `at` is an ISO string, as in every line. */
-export const auditOpenedLine = z.union([
-  auditAccount.extend({
-    kind: z.literal('opened'),
-    session: auditSession,
-    fingerprint: auditFingerprint,
-    at: z.iso.datetime(),
-  }),
-  auditKey.extend({
-    kind: z.literal('opened'),
-    session: auditSession,
-    fingerprint: auditFingerprint,
-    at: z.iso.datetime(),
-  }),
-])
+export const auditOpenedLine = auditAccount.extend({
+  kind: z.literal('opened'),
+  session: auditSession,
+  fingerprint: auditFingerprint,
+  at: z.iso.datetime(),
+})
 
 /** A line of the audit log for a tunneled socket that ended, for any reason. */
 export const auditClosedLine = z.strictObject({
@@ -175,45 +165,33 @@ export const auditRefusedLine = z.strictObject({
   reason: auditRefusalReason,
   at: z.iso.datetime(),
   fingerprint: auditFingerprint.optional(),
-  principal: z.enum(['account', 'key']).optional(),
+  principal: z.literal('account').optional(),
 })
 export type AuditRefusedLine = z.infer<typeof auditRefusedLine>
 
 /** One line of `remote-audit.jsonl`. */
-export const auditLine = z.union([...auditOpenedLine.options, auditClosedLine, auditRefusedLine])
+export const auditLine = z.union([auditOpenedLine, auditClosedLine, auditRefusedLine])
 export type AuditLine = z.infer<typeof auditLine>
 
 /** A tunneled socket's session: an `opened` line merged with its `closed`. `closedAt` is null when no close was recorded. */
-export const auditSessionEntry = z.union([
-  auditAccount.extend({
-    kind: z.literal('session'),
-    session: auditSession,
-    fingerprint: auditFingerprint,
-    openedAt: z.iso.datetime(),
-    closedAt: z.iso.datetime().nullable(),
-  }),
-  auditKey.extend({
-    kind: z.literal('session'),
-    session: auditSession,
-    fingerprint: auditFingerprint,
-    openedAt: z.iso.datetime(),
-    closedAt: z.iso.datetime().nullable(),
-  }),
-])
+export const auditSessionEntry = auditAccount.extend({
+  kind: z.literal('session'),
+  session: auditSession,
+  fingerprint: auditFingerprint,
+  openedAt: z.iso.datetime(),
+  closedAt: z.iso.datetime().nullable(),
+})
 export type AuditSessionEntry = z.infer<typeof auditSessionEntry>
 
 /** An entry of the audit log as the owner reads it: a session, or a refusal. */
-export const auditLogEntry = z.union([...auditSessionEntry.options, auditRefusedLine])
+export const auditLogEntry = z.union([auditSessionEntry, auditRefusedLine])
 export type AuditLogEntry = z.infer<typeof auditLogEntry>
 
 /** The newest audit log entries, newest first. */
 export const auditLogResponse = z.object({ entries: z.array(auditLogEntry) })
 export type AuditLogResponse = z.infer<typeof auditLogResponse>
-/** A credential a device's tunneled sockets came in with: the linked account, or an access key by its name. */
-export const sessionCredential = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('account') }),
-  z.object({ kind: z.literal('key'), name: z.string() }),
-])
+/** A credential a device's tunneled sockets came in with: the linked account. */
+export const sessionCredential = z.object({ kind: z.literal('account') })
 export type SessionCredential = z.infer<typeof sessionCredential>
 
 /**
@@ -294,7 +272,7 @@ export const remoteAccessContract = defineContract({
     method: 'GET',
     path: '/api/remote-access/audit-log',
     description:
-      'Lists the newest remote access recorded on this machine, at most 50, newest first: the tunneled sockets that opened, as which device and account or key, and when they closed, and the refused requests and sockets. Local callers only.',
+      'Lists the newest remote access recorded on this machine, at most 50, newest first: the tunneled sockets that opened, as which device and account, and when they closed, and the refused requests and sockets. Local callers only.',
     input: z.object({}),
     output: auditLogResponse,
   },

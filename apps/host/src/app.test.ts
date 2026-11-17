@@ -157,7 +157,7 @@ describe('the Host check', () => {
   })
 
   test('never refuses a tunneled request for its Host', async () => {
-    const tunneled = tunnelEnv({ kind: 'key', keyId: 'k1', name: 'laptop', deviceId: 'd1' })
+    const tunneled = tunnelEnv({ kind: 'account', accountId: 'u1', deviceId: 'd1', ticketExp: 4_102_444_800 })
     for (const host of [null, 'evil.example', 'relay.example:443']) {
       const response = await app.request('/api/health', { headers: host ? { host } : {} }, tunneled)
       expect({ host, status: response.status }).toEqual({ host, status: 200 })

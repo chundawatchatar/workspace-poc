@@ -65,15 +65,14 @@ describe('host:remote sessions', () => {
           {
             deviceId: alice,
             fingerprint: fingerprintOf(alice),
-            credentials: [{ kind: 'account' }, { kind: 'key', name: 'laptop' }],
+            credentials: [{ kind: 'account' }],
             sockets: 3,
             startedAt,
           },
-          // A name that would move the cursor in a terminal.
           {
             deviceId: bob,
             fingerprint: fingerprintOf(bob),
-            credentials: [{ kind: 'key', name: 'x\x1b' }],
+            credentials: [{ kind: 'account' }],
             sockets: 1,
             startedAt,
           },
@@ -82,8 +81,8 @@ describe('host:remote sessions', () => {
     )
     expect(listed.code).toBe(0)
     expect(listed.text.split('\n')).toEqual([
-      `${fingerprintOf(alice)}  account, key laptop  3 sockets  since ${formatLocalDateTime(startedAt)}`,
-      `${fingerprintOf(bob)}  key x?  1 socket  since ${formatLocalDateTime(startedAt)}`,
+      `${fingerprintOf(alice)}  account  3 sockets  since ${formatLocalDateTime(startedAt)}`,
+      `${fingerprintOf(bob)}  account  1 socket  since ${formatLocalDateTime(startedAt)}`,
     ])
     expect(listed.called).toEqual([routes.remoteAccess.status.path, routes.remoteAccess.sessions.path])
 

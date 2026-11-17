@@ -3,7 +3,6 @@ import {
   type E2eBrowserHello,
   type E2eSession,
   type OpenE2eSessionResponse,
-  RELAY_TICKET_TTL_SECONDS,
 } from '@orch/shared'
 import type { Principal } from '../../lib/principal'
 import { deviceIdOf } from '../remote-access/device-proof.service'
@@ -47,8 +46,8 @@ export interface E2eSessionsOptions {
 /**
  * The end-to-end sessions browsers opened with this machine (REM-2), in
  * memory only: they are never written to the data folder, so a restart forgets them
- * and browsers open new ones. An account's session expires with the relay
- * ticket that opened it; a key's lives as long as a fresh ticket would. Each
+ * and browsers open new ones. A session expires with the relay ticket that
+ * opened it. Each
  * device holds at most `MAX_SESSIONS_PER_DEVICE`, dropping its oldest.
  */
 export class E2eSessions {
@@ -91,7 +90,7 @@ export class E2eSessions {
 
     const now = this.now()
     this.prune(now)
-    const expiresAt = principal.kind === 'account' ? principal.ticketExp * 1000 : now + RELAY_TICKET_TTL_SECONDS * 1000
+    const expiresAt = principal.ticketExp * 1000
     const ofDevice = [...this.sessions].filter(([, entry]) => entry.principal.deviceId === principal.deviceId)
     for (const [id] of ofDevice.slice(0, Math.max(0, ofDevice.length - MAX_SESSIONS_PER_DEVICE + 1))) {
       this.sessions.delete(id)

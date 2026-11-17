@@ -84,9 +84,13 @@ export class SealedChannel {
   }
 }
 
-/** What opening an envelope gave: the channel, its open record and who opened the session, or the close it gets. */
+/**
+ * What opening an envelope gave: the channel, its open record and who opened the session, `'no_auth'` for a record
+ * that opened but isn't a valid open record, or the close it gets.
+ */
 export type SealedOpen =
   | { ok: true; e2e: E2eChannel; record: E2eSocketOpen; owner: Principal }
+  | { ok: false; refused: 'no_auth' }
   | { ok: false; code: number; reason: string }
 
 /**
@@ -94,7 +98,9 @@ export type SealedOpen =
  * names, takes the channel it names and opens its open record. A session the
  * host doesn't have gets `CLOSE_E2E_SESSION_UNKNOWN`; a malformed envelope, a
  * channel already taken (by a request or a socket, a replay included) or a
- * record that doesn't open gets 1008. Reasons are fixed strings.
+ * record that doesn't open gets 1008. A record that opens but isn't a valid
+ * open record, such as one whose auth message presents an access key, is
+ * `'no_auth'`. Reasons are fixed strings.
  */
 export async function openSealedChannel(data: Uint8Array, sessions: SealedSessionLookup): Promise<SealedOpen> {
   let envelope: ReturnType<typeof decodeEnvelope>
@@ -105,12 +111,18 @@ export async function openSealedChannel(data: Uint8Array, sessions: SealedSessio
   }
   const entry = sessions(envelope.sessionId)
   if (!entry) return { ok: false, code: CLOSE_E2E_SESSION_UNKNOWN, reason: 'e2e session unknown' }
+  let e2e: E2eChannel
+  let plaintext: Uint8Array
   try {
-    const e2e = await entry.session.channel(envelope.channel)
-    const record = decodeSocketOpenRecord(await e2e.open(envelope.sealed))
-    return { ok: true, e2e, record, owner: entry.principal }
+    e2e = await entry.session.channel(envelope.channel)
+    plaintext = await e2e.open(envelope.sealed)
   } catch {
     return { ok: false, code: CLOSE_POLICY, reason: 'bad envelope' }
+  }
+  try {
+    return { ok: true, e2e, record: decodeSocketOpenRecord(plaintext), owner: entry.principal }
+  } catch {
+    return { ok: false, refused: 'no_auth' }
   }
 }
 

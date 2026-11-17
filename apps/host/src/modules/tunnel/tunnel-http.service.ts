@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto'
 import {
-  ACCESS_KEY_HEADER,
   API_PREFIX,
   type AuditRefusalReason,
   DEVICE_NOT_APPROVED_CODE,
@@ -47,20 +46,18 @@ export interface PresentedProof {
 }
 
 /**
- * What a request or channel presents: its access key or a relay ticket the
- * server signed for an account, plus a device proof. A caller sets a key or a
- * ticket, and a key always decides which is used. `once` spends the ticket, so
- * it can't open another socket.
+ * What a request or channel presents: a relay ticket the server signed for an
+ * account, plus a device proof. `once` spends the ticket, so it can't open
+ * another socket.
  */
 export interface Credentials {
-  key: string | null
   ticket: string | null
-  /** Null means no proof came with the key or ticket. */
+  /** Null means no proof came with the ticket. */
   device?: PresentedProof | null
   once?: boolean
 }
 
-/** What `Authorize` answers for a valid key or ticket and proof from a device the machine hasn't approved. */
+/** What `Authorize` answers for a valid ticket and proof from a device the machine hasn't approved. */
 export const DEVICE_NOT_APPROVED = 'device_not_approved'
 
 /** Who a request or channel is, `DEVICE_NOT_APPROVED`, or null for refused. */
@@ -75,17 +72,16 @@ export interface Refusal {
 
 /**
  * Decides whether a request or channel may in. In the host this is
- * `RemoteAccessService`'s, which checks a key with `AccessKeys.authorize`, or
- * a ticket against the linked account and the server's public keys, either
- * one together with a proof from an approved device. When it answers null or
- * `DEVICE_NOT_APPROVED`, it tells `refused` why.
+ * `RemoteAccessService`'s, which checks a ticket against the linked account
+ * and the server's public keys, together with a proof from an approved
+ * device. When it answers null or `DEVICE_NOT_APPROVED`, it tells `refused`
+ * why.
  */
 export type Authorize = (credentials: Credentials, refused?: (refusal: Refusal) => void) => Authorization
 
 /**
  * Decides with `authorize`, and says why it refused. When `authorize` gives
- * no reason, a refused key counts as `key_refused` and anything else as
- * `ticket_refused`.
+ * no reason, a refusal counts as `ticket_refused`.
  */
 export function authorizeWithReason(
   authorize: Authorize,
@@ -97,12 +93,7 @@ export function authorizeWithReason(
     refusal = given
   })
   if (authorization !== null && authorization !== DEVICE_NOT_APPROVED) return { authorization, refusal: null }
-  const fallback: Refusal['reason'] =
-    authorization === DEVICE_NOT_APPROVED
-      ? 'device_not_approved'
-      : credentials.key !== null
-        ? 'key_refused'
-        : 'ticket_refused'
+  const fallback: Refusal['reason'] = authorization === DEVICE_NOT_APPROVED ? 'device_not_approved' : 'ticket_refused'
   return { authorization, refusal: refusal ?? { reason: fallback } }
 }
 
@@ -118,39 +109,27 @@ function singleHeader(headers: [string, string][], name: string): string | null 
 }
 
 /**
- * What an `http.request` presents, with its one `DEVICE_PROOF_HEADER` for the
- * frame's method, path and body. With any `ACCESS_KEY_HEADER` the key is the
- * credential, so a missing or wrong key is never rescued by a ticket; without
- * one, its one `RELAY_TICKET_HEADER` is.
+ * What an `http.request` presents: its one `RELAY_TICKET_HEADER`, with its one
+ * `DEVICE_PROOF_HEADER` for the frame's method, path and body. Either is null
+ * when there is none or more than one.
  */
 export function requestCredentials({ headers, method, path, body }: HttpRequestFrame): Credentials {
   const proof = singleHeader(headers, DEVICE_PROOF_HEADER)
   const device = proof ? { proof, method, path, bodySha256: bodySha256(body) } : null
-  const hasKey = headers.some(([name]) => name.toLowerCase() === ACCESS_KEY_HEADER)
-  if (hasKey) return { key: accessKeyOf(headers), ticket: null, device }
-  return { key: null, ticket: singleHeader(headers, RELAY_TICKET_HEADER), device }
+  return { ticket: singleHeader(headers, RELAY_TICKET_HEADER), device }
 }
 
-/** What a socket's auth message presents for `path`: its key, or with `account: true` the socket's `ticket`. */
+/** What a socket's auth message presents for `path`: the `ticket` the socket opened with, spent once. */
 export function socketCredentials(message: SocketAuthMessage, path: string, ticket: string | null): Credentials {
   const device = { proof: message.device, method: DEVICE_PROOF_SOCKET_METHOD, path, bodySha256: bodySha256() }
-  // A key socket spends no ticket, so it isn't `once`; its proof's nonce bounds a replay.
-  return 'key' in message ? { key: message.key, ticket: null, device } : { key: null, ticket, device, once: true }
-}
-
-/**
- * The access key of a request: the value of its one `ACCESS_KEY_HEADER`, or
- * null when there is none or more than one. Never read from the query string.
- */
-export function accessKeyOf(headers: [string, string][]): string | null {
-  return singleHeader(headers, ACCESS_KEY_HEADER)
+  return { ticket, device, once: true }
 }
 
 /**
  * The only requests served unsealed through the tunnel, each its exact method
  * and path as sent: the key bootstrap, which a browser needs before it can
  * check the machine key a session is signed with, and the handshake that opens
- * the session. Both still need a key or ticket and a device proof.
+ * the session. Both still need a relay ticket and a device proof.
  */
 const UNSEALED_ROUTES = [routes.system.machineKey, routes.e2e.open]
 
@@ -165,7 +144,7 @@ export const MAX_BODY_CHUNK_BYTES = 64 * 1024
 const encoder = new TextEncoder()
 
 /** The headers that carry credentials, stripped before a handler sees the request. */
-const CREDENTIAL_HEADERS = new Set([ACCESS_KEY_HEADER, RELAY_TICKET_HEADER, DEVICE_PROOF_HEADER])
+const CREDENTIAL_HEADERS = new Set([RELAY_TICKET_HEADER, DEVICE_PROOF_HEADER])
 
 /**
  * Builds the `Request` for an `http.request` frame, or returns null when it
@@ -201,12 +180,9 @@ export interface SealedSession {
  */
 export type SealedSessionLookup = (sessionId: string) => SealedSession | null
 
-/** True when `a` and `b` are the same access: the same kind, device, and key or account. */
+/** True when `a` and `b` are the same access: the same account through the same device. */
 export function samePrincipal(a: Principal, b: Principal): boolean {
-  if (a.kind !== b.kind || a.deviceId !== b.deviceId) return false
-  return a.kind === 'key'
-    ? b.kind === 'key' && a.keyId === b.keyId
-    : b.kind === 'account' && a.accountId === b.accountId
+  return a.accountId === b.accountId && a.deviceId === b.deviceId
 }
 
 /** Where a response goes: straight into frames, or sealed into records on a channel. Each step may wait. */
@@ -222,8 +198,8 @@ type InnerRequest = Omit<HttpRequestFrame, 'type'>
 
 /**
  * Serves the `http.request` and `http.sealed` frames of one tunnel connection
- * through `handle`, once `authorize` has accepted the request's access key or
- * relay ticket, streaming each response back as `http.response`, `http.body`
+ * through `handle`, once `authorize` has accepted the request's relay ticket,
+ * streaming each response back as `http.response`, `http.body`
  * and `http.end`. Each body chunk waits for `room`, so a large response is read
  * only as fast as the tunnel takes it. After `close()` it writes nothing more,
  * so a dropped connection's requests never reach the next one. A plain
@@ -410,13 +386,13 @@ export class TunnelHttp {
       return fail(401)
     }
     if (principal === DEVICE_NOT_APPROVED) {
-      // Not a bad credential: the browser waits for its owner, so the server's bad-key limit isn't charged.
+      // Not a bad credential: the browser waits for its owner, so the server's bad-credential limit isn't charged.
       return refuseJson({ error: 'This browser is not approved on this machine', code: DEVICE_NOT_APPROVED_CODE })
     }
     if (matches && !matches(principal)) {
       return refuseJson({ error: 'This request is not from the access that opened its end-to-end session' })
     }
-    // The key, ticket and proof have done their job, so no handler ever sees them.
+    // The ticket and proof have done their job, so no handler ever sees them.
     const headers = frame.headers.filter(([name]) => !CREDENTIAL_HEADERS.has(name.toLowerCase()))
     const request = tunneledRequest({ type: 'http.request', ...frame, headers }, signal)
     if (!request) return fail(400)

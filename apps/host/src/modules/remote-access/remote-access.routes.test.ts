@@ -30,7 +30,6 @@ beforeEach(() => {
     audit: new AuditLogService(new AuditLogRepository(join(dir, 'remote-audit.jsonl'))),
     e2eSessions: new E2eSessions({ machineKey: () => null }),
     machineKeyFile: join(dir, 'machine-key'),
-    keysFile: join(dir, 'access-keys.json'),
     settingsFile: join(dir, 'config.json'),
     addresses: startAddresses({}, join(dir, 'config.json')),
     handle: async () => new Response('ok'),

@@ -1,8 +1,36 @@
 import { parseServerUrl, type RemoteAccessStatus, sameServerUrl } from '@orch/shared'
-import { clientUrlFromServerUrl, parseClientUrl } from '../access/access.service'
 import { saveAddresses } from '../settings/settings.repository'
 import { DEFAULT_SERVER_URL, derivedClientUrl, type Setting, type Settings } from '../settings/settings.service'
 import { InvalidRemoteAccessSetting } from './remote-access.errors'
+
+/** A `CLIENT_URL` value as a client URL, or null unless it is an `http:` or `https:` URL without credentials. */
+export function parseClientUrl(value: string): string | null {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    return null
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+  if (url.username || url.password) return null
+  return `${url.origin}${url.pathname.replace(/\/+$/, '')}`
+}
+
+/**
+ * The client URL a `SERVER_URL` implies: `wss:` becomes `https:` and `ws:`
+ * becomes `http:`, keeping the host, port and base path. Null for any other value.
+ */
+export function clientUrlFromServerUrl(value: string): string | null {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    return null
+  }
+  const protocol = { 'wss:': 'https:', 'ws:': 'http:' }[url.protocol]
+  if (!protocol || !url.host) return null
+  return `${protocol}//${url.host}${url.pathname.replace(/\/+$/, '')}`
+}
 
 /** The dev host's environment variables that override the saved addresses. Empty values count as unset. */
 export interface RemoteAccessEnv {

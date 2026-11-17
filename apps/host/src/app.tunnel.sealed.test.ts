@@ -8,11 +8,11 @@ import {
   routes,
 } from '@orch/shared'
 import {
+  accountHeaders,
+  accountTicket,
   clients,
   dataOn,
   device,
-  key,
-  keyHeaders,
   local,
   machineId,
   machineKey,
@@ -43,10 +43,10 @@ describe('unsealed tunnel traffic', () => {
       id: 1,
       method: 'GET',
       path: health,
-      headers: await keyHeaders(key, 'GET', health),
+      headers: await accountHeaders('GET', health),
     })
     send(conn, { type: 'ws.open', channel: 1, path: events, headers: [] })
-    send(conn, { type: 'ws.data', channel: 1, data: JSON.stringify({ type: 'auth', key, device: 'p' }) })
+    send(conn, { type: 'ws.data', channel: 1, data: JSON.stringify({ type: 'auth', account: true, device: 'p' }) })
     const of = (id: number) => conn.frames.filter((f) => 'id' in f && f.id === id)
     await until(() => of(1).some((f) => f.type === 'http.end') && conn.frames.some((f) => f.type === 'ws.close'))
 
@@ -64,7 +64,7 @@ describe('unsealed tunnel traffic', () => {
       id: 2,
       method: 'GET',
       path: machineKeyPath,
-      headers: await keyHeaders(key, 'GET', machineKeyPath),
+      headers: await accountHeaders('GET', machineKeyPath),
     })
     await until(() => of(2).some((f) => f.type === 'http.end'))
     const bootstrap = Buffer.concat(of(2).flatMap((f) => (f.type === 'http.body' ? [f.data] : []))).toString()
@@ -94,13 +94,15 @@ describe('tunneled sealed sockets', () => {
     const eventsPath = buildSocketUrl(routes.sockets.events, {})
     const events = await sealedSocketEnvelope(session, sessionId, 2, {
       path: eventsPath,
-      auth: { type: 'auth', key, device: await device.socket(machineId, eventsPath) },
+      auth: { type: 'auth', account: true, device: await device.socket(machineId, eventsPath) },
+      ticket: accountTicket(),
     })
     send(conn, { type: 'ws.sealed', channel: 1, data: events.data })
     const termPath = buildSocketUrl(routes.sockets.terminal, { id: 't1', cwd: '/tmp', cols: 80, rows: 24 })
     const term = await sealedSocketEnvelope(session, sessionId, 3, {
       path: termPath,
-      auth: { type: 'auth', key, device: await device.socket(machineId, termPath) },
+      auth: { type: 'auth', account: true, device: await device.socket(machineId, termPath) },
+      ticket: accountTicket(),
     })
     send(conn, { type: 'ws.sealed', channel: 2, data: term.data })
     await until(() => dataOn(conn, 1).length > 0 && dataOn(conn, 2).length >= 2)
@@ -118,8 +120,8 @@ describe('tunneled sealed sockets', () => {
     await until(() => stub.inputs.length > 0)
     expect(stub.inputs).toEqual(['ls\n'])
     expect(clients[0]?.listChannels().map((c) => c.principal)).toEqual([
-      expect.objectContaining({ kind: 'key', deviceId: device.id }),
-      expect.objectContaining({ kind: 'key', deviceId: device.id }),
+      expect.objectContaining({ kind: 'account', deviceId: device.id }),
+      expect.objectContaining({ kind: 'account', deviceId: device.id }),
     ])
     const sent = [...dataOn(conn, 1), ...dataOn(conn, 2)]
     expect(sent.every((data) => data instanceof Uint8Array)).toBe(true)

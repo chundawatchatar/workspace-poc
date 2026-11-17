@@ -156,8 +156,8 @@ export const pongFrame = z.object({ type: z.literal('pong'), nonce: z.number().i
 
 /**
  * Tells the server the machine refused a request (`id`) or a channel
- * (`channel`) for a missing or wrong access key. It carries exactly one of
- * the two, and never the key, so the server can rate-limit without reading
+ * (`channel`) for a missing or refused relay ticket. It carries exactly one of
+ * the two, and never the ticket, so the server can rate-limit without reading
  * traffic. It is sent before the 401 or the `ws.close`, while the server still
  * knows which browser it was.
  */

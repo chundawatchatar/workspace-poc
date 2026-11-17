@@ -15,9 +15,7 @@ import {
   linkedFile,
   relay,
   relayKeys,
-  seedKey,
   service,
-  storedKeys,
   tunnels,
   useRemoteAccessHarness,
 } from './remote-access.testing'
@@ -37,7 +35,7 @@ describe('RemoteAccessService.authorize', () => {
     relay.ticket({ sub: accountId, aud: service.status().machineId ?? '', ...overrides })
   const authorize = (credentials: Credentials) => tunnels.at(-1)?.options.authorize(credentials)
 
-  test('a ticket opens as the linked account only with a fresh proof from an approved device, and a key decides which credential is used', async () => {
+  test('a ticket opens as the linked account only with a fresh proof from an approved device', async () => {
     writeLinked({ accountId, relayKeys })
     connected()
     const machineId = service.status().machineId ?? ''
@@ -47,8 +45,8 @@ describe('RemoteAccessService.authorize', () => {
     const ticket = ticketFor({ exp: ticketExp })
 
     // An unknown device with a valid ticket waits for approval, listed once by the fingerprint its browser shows.
-    expect(authorize({ key: null, ticket, device: await device.presented(health) })).toBe(DEVICE_NOT_APPROVED)
-    expect(authorize({ key: null, ticket, device: await device.presented(health) })).toBe(DEVICE_NOT_APPROVED)
+    expect(authorize({ ticket, device: await device.presented(health) })).toBe(DEVICE_NOT_APPROVED)
+    expect(authorize({ ticket, device: await device.presented(health) })).toBe(DEVICE_NOT_APPROVED)
     const fingerprint = await deviceKeyFingerprint(device.signer.publicJwk)
     expect(service.listDevices()).toEqual({
       pending: [{ id: device.id, fingerprint, firstSeenAt: expect.any(String) }],
@@ -58,7 +56,7 @@ describe('RemoteAccessService.authorize', () => {
     // Without a valid ticket nothing is recorded, however good the proof.
     const stranger = await testDevice()
     const bad = ticketFor({ sub: 'someone-else' })
-    expect(authorize({ key: null, ticket: bad, device: await stranger.presented(health) })).toBeNull()
+    expect(authorize({ ticket: bad, device: await stranger.presented(health) })).toBeNull()
     expect(service.listDevices().pending.map((d) => d.id)).toEqual([device.id])
 
     expect(service.approveDevice(fingerprint.toLowerCase()).approved).toEqual([
@@ -67,67 +65,55 @@ describe('RemoteAccessService.authorize', () => {
     // The principal carries the ticket's `exp`, so what it opens can end with the ticket.
     const asAccount: Principal = { kind: 'account', accountId, deviceId: device.id, ticketExp }
     const proof = await device.presented(health)
-    expect(authorize({ key: null, ticket, device: proof })).toEqual(asAccount)
+    expect(authorize({ ticket, device: proof })).toEqual(asAccount)
     // A used proof, no proof, a proof for another request, and a valid proof with a bad ticket are all refused.
-    expect(authorize({ key: null, ticket, device: proof })).toBeNull()
-    expect(authorize({ key: null, ticket, device: null })).toBeNull()
+    expect(authorize({ ticket, device: proof })).toBeNull()
+    expect(authorize({ ticket, device: null })).toBeNull()
     const elsewhere = await device.presented({ ...health, path: '/api/git/status' })
-    expect(authorize({ key: null, ticket, device: { ...elsewhere, path: '/api/health' } })).toBeNull()
-    expect(authorize({ key: null, ticket: bad, device: await device.presented(health) })).toBeNull()
-    expect(authorize({ key: null, ticket: null, device: await device.presented(health) })).toBeNull()
-    // A wrong key is refused, however good the ticket and proof.
-    expect(authorize({ key: 'wrong', ticket, device: await device.presented(health) })).toBeNull()
+    expect(authorize({ ticket, device: { ...elsewhere, path: '/api/health' } })).toBeNull()
+    expect(authorize({ ticket: bad, device: await device.presented(health) })).toBeNull()
+    expect(authorize({ ticket: null, device: await device.presented(health) })).toBeNull()
 
     // A socket spends its ticket, so the same ticket with a fresh proof opens nothing more.
     const socket = { machineId, method: 'WS', path: '/ws/events' }
-    expect(authorize({ key: null, ticket, device: await device.presented(socket), once: true })).toEqual(asAccount)
-    expect(authorize({ key: null, ticket, device: await device.presented(socket), once: true })).toBeNull()
+    expect(authorize({ ticket, device: await device.presented(socket), once: true })).toEqual(asAccount)
+    expect(authorize({ ticket, device: await device.presented(socket), once: true })).toBeNull()
 
     // Approval survives a restart.
     service.shutdown()
     connected()
     expect(service.listDevices().approved.map((d) => d.id)).toEqual([device.id])
-    expect(authorize({ key: null, ticket: ticketFor(), device: await device.presented(health) })).toEqual(asAccount)
+    expect(authorize({ ticket: ticketFor(), device: await device.presented(health) })).toEqual(asAccount)
   })
 
-  test('a saved key opens only with a fresh proof from an approved device, and a refused key never reads its proof', async () => {
-    // Saved before the host starts, as the host now only reads keys an earlier version issued.
-    const presented = seedKey('second')
+  test('a refused ticket never reads its proof, and a valid one still needs a fresh proof for this request and machine', async () => {
+    writeLinked({ accountId, relayKeys })
     connected()
     const machineId = service.status().machineId ?? ''
     const device = await testDevice()
     const health = { machineId, method: 'GET', path: '/api/health' }
+    const ticket = ticketFor()
 
-    // A wrong key with a valid proof, or a valid ticket, is refused, records no device and spends no nonce.
+    // A forged ticket, or none, with a valid proof is refused, records no device and spends no nonce.
     const proof = await device.presented(health)
-    expect(authorize({ key: 'x'.repeat(presented.length), ticket: null, device: proof })).toBeNull()
+    expect(authorize({ ticket: `${ticket.slice(0, -2)}xx`, device: proof })).toBeNull()
+    expect(authorize({ ticket: null, device: proof })).toBeNull()
     expect(service.listDevices().pending).toEqual([])
     // No proof, a proof for another request, another machine or a stale one are refused, and record nothing.
-    expect(authorize({ key: presented, ticket: null, device: null })).toBeNull()
-    expect(authorize({ key: presented, ticket: null })).toBeNull()
+    expect(authorize({ ticket, device: null })).toBeNull()
+    expect(authorize({ ticket })).toBeNull()
     const elsewhere = await device.presented({ ...health, path: '/api/git/status' })
-    expect(authorize({ key: presented, ticket: null, device: { ...elsewhere, path: '/api/health' } })).toBeNull()
+    expect(authorize({ ticket, device: { ...elsewhere, path: '/api/health' } })).toBeNull()
     const foreign = await device.presented({ ...health, machineId: 'another-machine' })
-    expect(authorize({ key: presented, ticket: null, device: foreign })).toBeNull()
+    expect(authorize({ ticket, device: foreign })).toBeNull()
     const stale = await device.presented(health, Date.now() - 10 * 60_000)
-    expect(authorize({ key: presented, ticket: null, device: stale })).toBeNull()
+    expect(authorize({ ticket, device: stale })).toBeNull()
     expect(service.listDevices().pending).toEqual([])
 
-    // The proof the wrong key carried is still unspent: with the right key it lists the device as waiting.
-    expect(authorize({ key: presented, ticket: null, device: proof })).toBe(DEVICE_NOT_APPROVED)
-    expect(authorize({ key: presented, ticket: null, device: proof })).toBeNull()
+    // The proof the forged ticket carried is still unspent: with the valid ticket it lists the device as waiting.
+    expect(authorize({ ticket, device: proof })).toBe(DEVICE_NOT_APPROVED)
+    expect(authorize({ ticket, device: proof })).toBeNull()
     expect(service.listDevices().pending.map((d) => d.id)).toEqual([device.id])
-
-    service.approveDevice(fingerprintOf(device.id))
-    const keyId = storedKeys().find((k) => k.name === 'second')?.id
-    const asKey: Principal = { kind: 'key', keyId: keyId ?? '', name: 'second', deviceId: device.id }
-    expect(authorize({ key: presented, ticket: null, device: await device.presented(health) })).toEqual(asKey)
-    // A key socket spends no ticket, so it opens again with each fresh proof, never with a used one.
-    const socket = await device.presented({ machineId, method: 'WS', path: '/ws/events' })
-    expect(authorize({ key: presented, ticket: null, device: socket })).toEqual(asKey)
-    expect(authorize({ key: presented, ticket: null, device: socket })).toBeNull()
-    const again = await device.presented({ machineId, method: 'WS', path: '/ws/events' })
-    expect(authorize({ key: presented, ticket: null, device: again })).toEqual(asKey)
   })
 
   test('revoking a device closes only its channels and refuses it, and disconnect forgets every device', async () => {
@@ -137,7 +123,7 @@ describe('RemoteAccessService.authorize', () => {
     const health = { machineId, method: 'GET', path: '/api/health' }
     const [kept, revoked, waiting] = await Promise.all([testDevice(), testDevice(), testDevice()])
     for (const device of [kept, revoked, waiting]) {
-      authorize({ key: null, ticket: ticketFor(), device: await device.presented(health) })
+      authorize({ ticket: ticketFor(), device: await device.presented(health) })
     }
     service.approveDevice(fingerprintOf(kept.id))
     service.approveDevice(fingerprintOf(revoked.id))
@@ -147,10 +133,7 @@ describe('RemoteAccessService.authorize', () => {
     const [closed] = tunnel.closed
     expect(closed?.revoked({ kind: 'account', accountId, deviceId: revoked.id, ticketExp: 0 })).toBe(true)
     expect(closed?.revoked({ kind: 'account', accountId, deviceId: kept.id, ticketExp: 0 })).toBe(false)
-    // Sockets the revoked device opened with a key close too, and other devices' key sockets stay.
-    expect(closed?.revoked({ kind: 'key', keyId: 'k1', name: 'default', deviceId: revoked.id })).toBe(true)
-    expect(closed?.revoked({ kind: 'key', keyId: 'k1', name: 'default', deviceId: kept.id })).toBe(false)
-    const next = authorize({ key: null, ticket: ticketFor(), device: await revoked.presented(health) })
+    const next = authorize({ ticket: ticketFor(), device: await revoked.presented(health) })
     expect(next).toBe(DEVICE_NOT_APPROVED)
     expect(JSON.parse(readFileSync(devicesFile(), 'utf8')).map((d: { id: string }) => d.id)).toEqual([kept.id])
 
@@ -164,18 +147,17 @@ describe('RemoteAccessService.authorize', () => {
     expect(existsSync(devicesFile())).toBe(false)
   })
 
-  test("session.ended closes only the linked account's ticket sockets, and changes no link or device", async () => {
+  test("session.ended closes only the linked account's sockets, and changes no link or device", async () => {
     writeLinked({ accountId, relayKeys })
     const { tunnel } = connected()
     const machineId = service.status().machineId ?? ''
     const health = { machineId, method: 'GET', path: '/api/health' }
     const [approved, waiting] = await Promise.all([testDevice(), testDevice()])
     for (const device of [approved, waiting]) {
-      authorize({ key: null, ticket: ticketFor(), device: await device.presented(health) })
+      authorize({ ticket: ticketFor(), device: await device.presented(health) })
     }
     service.approveDevice(fingerprintOf(approved.id))
     const viaTicket: Principal = { kind: 'account', accountId, deviceId: approved.id, ticketExp: 0 }
-    const viaKey: Principal = { kind: 'key', keyId: 'k1', name: 'default', deviceId: approved.id }
     const otherAccount: Principal = { kind: 'account', accountId: 'acct-bob-2', deviceId: approved.id, ticketExp: 0 }
     const persisted = () => ({
       linked: readFileSync(linkedFile(), 'utf8'),
@@ -190,7 +172,7 @@ describe('RemoteAccessService.authorize', () => {
       { reason: 'session ended', code: CLOSE_SESSION_ENDED },
     ])
     const [closed] = tunnel.closed
-    expect([viaTicket, viaKey, otherAccount].map((p) => closed?.revoked(p))).toEqual([true, false, false])
+    expect([viaTicket, otherAccount].map((p) => closed?.revoked(p))).toEqual([true, false])
     expect(persisted()).toEqual(unchanged)
 
     // Another account, or no linked account at all, closes nothing.
@@ -208,11 +190,11 @@ describe('RemoteAccessService.authorize', () => {
       writeLinked(fields)
       connected()
       expect(service.status().linkedAccount).toMatchObject(account)
-      expect(authorize({ key: null, ticket: ticketFor() })).toBeNull()
+      expect(authorize({ ticket: ticketFor() })).toBeNull()
       service.shutdown()
     }
     writeLinked({ accountId, relayKeys, serverUrl: 'wss://other.example.com' })
     connected()
-    expect(authorize({ key: null, ticket: ticketFor() })).toBeNull()
+    expect(authorize({ ticket: ticketFor() })).toBeNull()
   })
 })

@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { machineFingerprint } from '@orch/shared'
-import { accessKeysPath } from './modules/access/access.repository'
 import { DevicesRepository, devicesPath } from './modules/remote-access/devices.repository'
 import { DEFAULT_SERVER_URL } from './modules/remote-access/remote-access.service'
 import { machineKeyFile } from './modules/tunnel/tunnel.repository'
@@ -146,7 +145,7 @@ describe('host:remote with the host running', () => {
 })
 
 describe('host:remote with the host stopped', () => {
-  test('status reads the files without creating a machine key or access keys', async () => {
+  test('status reads the files without creating a machine key', async () => {
     const url = stoppedHost()
     const empty = await run(url, ['status'], { env: { SERVER_URL: 'ws://127.0.0.1:4600' } })
     expect(empty.code).toBe(0)
@@ -156,7 +155,6 @@ describe('host:remote with the host stopped', () => {
     expect(empty.text).toContain('Machine key:    none yet')
     expect(empty.text).toContain('Account:        not connected')
     expect(existsSync(machineKeyFile(dir))).toBe(false)
-    expect(existsSync(accessKeysPath(dir))).toBe(false)
 
     writeFileSync(join(dir, 'machine-key'), machineKey.pem)
     writeFileSync(join(dir, 'config.json'), JSON.stringify({ relayUrl: 'wss://host' }))

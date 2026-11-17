@@ -12,7 +12,7 @@ export interface VerifiedTransportOptions {
 export interface VerifiedMachineProps {
   /** The pinned key, from `MachineKeyCheck`. */
   publicKey: string
-  /** Builds the page's transport, such as `createRemoteTransport` with the machine's key or tickets. */
+  /** Builds the page's transport, such as `createRemoteTransport` with relay tickets. */
   createTransport: (options: VerifiedTransportOptions) => HostTransport
   /** The machine's page, given the transport. */
   children: (transport: HostTransport) => ReactNode

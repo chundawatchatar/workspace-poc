@@ -74,14 +74,14 @@ async function log(baseUrl: string, args = ['log']) {
   return { code, text: lines.join('\n') }
 }
 
-/** An audit log at `file` whose clock starts at `START`, with a closed key session, an open account session and two refusals. */
+/** An audit log at `file` whose clock starts at `START`, with a closed session, an open one and two refusals. */
 function recordActivity(file: string) {
   let clock = START
   const audit = new AuditLogService(new AuditLogRepository(file), () => clock)
   audit.record({
     kind: 'opened',
     session: 's1',
-    principal: { kind: 'key', keyId: 'k1', name: 'laptop', deviceId: alice?.id ?? '' },
+    principal: { kind: 'account', accountId: 'acct-1', deviceId: alice?.id ?? '', ticketExp: 0 },
   })
   clock += MINUTE
   audit.record({ kind: 'closed', session: 's1' })
@@ -96,23 +96,23 @@ function recordActivity(file: string) {
     reason: 'device_not_approved',
     device: { id: carol?.id ?? '', principal: 'account' },
   })
-  audit.record({ kind: 'refused', reason: 'key_refused' })
+  audit.record({ kind: 'refused', reason: 'ticket_refused' })
   return audit
 }
 
 const at = (minutes: number) => formatLocalDateTime(START + minutes * MINUTE)
 const expected = [
-  `${at(2)}  refused  key_refused`,
+  `${at(2)}  refused  ticket_refused`,
   `${at(2)}  refused  device_not_approved  ${carol?.fingerprint}`,
   `${at(1)}  opened   account  ${bob?.fingerprint}  still open or not recorded`,
-  `${at(0)}  opened   key k1  ${alice?.fingerprint}  closed ${at(1)}`,
+  `${at(0)}  opened   account  ${alice?.fingerprint}  closed ${at(1)}`,
 ].join('\n')
 
 describe('host:remote log', () => {
   test('prints the newest entries from the running host, or from the file with the host stopped', async () => {
     const throughHost = await log(runningHost(recordActivity(join(dir, 'host-audit.jsonl'))))
     expect(throughHost).toEqual({ code: 0, text: expected })
-    for (const hidden of ['laptop', alice?.id, bob?.id, carol?.id]) expect(throughHost.text).not.toContain(hidden)
+    for (const hidden of ['acct-1', alice?.id, bob?.id, carol?.id]) expect(throughHost.text).not.toContain(hidden)
 
     recordActivity(auditLogPath(dir))
     expect(await log(stoppedHost())).toEqual({ code: 0, text: expected })

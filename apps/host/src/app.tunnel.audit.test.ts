@@ -10,13 +10,12 @@ import {
 } from '@orch/shared'
 import {
   ACCOUNT_ID,
+  accountHeaders,
   auditFile,
   type BrowserSession,
   type Conn,
   conns,
   device,
-  key,
-  keyHeaders,
   local,
   machineId,
   openE2eSession,
@@ -73,10 +72,8 @@ describe('remote access audit log', () => {
     // The key bootstrap, one of the two requests still served unsealed, so it is still authorized.
     const request = (id: number, headers: [string, string][]) =>
       send(conn, { type: 'http.request', id, method: 'GET', path: MACHINE_KEY, headers })
-    const keySocket = (e2e: BrowserSession, channel: number) => sealedSocket(conn, e2e, channel, TERM)
     const accountSocket = (e2e: BrowserSession, channel: number, offered: string) =>
       sealedSocket(conn, e2e, channel, TERM, { as: { ticket: offered } })
-    keep(key)
 
     // A revoked device waits once more, and is approved again.
     remoteAccess.removeDevice(device.id)
@@ -87,9 +84,8 @@ describe('remote access audit log', () => {
     await until(() => answered(9))
     remoteAccess.approveDevice(fingerprintOf(device.id))
 
-    // A key socket that the browser closes, after typing into the terminal.
-    const keySession = await openE2eSession(conn, 20)
-    const typing = await keySocket(keySession, 1)
+    // A socket that the browser closes, after typing into the terminal.
+    const typing = await accountSocket(await openE2eSession(conn, 20, { ticket: ticket() }), 1, ticket())
     await until(() => stub.attached.size === 1)
     await typing.send(JSON.stringify({ type: 'input', data: TYPED }))
     await until(() => stub.inputs.includes(TYPED))
@@ -105,7 +101,7 @@ describe('remote access audit log', () => {
     const accountSession = await openE2eSession(conn, 22, { ticket: ticket() })
     await accountSocket(accountSession, 3, reused)
     await until(() => closes().length === 2)
-    // A plain socket and a plain request, with a valid ticket and key, refused before either is read.
+    // A plain socket and a plain request, each with a valid ticket, refused before either is read.
     send(conn, {
       type: 'ws.open',
       channel: 4,
@@ -118,12 +114,12 @@ describe('remote access audit log', () => {
       id: 17,
       method: 'GET',
       path: HEALTH,
-      headers: await keyHeaders(key, 'GET', HEALTH),
+      headers: await accountHeaders('GET', HEALTH),
     })
     await until(() => closes().length === 3 && answered(17))
 
-    // Refused requests: a wrong key, a forged and an expired ticket, a stale and a replayed proof, an unapproved device.
-    request(10, await keyHeaders(keep(`${key.slice(0, -1)}x`), 'GET', MACHINE_KEY))
+    // Refused requests: no ticket, a forged and an expired ticket, a stale and a replayed proof, an unapproved device.
+    request(10, [[DEVICE_PROOF_HEADER, await proof(device, 'GET', MACHINE_KEY)]])
     request(11, [
       [RELAY_TICKET_HEADER, keep(`${ticket().slice(0, -2)}xx`)],
       [DEVICE_PROOF_HEADER, await proof(device, 'GET', MACHINE_KEY)],
@@ -152,8 +148,8 @@ describe('remote access audit log', () => {
     ])
     await until(() => [10, 11, 12, 13, 15, 16].every(answered))
 
-    // A key socket that the tunnel drops, then one closed by revoking its device.
-    await keySocket(keySession, 5)
+    // A socket that the tunnel drops, then one closed by revoking its device.
+    await accountSocket(accountSession, 5, ticket())
     await until(() => stub.attached.size === 1)
     conn.ws.close(1000)
     await until(() => stub.attached.size === 0 && conns.length === 2)
@@ -170,24 +166,24 @@ describe('remote access audit log', () => {
     for (const line of written) expect(auditLine.safeParse(line).success).toBe(true)
     const fingerprint = fingerprintOf(device.id)
     const sessions = written.filter((line) => line.kind === 'opened').map((line) => line.session)
-    const [keyClosed, ended, dropped, revoked] = sessions
+    const [closedByBrowser, ended, dropped, revoked] = sessions
     for (const { at } of written) expect(Date.parse(at)).toBeGreaterThan(0)
     expect(written.map(({ at: _, ...line }) => line)).toEqual([
       { kind: 'refused', reason: 'device_not_approved', principal: 'account', fingerprint },
-      { kind: 'opened', session: keyClosed, principal: 'key', keyId: expect.any(String), fingerprint },
-      { kind: 'closed', session: keyClosed },
+      { kind: 'opened', session: closedByBrowser, principal: 'account', accountId: ACCOUNT_ID, fingerprint },
+      { kind: 'closed', session: closedByBrowser },
       { kind: 'opened', session: ended, principal: 'account', accountId: ACCOUNT_ID, fingerprint },
       { kind: 'closed', session: ended },
       { kind: 'refused', reason: 'ticket_reused', principal: 'account', fingerprint },
       { kind: 'refused', reason: 'unsealed' },
       { kind: 'refused', reason: 'unsealed' },
-      { kind: 'refused', reason: 'key_refused' },
+      { kind: 'refused', reason: 'ticket_refused' },
       { kind: 'refused', reason: 'ticket_refused' },
       { kind: 'refused', reason: 'ticket_refused' },
       { kind: 'refused', reason: 'proof_refused' },
       { kind: 'refused', reason: 'proof_refused' },
       { kind: 'refused', reason: 'device_not_approved', principal: 'account', fingerprint: fingerprintOf(stranger.id) },
-      { kind: 'opened', session: dropped, principal: 'key', keyId: expect.any(String), fingerprint },
+      { kind: 'opened', session: dropped, principal: 'account', accountId: ACCOUNT_ID, fingerprint },
       { kind: 'closed', session: dropped },
       { kind: 'opened', session: revoked, principal: 'account', accountId: ACCOUNT_ID, fingerprint },
       { kind: 'closed', session: revoked },
@@ -206,7 +202,6 @@ describe('remote access audit log', () => {
       RELAY_TICKET_HEADER,
       DEVICE_PROOF_HEADER,
       'typed-into-the-terminal',
-      'default',
     ]
     for (const value of hidden) expect(text).not.toContain(value)
 
@@ -215,6 +210,6 @@ describe('remote access audit log', () => {
     const { entries } = auditLogResponse.parse(await answer.json())
     expect(entries).toHaveLength(14)
     expect(entries[0]).toMatchObject({ kind: 'session', session: revoked, closedAt: expect.any(String) })
-    expect(entries.at(-2)).toMatchObject({ kind: 'session', session: keyClosed, principal: 'key' })
+    expect(entries.at(-2)).toMatchObject({ kind: 'session', session: closedByBrowser, principal: 'account' })
   })
 })

@@ -5,7 +5,6 @@ import {
   accountTicket,
   type Conn,
   credentialHeaders,
-  key,
   local,
   openE2eSession,
   remoteAccess,
@@ -91,7 +90,7 @@ describe('tunneled account access', () => {
     expect(conn.frames.at(-1)).toEqual({ type: 'remote.off' })
   })
 
-  test('the sessions list counts the authorized sockets of each approved device by credential, and End closes one device without revoking it', async () => {
+  test('the sessions list counts the authorized sockets of each approved device, and End closes one device without revoking it', async () => {
     const conn = await welcomed()
     const path = '/ws/term/t1'
     const response = (id: number) => conn.frames.find((f) => f.type === 'http.response' && f.id === id)
@@ -113,7 +112,7 @@ describe('tunneled account access', () => {
     remoteAccess.approveDevice(fingerprintOf(first.id))
     remoteAccess.approveDevice(fingerprintOf(second.id))
     const firstAccount = await openE2eSession(conn, 3, { ticket: accountTicket() }, first)
-    const firstLaptop = await openE2eSession(conn, 4, { key }, first)
+    const firstAgain = await openE2eSession(conn, 4, { ticket: accountTicket() }, first)
     const secondAccount = await openE2eSession(conn, 5, { ticket: accountTicket() }, second)
     const account = (who: typeof first) => ({ as: { ticket: accountTicket() }, who })
 
@@ -122,7 +121,7 @@ describe('tunneled account access', () => {
     await until(() => stub.attached.size === 1)
     const afterFirst = Date.now()
     await sealedSocket(conn, firstAccount, 2, path, account(first))
-    await sealedSocket(conn, firstLaptop, 3, path, { as: { key }, who: first })
+    await sealedSocket(conn, firstAgain, 3, path, account(first))
     await sealedSocket(conn, secondAccount, 4, path, account(second))
     // Refused as unsealed, so not counted.
     send(conn, { type: 'ws.open', channel: 5, path, headers: [] })
@@ -132,12 +131,11 @@ describe('tunneled account access', () => {
     const { sessions: open } = JSON.parse(listed.text)
     const ofFirst = open.find((session: { deviceId: string }) => session.deviceId === first.id)
     expect(ofFirst).toMatchObject({ fingerprint: fingerprintOf(first.id), sockets: 3 })
-    expect(ofFirst.credentials).toHaveLength(2)
-    expect(ofFirst.credentials).toEqual(expect.arrayContaining([{ kind: 'account' }, { kind: 'key', name: 'default' }]))
+    expect(ofFirst.credentials).toEqual([{ kind: 'account' }])
     expect(Date.parse(ofFirst.startedAt)).toBeGreaterThanOrEqual(before)
     expect(Date.parse(ofFirst.startedAt)).toBeLessThanOrEqual(afterFirst)
     expect(open.find((session: { deviceId: string }) => session.deviceId === second.id)).toMatchObject({ sockets: 1 })
-    for (const hidden of [key, ACCOUNT_ID, first.publicKey.x, second.publicKey.x]) {
+    for (const hidden of [ACCOUNT_ID, first.publicKey.x, second.publicKey.x]) {
       expect(listed.text).not.toContain(hidden)
     }
 

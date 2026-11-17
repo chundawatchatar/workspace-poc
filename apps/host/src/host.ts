@@ -5,7 +5,6 @@ import type { HostInfo } from '@orch/shared'
 import { SessionManager, shellProgram } from '@orch/terminal'
 import { createApp } from './app'
 import { tunnelEnv } from './lib/principal'
-import { accessKeysPath } from './modules/access/access.repository'
 import { AgentTrackingRepository, agentTrackingPath } from './modules/agent-tracking/agent-tracking.repository'
 import { AgentTrackingService } from './modules/agent-tracking/agent-tracking.service'
 import { E2eSessions } from './modules/e2e/e2e.service'
@@ -101,7 +100,6 @@ export function startHost(options: HostOptions): { url: string; instanceId: stri
     audit: new AuditLogService(new AuditLogRepository(auditLogPath(dataDir))),
     e2eSessions,
     machineKeyFile: machineKeyFile(dataDir),
-    keysFile: accessKeysPath(dataDir),
     settingsFile: settingsPath(dataDir),
     addresses: devAddresses(settings, options.addresses),
     handle: async (request, principal) => app.fetch(request, tunnelEnv(principal)),
@@ -152,7 +150,7 @@ export function startHost(options: HostOptions): { url: string; instanceId: stri
     try {
       remoteAccess.shutdown()
     } catch (error) {
-      console.error(`saving access key use failed: ${error instanceof Error ? error.message : 'unknown error'}`)
+      console.error(`stopping remote access failed: ${error instanceof Error ? error.message : 'unknown error'}`)
     }
     layout.flush()
     sessions.shutdown()

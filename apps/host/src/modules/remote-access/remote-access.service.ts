@@ -15,8 +15,6 @@ import {
   sameServerUrl,
 } from '@orch/shared'
 import type { Principal } from '../../lib/principal'
-import { AccessKeyRepository } from '../access/access.repository'
-import { AccessKeys } from '../access/access.service'
 import type { E2eSessions } from '../e2e/e2e.service'
 import { DEFAULT_SERVER_URL } from '../settings/settings.service'
 import { loadOrCreateMachineKey, type MachineKey } from '../tunnel/tunnel.repository'
@@ -63,8 +61,6 @@ export interface RemoteAccessServiceOptions {
   e2eSessions: Pick<E2eSessions, 'closeWhere' | 'closeAll' | 'get'>
   /** The machine key file, created the first time remote access is needed. */
   machineKeyFile: string
-  /** The access keys file. */
-  keysFile: string
   /** The settings file, where Connect saves the server address it uses. */
   settingsFile: string
   /** The addresses the host starts with. */
@@ -87,8 +83,8 @@ export function hostMachineName(name = hostname()): string {
 }
 
 /**
- * Owns remote access while the host runs: the machine key, the access keys,
- * the tunnel, the account this machine is connected to and its devices. The
+ * Owns remote access while the host runs: the machine key, the tunnel,
+ * the account this machine is connected to and its devices. The
  * tunnel runs exactly while the machine is connected: it opens at start when
  * `linked-account.json` holds an account, and Connect and Disconnect open and
  * stop it. Nothing is read from disk until `start()`.
@@ -98,7 +94,6 @@ export class RemoteAccessService {
   private readonly addresses: RemoteAccessAddresses
   private linked: SavedLinkedAccount | null = null
   private machineKey: MachineKey | null = null
-  private keys: AccessKeys | null = null
   private tunnel: Tunnel | null = null
   /** The browsers approved on this machine, and those waiting. */
   private readonly devices: DevicesService
@@ -115,7 +110,6 @@ export class RemoteAccessService {
     this.devices = new DevicesService(options.devices)
     this.access = new TunnelAccess({
       devices: this.devices,
-      keys: () => this.keys,
       linked: () => this.linked,
       machineId: () => this.machineId(),
       serverUrl: () => this.serverUrl(),
@@ -155,7 +149,7 @@ export class RemoteAccessService {
     }
   }
 
-  /** The addresses in use and where the tunnel stands. It never holds the machine's private key, an access key or a hash. */
+  /** The addresses in use and where the tunnel stands. It never holds the machine's private key. */
   status(): RemoteAccessStatus {
     const machineId = this.machineId()
     return {
@@ -319,7 +313,7 @@ export class RemoteAccessService {
     this.options.linkedAccounts.remove()
     this.linked = null
     this.devices.clear()
-    this.closeAccess((principal) => principal.kind === 'account', 'disconnected')
+    this.closeAccess(() => true, 'disconnected')
     this.stopTunnel({ remoteOff: true })
     return { status: this.status(), removedFromAccount }
   }
@@ -354,8 +348,7 @@ export class RemoteAccessService {
 
   /**
    * Dismisses a waiting browser, or revokes an approved one and closes the
-   * sockets and end-to-end sessions it opened, with a key or through the
-   * account. An unknown id changes nothing.
+   * sockets and end-to-end sessions it opened. An unknown id changes nothing.
    */
   removeDevice(id: string): DevicesResponse {
     if (this.devices.remove(id) === 'approved') {
@@ -383,18 +376,13 @@ export class RemoteAccessService {
    * Handles the server's `session.ended`: when it names the linked account,
    * closes with `CLOSE_SESSION_ENDED` the sockets that account's tickets
    * opened, and its end-to-end sessions, so browsers still signed in reconnect
-   * with a fresh ticket. It never
-   * touches key sockets, the link or the devices, and any other account,
-   * or no linked account, closes nothing.
+   * with a fresh ticket. It never touches the link or the devices, and any
+   * other account, or no linked account, closes nothing.
    */
   private sessionEnded(accountId: string) {
     const linked = this.linked?.accountId
     if (!linked || accountId !== linked) return
-    this.closeAccess(
-      (principal) => principal.kind === 'account' && principal.accountId === linked,
-      'session ended',
-      CLOSE_SESSION_ENDED,
-    )
+    this.closeAccess((principal) => principal.accountId === linked, 'session ended', CLOSE_SESSION_ENDED)
   }
 
   /**
@@ -417,20 +405,18 @@ export class RemoteAccessService {
     return { entries: this.options.audit.recent() }
   }
 
-  /** Ends a Connect on its way, closes the tunnel and writes pending key use, for shutdown. */
+  /** Ends a Connect on its way and closes the tunnel, for shutdown. */
   shutdown() {
     if (this.attempt) this.endAttempt(this.attempt, 'failed', 'The host stopped. Nothing was linked')
     this.stopTunnel()
-    this.keys?.flush()
   }
 
   /** Opens a new tunnel to the server address in use, stopping any open one. Throws when it cannot. */
   private openTunnel(): Tunnel {
     const url = this.serverTunnelUrl()
     if (!url) throw new InvalidRemoteAccessSetting('No valid server address is known')
-    const keys = this.loadKeys()
-    const machineKey = this.machineKey
-    if (!keys || !machineKey) throw new Error('the machine key or the access keys could not be read')
+    const machineKey = this.loadMachineKey()
+    if (!machineKey) throw new Error('the machine key could not be read')
     this.stopTunnel()
     const create = this.options.createTunnel ?? ((options) => new TunnelClient(options))
     const tunnel = create({
@@ -460,21 +446,16 @@ export class RemoteAccessService {
     this.tunnel = null
   }
 
-  /**
-   * Loads the machine key, creating it, and the access keys already saved, once. The host issues no keys, so the
-   * file is only read here. Null when either cannot be read.
-   */
-  private loadKeys(): AccessKeys | null {
-    if (this.keys) return this.keys
+  /** Loads the machine key, creating it, once. Null when it cannot be read. */
+  private loadMachineKey(): MachineKey | null {
     try {
       this.machineKey ??= loadOrCreateMachineKey(this.options.machineKeyFile)
-      this.keys = new AccessKeys(new AccessKeyRepository(this.options.keysFile))
     } catch (error) {
-      // The repositories' messages never contain the machine key, an access key or a hash.
-      console.error(`no tunnel: ${error instanceof Error ? error.message : 'a key file could not be read'}`)
+      // The repository's messages never contain the machine key.
+      console.error(`no tunnel: ${error instanceof Error ? error.message : 'the machine key could not be read'}`)
       return null
     }
-    return this.keys
+    return this.machineKey
   }
 
   /**

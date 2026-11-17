@@ -9,11 +9,9 @@ export interface RemoteAccessSessionsProps {
   busy: boolean
 }
 
-/** What a session's credentials read as, such as `Account, Key laptop`. */
+/** What a session's credentials read as, such as `Account`. */
 export function sessionCredentialsLabel(session: RemoteSession): string {
-  return session.credentials
-    .map((credential) => (credential.kind === 'account' ? 'Account' : `Key ${credential.name}`))
-    .join(', ')
+  return session.credentials.map(() => 'Account').join(', ')
 }
 
 /**
