@@ -50,16 +50,6 @@ export function devAddresses(
 /** What the host says about a server address it refuses. It never quotes the address. */
 export const SERVER_URL_RULE = 'The server address must be wss://<host>, or ws:// on 127.0.0.1, [::1] or localhost'
 
-/**
- * A server address the user entered, trimmed. Throws `InvalidRemoteAccessSetting`
- * for an empty one or one `parseServerUrl` refuses.
- */
-export function enteredServerUrl(value: string): string {
-  const trimmed = value.trim()
-  if (!parseServerUrl(trimmed)) throw new InvalidRemoteAccessSetting(SERVER_URL_RULE)
-  return trimmed
-}
-
 /** The client address connect links are built on, from the one in use, without a trailing slash. Null when there is none. */
 export function linkClientUrl(clientUrl: Setting<string | null>): string | null {
   return clientUrl.value === null ? null : parseClientUrl(clientUrl.value)

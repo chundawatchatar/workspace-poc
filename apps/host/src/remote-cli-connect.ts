@@ -2,11 +2,12 @@ import {
   accountEmailSchema,
   enrollmentFingerprint,
   enrollmentKeySchema,
+  parseServerUrl,
   type RemoteAccessStatus,
   routes,
   sameServerUrl,
 } from '@orch/shared'
-import { enteredServerUrl, SERVER_URL_RULE } from './modules/remote-access/addresses.service'
+import { SERVER_URL_RULE } from './modules/remote-access/addresses.service'
 import type { RemoteCliDeps } from './remote-cli'
 import { printable, refused } from './remote-cli-output'
 
@@ -63,7 +64,7 @@ export function connectProblem(command: Extract<ConnectCommand, { name: 'connect
     return 'That is not an enrollment key. Copy the command again from Connect a machine in the client'
   }
   if (!accountEmailSchema.safeParse(command.email).success) return 'That is not an email address'
-  if (command.server !== null && !safely(() => enteredServerUrl(command.server ?? ''))) return SERVER_URL_RULE
+  if (command.server !== null && !parseServerUrl(command.server.trim())) return SERVER_URL_RULE
   return null
 }
 
@@ -143,13 +144,4 @@ async function confirmed(yes: boolean, question: string, refusal: string, deps: 
 function accountName(status: RemoteAccessStatus): string {
   const account = status.linkedAccount
   return account ? `${printable(account.name)} (${printable(account.maskedEmail)})` : 'no account'
-}
-
-function safely(check: () => unknown): boolean {
-  try {
-    check()
-    return true
-  } catch {
-    return false
-  }
 }
