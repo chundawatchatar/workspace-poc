@@ -156,27 +156,26 @@ export class EnrollmentService {
   }
 }
 
-/** What answering a machine's account frames needs. A missing `enrollment` means accounts are off. */
+/** What answering a machine's account frames needs. */
 export interface EnrollmentFrameDeps {
-  enrollment?: Pick<EnrollmentService, 'request' | 'unlink'> | null
+  enrollment: Pick<EnrollmentService, 'request' | 'unlink'>
   limiter: ConnectionLimiter
 }
 
 type Refusal = 'rate_limited' | 'unavailable'
 
 /**
- * Runs `answer` for a frame from the tunnel of `machineId`, unless accounts
- * are off (`unavailable`) or the machine is out of enrollment tokens
- * (`rate_limited`), which is decided before the database is touched. A
- * failure answers `unavailable` too. It never rejects.
+ * Runs `answer` for a frame from the tunnel of `machineId`, unless the machine
+ * is out of enrollment tokens (`rate_limited`), which is decided before the
+ * database is touched. A failure, such as a database error, answers
+ * `unavailable`. It never rejects.
  */
 async function guarded(
   machineId: string,
   { enrollment, limiter }: EnrollmentFrameDeps,
   refuse: (code: Refusal) => ServerFrame,
-  answer: (enrollment: NonNullable<EnrollmentFrameDeps['enrollment']>) => Promise<ServerFrame>,
+  answer: (enrollment: EnrollmentFrameDeps['enrollment']) => Promise<ServerFrame>,
 ): Promise<ServerFrame> {
-  if (!enrollment) return refuse('unavailable')
   if (!limiter.admitEnrollment(machineId).ok) return refuse('rate_limited')
   try {
     return await answer(enrollment)

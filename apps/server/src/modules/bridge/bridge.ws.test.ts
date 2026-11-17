@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, jest, spyOn, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, jest, spyOn, test } from 'bun:test'
 import { connect, type Socket } from 'node:net'
+import { createTestDomain, type TestDomain } from '@orch/domain/testing'
 import {
   type AgentState,
   CLOSE_DEVICE_NOT_APPROVED,
@@ -19,6 +20,7 @@ import {
 import type { Server } from 'bun'
 import { createApp } from '../../app'
 import { serverWebSocket } from '../../lib/websocket'
+import { accountsTestDeps } from '../auth/auth.testing'
 import { HttpForwarder } from '../forward/forward.service'
 import { ConnectionLimiter } from '../limits/limits.service'
 import { MachineRegistry } from '../tunnel/tunnel.service'
@@ -35,6 +37,16 @@ let limiter: ConnectionLimiter
 let server: Server<unknown>
 let sockets: WebSocket[]
 
+let domain: TestDomain
+
+beforeAll(async () => {
+  domain = await createTestDomain({ log: () => {} })
+})
+
+afterAll(async () => {
+  await domain.close()
+})
+
 beforeEach(() => {
   registry = new MachineRegistry()
   bridge = new ChannelBridge({ registry })
@@ -42,6 +54,7 @@ beforeEach(() => {
   const forwarder = new HttpForwarder({ registry })
   const app = createApp({
     registry,
+    ...accountsTestDeps(domain, registry).deps,
     forwarder,
     bridge,
     limiter,

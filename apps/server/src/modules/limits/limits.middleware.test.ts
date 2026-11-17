@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
+import { createTestDomain, type TestDomain } from '@orch/domain/testing'
 import {
   CLOSE_RATE_LIMITED,
   decodeFrame,
@@ -12,6 +13,7 @@ import {
 import type { Server } from 'bun'
 import { createApp } from '../../app'
 import { serverWebSocket } from '../../lib/websocket'
+import { accountsTestDeps } from '../auth/auth.testing'
 import { ChannelBridge } from '../bridge/bridge.service'
 import { HttpForwarder } from '../forward/forward.service'
 import { MachineRegistry } from '../tunnel/tunnel.service'
@@ -23,6 +25,16 @@ const { machineId } = machineKey
 
 let server: Server<unknown> | undefined
 const sockets: WebSocket[] = []
+
+let domain: TestDomain
+
+beforeAll(async () => {
+  domain = await createTestDomain({ log: () => {} })
+})
+
+afterAll(async () => {
+  await domain.close()
+})
 
 afterEach(async () => {
   for (const ws of sockets.splice(0)) ws.close()
@@ -37,6 +49,7 @@ async function setup(limits: ConnectionLimiterDeps) {
   const registry = new MachineRegistry()
   const app = createApp({
     registry,
+    ...accountsTestDeps(domain, registry).deps,
     forwarder: new HttpForwarder({ registry }),
     bridge: new ChannelBridge({ registry }),
     limiter: new ConnectionLimiter(limits),

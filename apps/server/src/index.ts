@@ -25,8 +25,8 @@ import { createSmtpTransport } from './modules/mailer/mailer.transport'
 import { loadStaticSite } from './modules/static/static.service'
 import { MachineRegistry } from './modules/tunnel/tunnel.service'
 
-// Composition root: reads the environment, creates the registry, checks the accounts database and builds the mailer
-// and Better Auth when accounts are on, creates the forwarder, the bridge and the limiter, loads the built client, and
+// Composition root: reads the environment, creates the registry, checks the database, builds the mailer and the
+// accounts modules with Better Auth, creates the forwarder, the bridge and the limiter, loads the built client, and
 // starts the server.
 
 let config: ReturnType<typeof loadServerConfig>
@@ -51,7 +51,7 @@ interface AccountsDeps {
 }
 
 /**
- * What accounts add to the server: their API modules, the hooks that give
+ * The accounts side of the server: its API modules, the hooks that give
  * `user` endpoints a principal, and the enrollment service the tunnel answers
  * `enroll.request` and `unlink` frames with.
  */
@@ -62,9 +62,8 @@ interface Accounts {
 }
 
 /**
- * Builds the accounts modules of the server API, mounted only when accounts
- * are on: Better Auth at `/api/auth/*`, the account endpoints and the machines
- * endpoints. `forUser` is a closure, so routers never hold the `Domain`, and
+ * Builds the accounts modules of the server API: Better Auth at `/api/auth/*`,
+ * the account endpoints and the machines endpoints. `forUser` is a closure, so routers never hold the `Domain`, and
  * the enrollment service gets only a closure that logs its fixed reason on
  * every key lookup. The enrollment service holds each machine's connect
  * request in the one `ConnectRequests`, and the machines endpoints answer it
@@ -116,40 +115,33 @@ const { maxChannelsPerMachine, requestTimeoutMs, staticDir, allowedOrigins, trus
 // Built before the accounts modules, since the machines module reads online state from this same registry.
 const registry = new MachineRegistry()
 
-let accountsSetup: Accounts | null = null
-
-if (config.accounts) {
-  const domain = createDomain(config.accounts.databaseUrl)
-  const problem = await checkDatabase(
-    domain.skipAuthorization('start-up check of the connection and pending migrations'),
-    databaseLocation(config.accounts.databaseUrl),
-  )
-  if (problem) {
-    console.error(problem)
-    process.exit(1)
-  }
-  const mailer = createMailer({
-    transport: createSmtpTransport(config.accounts.smtpUrl),
-    from: config.accounts.mailFrom,
-  })
-  accountsSetup = createAccountsModules({
-    domain,
-    mailer,
-    accounts: config.accounts,
-    trustedOrigins: config.trustedOrigins,
-    clientIp: clientIpReader({ trustProxy }),
-    registry,
-  })
-  console.log('accounts are on')
-} else {
-  console.log('DATABASE_URL is not set, so accounts are off')
+const domain = createDomain(config.accounts.databaseUrl)
+const problem = await checkDatabase(
+  domain.skipAuthorization('start-up check of the connection and pending migrations'),
+  databaseLocation(config.accounts.databaseUrl),
+)
+if (problem) {
+  console.error(problem)
+  process.exit(1)
 }
+const mailer = createMailer({
+  transport: createSmtpTransport(config.accounts.smtpUrl),
+  from: config.accounts.mailFrom,
+})
+const accounts = createAccountsModules({
+  domain,
+  mailer,
+  accounts: config.accounts,
+  trustedOrigins: config.trustedOrigins,
+  clientIp: clientIpReader({ trustProxy }),
+  registry,
+})
 
 const hostname = requiredEnv('SERVER_HOST')
 const port = Number(requiredEnv('SERVER_PORT'))
 
 const site = await loadStaticSite(staticDir)
-if (!site) console.log(`no client build in ${staticDir}, so only the relay is served`)
+if (!site) console.log(`no client build in ${staticDir}, so the client is not served`)
 
 const forwarder = new HttpForwarder({ registry, requestTimeoutMs })
 const bridge = new ChannelBridge({ registry, maxChannelsPerMachine })
@@ -163,9 +155,9 @@ const app = createApp({
   site,
   allowedOrigins,
   trustProxy,
-  api: { trustedOrigins: config.trustedOrigins, ...accountsSetup?.api },
-  accounts: accountsSetup ? { modules: accountsSetup.modules } : null,
-  enrollment: accountsSetup?.enrollment ?? null,
+  api: { trustedOrigins: config.trustedOrigins, ...accounts.api },
+  accounts: { modules: accounts.modules },
+  enrollment: accounts.enrollment,
 })
 // The Bun server goes in as the env, which is where the client IP and socket upgrades come from.
 const server = Bun.serve({

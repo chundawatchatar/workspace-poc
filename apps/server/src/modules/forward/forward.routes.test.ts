@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test'
+import { createTestDomain, type TestDomain } from '@orch/domain/testing'
 import {
   DEVICE_PROOF_HEADER,
   decodeFrame,
@@ -16,6 +17,7 @@ import type { Server } from 'bun'
 import { createApp } from '../../app'
 import { SANDBOX_CSP } from '../../lib/security'
 import { serverWebSocket } from '../../lib/websocket'
+import { accountsTestDeps } from '../auth/auth.testing'
 import { ChannelBridge } from '../bridge/bridge.service'
 import { ConnectionLimiter } from '../limits/limits.service'
 import { MachineRegistry } from '../tunnel/tunnel.service'
@@ -33,12 +35,23 @@ let limiter: ConnectionLimiter
 let server: Server<unknown>
 let machines: Machine[]
 
+let domain: TestDomain
+
+beforeAll(async () => {
+  domain = await createTestDomain({ log: () => {} })
+})
+
+afterAll(async () => {
+  await domain.close()
+})
+
 beforeEach(() => {
   registry = new MachineRegistry()
   forwarder = new HttpForwarder({ registry, requestTimeoutMs: 1000 })
   limiter = new ConnectionLimiter()
   const app = createApp({
     registry,
+    ...accountsTestDeps(domain, registry).deps,
     forwarder,
     bridge: new ChannelBridge({ registry }),
     limiter,

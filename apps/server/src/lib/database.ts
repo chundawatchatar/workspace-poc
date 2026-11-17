@@ -13,7 +13,7 @@ export function databaseLocation(url: string): string {
 }
 
 /**
- * Checks that the accounts database answers and has every migration applied.
+ * Checks that the database answers and has every migration applied.
  * Returns null when it is ready, or the message to exit with. The message
  * shows `location` and an error code at most, never the URL or the error text,
  * which could hold the password.
@@ -27,7 +27,7 @@ export async function checkDatabase(db: Db, location: string, timeoutMs = 10_000
     // Drizzle wraps the driver's error, which carries the code, in `cause`.
     const code = errorCode(error) ?? errorCode((error as { cause?: unknown } | null)?.cause)
     const reason = code ? ` (${code})` : ''
-    return `The database at ${location} is unreachable${reason}. Start it with \`bun run db:up\`, or unset DATABASE_URL to run the relay alone.`
+    return `The database at ${location} is unreachable${reason}. Start it with \`bun run db:up\`.`
   }
   if (pending.length > 0) {
     return `The database at ${location} has ${pending.length} pending migration(s): ${pending.join(', ')}. Run \`bun run db:migrate\`, then start the server again.`

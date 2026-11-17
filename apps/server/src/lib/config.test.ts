@@ -21,11 +21,27 @@ function errorOf(env: Record<string, string | undefined>): string {
 }
 
 describe('loadServerConfig', () => {
-  test('turns accounts off without `DATABASE_URL`, whatever else is missing', () => {
-    expect(loadServerConfig({ BETTER_AUTH_SECRET: 'short' })).toEqual({ accounts: null, trustedOrigins: [] })
+  test('refuses an empty or blank environment, naming every required variable and no value', () => {
+    for (const env of [{}, { DATABASE_URL: ' ', MAIL_FROM: '', SERVER_TUNNEL_URL: '  ' }]) {
+      const message = errorOf(env)
+      for (const name of [
+        'DATABASE_URL',
+        'BETTER_AUTH_SECRET',
+        'BETTER_AUTH_URL',
+        'SMTP_URL',
+        'MAIL_FROM',
+        'RELAY_SIGNING_KEY',
+        'SERVER_TUNNEL_URL',
+      ]) {
+        expect(message).toContain(`${name}: is required`)
+      }
+      expect(message).not.toContain('RELAY_EXTRA_PUBLIC_KEYS')
+      expect(message).not.toContain('SERVER_TRUSTED_ORIGINS')
+    }
   })
 
-  test('turns accounts on when every accounts variable is valid', () => {
+  test('loads every accounts variable when each is valid, with the optional ones left out or set', () => {
+    expect(loadServerConfig(accountsEnv)).toMatchObject({ trustedOrigins: [], accounts: { relayExtraPublicKeys: [] } })
     const config = loadServerConfig({
       ...accountsEnv,
       SERVER_TRUSTED_ORIGINS: 'https://a.example, http://b:8080',
@@ -68,7 +84,7 @@ describe('loadServerConfig', () => {
 
   test('takes SERVER_TUNNEL_URL only as wss://<host> or ws:// on loopback, with no path, and names it otherwise', () => {
     const tunnelUrl = (value: string | undefined) =>
-      loadServerConfig({ ...accountsEnv, SERVER_TUNNEL_URL: value }).accounts?.serverTunnelUrl
+      loadServerConfig({ ...accountsEnv, SERVER_TUNNEL_URL: value }).accounts.serverTunnelUrl
     expect(tunnelUrl('wss://Relay.Example.com/')).toBe('wss://relay.example.com')
     expect(tunnelUrl('ws://[::1]:4600')).toBe('ws://[::1]:4600')
     for (const value of [
@@ -84,12 +100,12 @@ describe('loadServerConfig', () => {
       expect(message).toContain('SERVER_TUNNEL_URL')
       if (value) expect(message).not.toContain(value)
     }
-    // Accounts off need none.
-    expect(loadServerConfig({ SERVER_TUNNEL_URL: 'nonsense' }).accounts).toBeNull()
   })
 
   test('counts bytes, not characters, for the secret', () => {
     // 16 two-byte characters are 32 bytes.
-    expect(loadServerConfig({ ...accountsEnv, BETTER_AUTH_SECRET: 'é'.repeat(16) }).accounts).not.toBeNull()
+    expect(loadServerConfig({ ...accountsEnv, BETTER_AUTH_SECRET: 'é'.repeat(16) }).accounts.betterAuthSecret).toBe(
+      'é'.repeat(16),
+    )
   })
 })

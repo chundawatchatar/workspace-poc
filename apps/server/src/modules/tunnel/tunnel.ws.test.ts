@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test'
+import { createTestDomain, type TestDomain } from '@orch/domain/testing'
 import {
   CLOSE_HEARTBEAT_TIMEOUT,
   CLOSE_REPLACED,
@@ -15,6 +16,7 @@ import {
 import type { Server } from 'bun'
 import { createApp } from '../../app'
 import { serverWebSocket } from '../../lib/websocket'
+import { accountsTestDeps } from '../auth/auth.testing'
 import { ChannelBridge } from '../bridge/bridge.service'
 import { HttpForwarder } from '../forward/forward.service'
 import { ConnectionLimiter } from '../limits/limits.service'
@@ -29,6 +31,16 @@ let registry: MachineRegistry
 let server: Server<unknown>
 let clients: Machine[]
 
+let domain: TestDomain
+
+beforeAll(async () => {
+  domain = await createTestDomain({ log: () => {} })
+})
+
+afterAll(async () => {
+  await domain.close()
+})
+
 beforeEach(() => {
   registry = new MachineRegistry()
   server = Bun.serve({
@@ -36,6 +48,7 @@ beforeEach(() => {
     port: 0,
     fetch: createApp({
       registry,
+      ...accountsTestDeps(domain, registry).deps,
       forwarder: new HttpForwarder({ registry }),
       bridge: new ChannelBridge({ registry }),
       limiter: new ConnectionLimiter(),
@@ -222,17 +235,5 @@ describe('tunnel socket', () => {
 
     await hello(keyA, { pong: true })
     expect(registry.isRemoteOff(id)).toBe(false)
-  })
-
-  test('answers enroll.request and unlink with `unavailable` while accounts are off', async () => {
-    const machine = await hello(keyA, { pong: true })
-    machine.send({ type: 'enroll.request', id: 1, key: 'oek_any', email: 'a@example.com', name: 'Box' })
-    machine.send({ type: 'unlink', id: 2, accountId: 'u1' })
-    const answers = () => machine.frames.filter((f) => f.type === 'enroll.failed' || f.type === 'unlink.failed')
-    await until(() => answers().length === 2)
-    expect(answers()).toEqual([
-      { type: 'enroll.failed', id: 1, code: 'unavailable' },
-      { type: 'unlink.failed', id: 2, code: 'unavailable' },
-    ])
   })
 })

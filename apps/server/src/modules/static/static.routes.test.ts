@@ -1,10 +1,12 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createTestDomain, type TestDomain } from '@orch/domain/testing'
 import { machinePathPrefix, TUNNEL_PATH } from '@orch/shared'
 import { createApp } from '../../app'
 import { SANDBOX_CSP } from '../../lib/security'
+import { accountsTestDeps } from '../auth/auth.testing'
 import { ChannelBridge } from '../bridge/bridge.service'
 import { HttpForwarder } from '../forward/forward.service'
 import { ConnectionLimiter } from '../limits/limits.service'
@@ -17,6 +19,16 @@ const html = { accept: 'text/html,application/xhtml+xml' }
 
 let root: string
 let dir: string
+
+let domain: TestDomain
+
+beforeAll(async () => {
+  domain = await createTestDomain({ log: () => {} })
+})
+
+afterAll(async () => {
+  await domain.close()
+})
 
 beforeEach(() => {
   // The site dir sits inside `root`, next to a secret that a symlink points out to.
@@ -37,6 +49,7 @@ function setup(site: StaticSite | null) {
   const registry = new MachineRegistry()
   const app = createApp({
     registry,
+    ...accountsTestDeps(domain, registry).deps,
     forwarder: new HttpForwarder({ registry }),
     bridge: new ChannelBridge({ registry }),
     limiter: new ConnectionLimiter(),

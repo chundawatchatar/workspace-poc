@@ -11,7 +11,7 @@ import { createServerRouter, type ServerHandlerContext, type ServerRouterOptions
 import { createAuthenticate } from '../auth/auth.middleware'
 import { createAuthModule } from '../auth/auth.routes'
 import { createAuth } from '../auth/auth.service'
-import { authTestClient, cookiePair } from '../auth/auth.testing'
+import { authTestClient, cookiePair, testEnrollment } from '../auth/auth.testing'
 import { ChannelBridge } from '../bridge/bridge.service'
 import { HttpForwarder } from '../forward/forward.service'
 import { ConnectionLimiter } from '../limits/limits.service'
@@ -88,6 +88,7 @@ function setup(domain: TestDomain, ipPrefix: string) {
         probe.module,
       ],
     },
+    enrollment: testEnrollment(domain, registry),
   })
   return { app, probe, errors, client: authTestClient({ app, mail, base: BASE, ipPrefix }) }
 }
@@ -219,16 +220,5 @@ describe('account module', () => {
     for (const text of [Bun.inspect(own.errors[0]), ...logLines]) {
       for (const secret of [token, cookie, email]) expect(text).not.toContain(secret)
     }
-  })
-
-  test('answers the JSON `not_found` for `/api/me` when accounts are off', async () => {
-    const registry = new MachineRegistry()
-    const app = createApp({
-      registry,
-      forwarder: new HttpForwarder({ registry }),
-      bridge: new ChannelBridge({ registry }),
-      limiter: new ConnectionLimiter(),
-    })
-    expect(await errorOf(await app.request(`${BASE}/api/me`))).toEqual({ status: 404, code: 'not_found' })
   })
 })
