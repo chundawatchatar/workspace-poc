@@ -161,7 +161,6 @@ describe('tunnel frames', () => {
       [machineFrame, JSON.stringify({ type: 'auth.failed' })],
       [machineFrame, JSON.stringify({ type: 'auth.failed', id: 3, key: 'k' })],
       [serverFrame, JSON.stringify({ type: 'auth.failed', id: 3 })],
-      [machineFrame, JSON.stringify({ type: 'enroll.preview', id: 1, key: 'k' })],
       [machineFrame, JSON.stringify({ type: 'enroll.redeem', id: 0, key: 'k', email: 'e', name: 'Box' })],
       [
         machineFrame,

@@ -211,7 +211,7 @@ describe('enrollment over the tunnel', () => {
       answers.push(await box.redeem(key, ada.email))
     }
     // Another account's email, an email with no account, and a malformed one, with a key that still works. Another
-    // machine sends them, since each machine has only 10 tries a minute.
+    // machine sends them, since each machine has only 10 tries at once.
     const typo = await machine()
     const wrong = [bob.email, 'nobody@test.example', 'not an email', '', `${ada.email}x`]
     for (const email of wrong) answers.push(await typo.redeem(fresh.key, email))
