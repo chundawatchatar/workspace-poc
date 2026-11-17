@@ -9,9 +9,16 @@ export function settingsPath(dataDir: string) {
 }
 
 /**
- * The settings file as a JSON object, or null when it does not exist. Throws
- * `SettingsError` naming the file when it is not JSON or not an object; its
- * keys and values are checked by `loadSettings`.
+ * A key older hosts kept in the settings file and no host reads now. It is
+ * dropped when the file is read, so a folder that still has it keeps starting,
+ * and the next save removes it from the file.
+ */
+const RETIRED_KEYS = ['clientUrl']
+
+/**
+ * The settings file as a JSON object without its retired keys, or null when it
+ * does not exist. Throws `SettingsError` naming the file when it is not JSON or
+ * not an object; its keys and values are checked by `loadSettings`.
  */
 export function readSettingsFile(path: string): Record<string, unknown> | null {
   if (!existsSync(path)) return null
@@ -26,13 +33,14 @@ export function readSettingsFile(path: string): Record<string, unknown> | null {
       `${path} must hold a JSON object of settings. Fix the file, or delete it to use the defaults`,
     )
   }
-  return value as Record<string, unknown>
+  const settings = { ...value } as Record<string, unknown>
+  for (const key of RETIRED_KEYS) delete settings[key]
+  return settings
 }
 
 /** The addresses to change. A string sets the key, null removes it, and a key left out keeps its value. */
 export interface SavedAddresses {
   relayUrl?: string | null
-  clientUrl?: string | null
 }
 
 /** The settings to change. A value sets the key, null removes it, and a key left out keeps its value. */
@@ -56,12 +64,12 @@ export function saveSettings(path: string, changes: SettingsChanges) {
 
 /** Sets or removes only the addresses named, keeping every other key, as `saveSettings` does. */
 export function saveAddresses(path: string, addresses: SavedAddresses) {
-  saveSettings(path, { relayUrl: addresses.relayUrl, clientUrl: addresses.clientUrl })
+  saveSettings(path, { relayUrl: addresses.relayUrl })
 }
 
 /**
- * Moves the addresses a folder from before `config.json` keeps in
- * `remote-access.json` into the settings file, once. Each old address is
+ * Moves the server address a folder from before `config.json` keeps in
+ * `remote-access.json` into the settings file as `relayUrl`, once. It is
  * copied as it is, valid or not, only when the settings file has no value for
  * it; then `remote-access.json` is rewritten with only its flag. The settings
  * file is written first, so a run cut short between the two steps is finished
@@ -71,13 +79,10 @@ export function saveAddresses(path: string, addresses: SavedAddresses) {
 export function migrateRemoteAccessAddresses(dataDir: string): boolean {
   const remote = new RemoteAccessRepository(remoteAccessPath(dataDir))
   const old = remote.load()
-  if (!old || (old.serverUrl === undefined && old.clientUrl === undefined)) return false
+  if (old?.serverUrl === undefined) return false
   const path = settingsPath(dataDir)
   const current = readSettingsFile(path)
-  const copied: SavedAddresses = {}
-  if (old.serverUrl != null && current?.relayUrl === undefined) copied.relayUrl = old.serverUrl
-  if (old.clientUrl != null && current?.clientUrl === undefined) copied.clientUrl = old.clientUrl
-  if (Object.keys(copied).length > 0) saveAddresses(path, copied)
+  if (old.serverUrl !== null && current?.relayUrl === undefined) saveAddresses(path, { relayUrl: old.serverUrl })
   remote.save({ enabled: old.enabled })
   return true
 }

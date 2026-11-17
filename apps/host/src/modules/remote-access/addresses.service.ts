@@ -1,78 +1,26 @@
 import { parseServerUrl, type RemoteAccessStatus, sameServerUrl } from '@orch/shared'
 import { saveAddresses } from '../settings/settings.repository'
-import { DEFAULT_SERVER_URL, derivedClientUrl, type Setting, type Settings } from '../settings/settings.service'
+import { DEFAULT_SERVER_URL, type Setting, type Settings } from '../settings/settings.service'
 import { InvalidRemoteAccessSetting } from './remote-access.errors'
 
-/** A `CLIENT_URL` value as a client URL, or null unless it is an `http:` or `https:` URL without credentials. */
-export function parseClientUrl(value: string): string | null {
-  let url: URL
-  try {
-    url = new URL(value)
-  } catch {
-    return null
-  }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
-  if (url.username || url.password) return null
-  return `${url.origin}${url.pathname.replace(/\/+$/, '')}`
-}
-
-/**
- * The client URL a `SERVER_URL` implies: `wss:` becomes `https:` and `ws:`
- * becomes `http:`, keeping the host, port and base path. Null for any other value.
- */
-export function clientUrlFromServerUrl(value: string): string | null {
-  let url: URL
-  try {
-    url = new URL(value)
-  } catch {
-    return null
-  }
-  const protocol = { 'wss:': 'https:', 'ws:': 'http:' }[url.protocol]
-  if (!protocol || !url.host) return null
-  return `${protocol}//${url.host}${url.pathname.replace(/\/+$/, '')}`
-}
-
-/** The dev host's environment variables that override the saved addresses. Empty values count as unset. */
+/** The dev host's environment variable that overrides the saved server address. An empty value counts as unset. */
 export interface RemoteAccessEnv {
   SERVER_URL?: string
-  CLIENT_URL?: string
 }
 
-/**
- * The relay and client addresses in use. The client address is null only when
- * it is derived from a relay address that is not a `ws(s)://` one, which only
- * `SERVER_URL` can set.
- */
+/** The relay address in use. */
 export interface RemoteAddresses {
   relayUrl: Setting<string>
-  clientUrl: Setting<string | null>
 }
 
 /**
- * The dev host's addresses: `SERVER_URL` and `CLIENT_URL` on top of the loaded
- * settings, set by those names. An invalid `SERVER_URL` is kept, so the host
- * runs without a tunnel and says why; an invalid `CLIENT_URL` is logged with
- * `log` and ignored. A derived client address follows `SERVER_URL`.
+ * The dev host's addresses: `SERVER_URL` on top of the loaded settings, set by
+ * that name. An invalid `SERVER_URL` is kept, so the host runs without a
+ * tunnel and says why.
  */
-export function devAddresses(
-  settings: Pick<Settings, 'relayUrl' | 'clientUrl'>,
-  env: RemoteAccessEnv,
-  log: (line: string) => void = console.error,
-): RemoteAddresses {
+export function devAddresses(settings: Pick<Settings, 'relayUrl'>, env: RemoteAccessEnv): RemoteAddresses {
   const server = env.SERVER_URL || undefined
-  const relayUrl: Setting<string> = server ? { value: server, source: 'env', setBy: 'SERVER_URL' } : settings.relayUrl
-  const client = env.CLIENT_URL || undefined
-  if (client && parseClientUrl(client)) {
-    return { relayUrl, clientUrl: { value: client, source: 'env', setBy: 'CLIENT_URL' } }
-  }
-  if (client) log('CLIENT_URL must be an http:// or https:// URL. Ignoring it')
-  if (!server || settings.clientUrl.source !== 'derived') return { relayUrl, clientUrl: settings.clientUrl }
-  return {
-    relayUrl,
-    clientUrl: parseServerUrl(server)
-      ? derivedClientUrl(server)
-      : { value: clientUrlFromServerUrl(server), source: 'derived', setBy: null },
-  }
+  return { relayUrl: server ? { value: server, source: 'env', setBy: 'SERVER_URL' } : settings.relayUrl }
 }
 
 /** What the host says about a server address it refuses. It never quotes the address. */
@@ -81,14 +29,13 @@ export const SERVER_URL_RULE = 'The server address must be wss://<host>, or ws:/
 /** The part of the remote access status about addresses. */
 type AddressStatus = Pick<
   RemoteAccessStatus,
-  'serverUrl' | 'serverUrlIsDefault' | 'defaultServerUrl' | 'clientUrl' | 'serverUrlSetBy' | 'clientUrlSetBy'
+  'serverUrl' | 'serverUrlIsDefault' | 'defaultServerUrl' | 'serverUrlSetBy'
 >
 
 /**
- * The relay and client addresses of a running host: the ones it started with,
- * until Connect makes another server address the one in use and saves it in
- * the settings file. An address a flag or the environment sets is never
- * changed or saved.
+ * The relay address of a running host: the one it started with, until Connect
+ * makes another server address the one in use and saves it in the settings
+ * file. An address a flag or the environment sets is never changed or saved.
  */
 export class RemoteAccessAddresses {
   private current: RemoteAddresses
@@ -117,23 +64,20 @@ export class RemoteAccessAddresses {
   }
 
   status(): AddressStatus {
-    const { relayUrl, clientUrl } = this.current
+    const { relayUrl } = this.current
     return {
       serverUrl: relayUrl.value,
       serverUrlIsDefault: this.isDefault(),
       defaultServerUrl: this.defaultServerUrl,
-      clientUrl: clientUrl.source === 'derived' ? null : clientUrl.value,
       serverUrlSetBy: relayUrl.setBy,
-      clientUrlSetBy: clientUrl.setBy,
     }
   }
 
   /**
    * Makes `serverUrl`, a valid address, the server address in use, and saves
    * it as `relayUrl` in the settings file, keeping the file's other keys. The
-   * default is saved as no address at all, so a later default applies. A
-   * derived client address follows it. An address a flag or variable sets is
-   * left as it is. Throws `InvalidRemoteAccessSetting` when the settings file
+   * default is saved as no address at all, so a later default applies. An
+   * address a flag or variable sets is left as it is. Throws `InvalidRemoteAccessSetting` when the settings file
    * can't be rewritten, before anything changes.
    */
   use(serverUrl: string) {
@@ -146,13 +90,10 @@ export class RemoteAccessAddresses {
         `The server address could not be saved: ${error instanceof Error ? error.message : 'unknown error'}`,
       )
     }
-    const relayUrl: Setting<string> = isDefault
-      ? { value: this.defaultServerUrl, source: 'default', setBy: null }
-      : { value: serverUrl, source: 'file', setBy: null }
-    const { clientUrl } = this.current
     this.current = {
-      relayUrl,
-      clientUrl: clientUrl.source === 'derived' ? derivedClientUrl(relayUrl.value) : clientUrl,
+      relayUrl: isDefault
+        ? { value: this.defaultServerUrl, source: 'default', setBy: null }
+        : { value: serverUrl, source: 'file', setBy: null },
     }
   }
 }

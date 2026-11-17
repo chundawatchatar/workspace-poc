@@ -20,7 +20,7 @@ describe('docs/corch.md', () => {
     // An option's description can follow it after a single space, so only `--name <value>` is taken.
     const options = entries('Options').map((entry) => /^--[a-z-]+ <[a-z]+>/.exec(entry)?.[0])
     expect(commands.length).toBeGreaterThan(10)
-    expect(options.length).toBe(5)
+    expect(options.length).toBe(4)
     for (const entry of commands) {
       // `logs [--all]` is documented as `corch logs` and `corch logs --all`.
       const command = entry.replace(/ \[[^\]]+\]/g, '')
@@ -38,7 +38,6 @@ describe('docs/corch.md', () => {
     const defaults: Record<string, string> = {
       port: String(SETTINGS_DEFAULTS.port),
       relayUrl: SETTINGS_DEFAULTS.relayUrl,
-      clientUrl: 'Derived from `relayUrl`',
       logLevel: SETTINGS_DEFAULTS.logLevel,
     }
     for (const key of SETTING_KEYS) {
@@ -46,12 +45,7 @@ describe('docs/corch.md', () => {
       const cells = row?.split('|').map((cell) => cell.trim())
       expect({ key, cells: cells?.slice(1, 5) }).toEqual({
         key,
-        cells: [
-          `\`${key}\``,
-          key === 'clientUrl' ? (defaults[key] as string) : `\`${defaults[key]}\``,
-          `\`${SETTING_FLAGS[key]}\``,
-          `\`${SETTING_ENV[key]}\``,
-        ],
+        cells: [`\`${key}\``, `\`${defaults[key]}\``, `\`${SETTING_FLAGS[key]}\``, `\`${SETTING_ENV[key]}\``],
       })
     }
   })

@@ -29,12 +29,18 @@ describe('settings file', () => {
     expect(() => readSettingsFile(config())).toThrow(`${config()} is not valid JSON`)
   })
 
+  test('drops a clientUrl older hosts saved, and keeps any other key for loadSettings to check', () => {
+    writeFileSync(config(), JSON.stringify({ clientUrl: 'https://app.example.com', port: 5000, prot: 1 }))
+    expect(readSettingsFile(config())).toEqual({ port: 5000, prot: 1 })
+  })
+
   test('saveAddresses sets or removes only the addresses, keeps every other key, and never writes over a bad file', () => {
     saveAddresses(config(), { relayUrl: 'wss://relay.example.com' })
     expect(readJson(config())).toEqual({ relayUrl: 'wss://relay.example.com' })
 
+    // A saved clientUrl is no setting now, so the save drops it from the file.
     writeFileSync(config(), JSON.stringify({ port: 4700, relayUrl: 'wss://a.example.com', clientUrl: 'https://c' }))
-    saveAddresses(config(), { relayUrl: 'wss://b.example.com', clientUrl: null })
+    saveAddresses(config(), { relayUrl: 'wss://b.example.com' })
     expect(readJson(config())).toEqual({ port: 4700, relayUrl: 'wss://b.example.com' })
     expect(readdirSync(dir)).toEqual(['config.json'])
 
@@ -47,11 +53,11 @@ describe('settings file', () => {
 describe('migrateRemoteAccessAddresses', () => {
   const old = { enabled: true, serverUrl: 'wss://relay.example.com', clientUrl: 'https://app.example.com' }
 
-  test('moves the old addresses into config.json once, then leaves remote-access.json with its flag', () => {
+  test('moves only the old server address into config.json once, then leaves remote-access.json with its flag', () => {
     writeFileSync(remote(), JSON.stringify(old))
     writeFileSync(linkedAccountPath(dir), '{"name":"Ada"}')
     expect(migrateRemoteAccessAddresses(dir)).toBe(true)
-    expect(readJson(config())).toEqual({ relayUrl: old.serverUrl, clientUrl: old.clientUrl })
+    expect(readJson(config())).toEqual({ relayUrl: old.serverUrl })
     expect(readJson(remote())).toEqual({ enabled: true })
 
     const after = snapshot()
@@ -62,14 +68,15 @@ describe('migrateRemoteAccessAddresses', () => {
 
   test('keeps an address config.json already has, and moves an invalid old one as it is', () => {
     writeFileSync(config(), JSON.stringify({ relayUrl: 'wss://kept.example.com', logLevel: 'debug' }))
-    writeFileSync(remote(), JSON.stringify({ ...old, enabled: false, clientUrl: 'not a url' }))
+    writeFileSync(remote(), JSON.stringify({ ...old, enabled: false }))
     migrateRemoteAccessAddresses(dir)
-    expect(readJson(config())).toEqual({
-      relayUrl: 'wss://kept.example.com',
-      logLevel: 'debug',
-      clientUrl: 'not a url',
-    })
+    expect(readJson(config())).toEqual({ relayUrl: 'wss://kept.example.com', logLevel: 'debug' })
     expect(readJson(remote())).toEqual({ enabled: false })
+
+    writeFileSync(config(), JSON.stringify({ logLevel: 'debug' }))
+    writeFileSync(remote(), JSON.stringify({ enabled: true, serverUrl: 'not a url' }))
+    migrateRemoteAccessAddresses(dir)
+    expect(readJson(config())).toEqual({ logLevel: 'debug', relayUrl: 'not a url' })
 
     // A folder with no old addresses, or no remote-access.json at all, is left as it is.
     rmSync(config())

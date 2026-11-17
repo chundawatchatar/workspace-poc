@@ -64,10 +64,9 @@ Options:
   --data-dir <dir>    The data folder (else CORCH_DATA_DIR, else the default)
   --port <port>       The port to listen on, on 127.0.0.1 (start, run, restart)
   --relay-url <url>   The relay server's address (start, run, restart)
-  --client-url <url>  The client app's address (start, run, restart)
   --log-level <level> error, warn, info or debug (start, run, restart)
 
-Settings: port, relayUrl, clientUrl, logLevel. A host reads them when it starts.`
+Settings: port, relayUrl, logLevel. A host reads them when it starts.`
 
 /**
  * Reads `corch`'s arguments. A flag takes its value as the next argument or after `=`. `--data-dir` is read

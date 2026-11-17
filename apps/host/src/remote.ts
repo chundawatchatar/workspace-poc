@@ -9,6 +9,6 @@ import { remoteCommand } from './remote-command'
 process.exitCode = await remoteCommand(process.argv.slice(2), {
   dataDir: devDataDir,
   hostUrl: hostUrl(),
-  env: { SERVER_URL: optionalEnv('SERVER_URL'), CLIENT_URL: optionalEnv('CLIENT_URL') },
+  env: { SERVER_URL: optionalEnv('SERVER_URL') },
   program: 'bun run host:remote',
 })

@@ -189,7 +189,7 @@ async function setUp() {
   const approved = [{ id: device.id, publicKey: device.publicKey, approvedAt: new Date().toISOString() }]
   new DevicesRepository(join(dir, 'devices.json')).save(approved)
   const serverUrl = `ws://127.0.0.1:${server.port}`
-  writeFileSync(settingsFile, JSON.stringify({ relayUrl: serverUrl, clientUrl: 'https://orch.example' }))
+  writeFileSync(settingsFile, JSON.stringify({ relayUrl: serverUrl }))
   // Connected to the fake server's account, so the tunnel opens at start.
   const linkedAt = new Date().toISOString()
   const account = { name: 'Ada', maskedEmail: 'a***@example.com', serverUrl, linkedAt }

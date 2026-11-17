@@ -58,12 +58,8 @@ export const remoteAccessStatus = z.object({
   serverUrlIsDefault: z.boolean(),
   /** The built-in default server address. */
   defaultServerUrl: z.string(),
-  /** The client address for connect links in use. Null means it is derived from `serverUrl`. */
-  clientUrl: z.string().nullable(),
   /** The flag or environment variable that sets the server address, such as `SERVER_URL`. Null means none does. */
   serverUrlSetBy: z.string().nullable(),
-  /** The flag or environment variable that sets the client address, such as `CLIENT_URL`. Null means none does. */
-  clientUrlSetBy: z.string().nullable(),
   /** The id the server knows this machine by. Null until a machine key exists. */
   machineId: z.string().nullable(),
   /** `machineFingerprint(machineId)`, which the owner compares with the one the client shows. Null exactly when `machineId` is. */

@@ -6,7 +6,7 @@ import { z } from 'zod'
  * The old remote access setting: an on/off flag that no host reads any more,
  * since the tunnel now runs exactly while the machine is connected to an
  * account. The file is kept only so `migrateRemoteAccessAddresses` can move the
- * addresses a folder from before `config.json` holds; it can be deleted.
+ * server address a folder from before `config.json` holds; it can be deleted.
  */
 export const remoteAccessSettings = z.object({
   /** True when the old host kept the tunnel open. Nothing reads it now. */
@@ -16,13 +16,12 @@ export type RemoteAccessSettings = z.infer<typeof remoteAccessSettings>
 
 /**
  * The file as `load` reads it. A folder from before `config.json` also holds
- * the addresses here; only `migrateRemoteAccessAddresses` reads them.
+ * the server address here; only `migrateRemoteAccessAddresses` reads it. Any
+ * other key, such as an old client address, is dropped.
  */
 const storedRemoteAccess = remoteAccessSettings.extend({
   /** The server address as entered. Null means none was saved. */
   serverUrl: z.string().nullable().optional(),
-  /** The client address for connect links. Null means it is derived from `serverUrl`. */
-  clientUrl: z.string().nullable().optional(),
 })
 export type StoredRemoteAccess = z.infer<typeof storedRemoteAccess>
 
@@ -36,7 +35,7 @@ export class RemoteAccessRepository {
   constructor(readonly file: string) {}
 
   /**
-   * The saved setting, with the old addresses if the file still has them, or
+   * The saved setting, with the old server address if the file still has it, or
    * null when the file does not exist. A file that is not valid throws and is
    * left as it is.
    */

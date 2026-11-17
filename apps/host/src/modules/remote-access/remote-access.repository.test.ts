@@ -24,15 +24,16 @@ describe('RemoteAccessRepository', () => {
     expect(repository.load()).toEqual({ enabled: false })
     expect(readdirSync(join(dir, 'data'))).toEqual(['remote-access.json'])
 
-    const old = { enabled: true, serverUrl: 'wss://relay.example.com', clientUrl: null }
-    writeFileSync(file, JSON.stringify(old))
+    // An old client address loads too, and is dropped.
+    const old = { enabled: true, serverUrl: 'wss://relay.example.com' }
+    writeFileSync(file, JSON.stringify({ ...old, clientUrl: 'https://app.example.com' }))
     expect(repository.load()).toEqual(old)
   })
 
   test('a file that fails the schema throws and is left as it is', () => {
     const repository = new RemoteAccessRepository(file)
     repository.save({ enabled: true })
-    for (const content of ['not json', JSON.stringify({ enabled: 'yes', serverUrl: null, clientUrl: null })]) {
+    for (const content of ['not json', JSON.stringify({ enabled: 'yes', serverUrl: null })]) {
       writeFileSync(file, content)
       expect(() => repository.load()).toThrow('not valid')
       expect(readFileSync(file, 'utf8')).toBe(content)

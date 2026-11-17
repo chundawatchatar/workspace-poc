@@ -41,7 +41,7 @@ describe('parseCliArgs', () => {
     expect(action('path', '--data-dir', '/d')).toEqual({ name: 'path' })
     expect(action('get', 'port')).toEqual({ name: 'get', key: 'port' })
     expect(action('set', 'port', '5000')).toEqual({ name: 'set', key: 'port', value: '5000' })
-    expect(action('unset', 'clientUrl')).toEqual({ name: 'unset', key: 'clientUrl' })
+    expect(action('unset', 'logLevel')).toEqual({ name: 'unset', key: 'logLevel' })
   })
 
   test('names an unknown command, so the caller can say which', () => {
@@ -67,6 +67,7 @@ describe('parseCliArgs', () => {
       ['config', 'unset', 'relayUrl', '--yes'],
       ['config', 'frob'],
       ['start', '--bogus'],
+      ['start', '--client-url', 'https://x'],
       ['start', '--port'],
       ['--data-dir'],
       ['status', '--port', '1'],

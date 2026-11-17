@@ -55,9 +55,7 @@ function fakeHost(linkedAccount: LinkedAccount | null): CallHost {
     serverUrl: 'wss://old.example.com',
     serverUrlIsDefault: false,
     defaultServerUrl: 'wss://orch.example.com',
-    clientUrl: null,
     serverUrlSetBy: null,
-    clientUrlSetBy: null,
     machineId: null,
     machineFingerprint: null,
     tunnel: linkedAccount ? 'connected' : 'off',
@@ -78,10 +76,9 @@ describe('corch config list, get and path', () => {
     const listed = await run({ name: 'list' }, { env })
     expect(listed.code).toBe(0)
     expect(listed.out.split('\n')).toEqual([
-      'port       4700  (file)',
-      'relayUrl   wss://relay.example.com  (file)',
-      'clientUrl  https://relay.example.com  (derived)',
-      'logLevel   debug  (env CORCH_LOG_LEVEL)',
+      'port      4700  (file)',
+      'relayUrl  wss://relay.example.com  (file)',
+      'logLevel  debug  (env CORCH_LOG_LEVEL)',
     ])
     expect((await run({ name: 'get', key: 'port' })).out).toBe('4700')
     expect((await run({ name: 'get', key: 'logLevel' }, { env })).out).toBe('debug')
@@ -93,11 +90,15 @@ describe('corch config list, get and path', () => {
   })
 
   test('an unknown key or a config.json that is not valid exits 1 with the settings message', async () => {
-    const unknown = await run({ name: 'get', key: 'colour' })
-    expect([unknown.code, unknown.err]).toEqual([
-      1,
-      'colour is not a setting. The settings are port, relayUrl, clientUrl, logLevel',
-    ])
+    for (const action of [{ name: 'get', key: 'colour' } as const, set('clientUrl', 'https://x'), unset('clientUrl')]) {
+      const unknown = await run(action)
+      const key = 'key' in action ? action.key : ''
+      expect([unknown.code, unknown.err]).toEqual([
+        1,
+        `${key} is not a setting. The settings are port, relayUrl, logLevel`,
+      ])
+    }
+    expect(existsSync(config())).toBe(false)
     writeFileSync(config(), '{ "port": ')
     const broken = await run({ name: 'list' })
     expect([broken.code, broken.err]).toEqual([
@@ -109,16 +110,26 @@ describe('corch config list, get and path', () => {
 
 describe('corch config set and unset', () => {
   test('set saves a checked value and keeps the other keys; unset removes only its key', async () => {
-    writeFileSync(config(), JSON.stringify({ logLevel: 'warn', clientUrl: 'https://app.example.com' }))
+    writeFileSync(config(), JSON.stringify({ logLevel: 'warn', relayUrl: 'wss://relay.example.com' }))
     const saved = await run(set('port', '5000'))
     expect(saved.code).toBe(0)
-    expect(readJson(config())).toEqual({ logLevel: 'warn', clientUrl: 'https://app.example.com', port: 5000 })
+    expect(readJson(config())).toEqual({ logLevel: 'warn', relayUrl: 'wss://relay.example.com', port: 5000 })
     // No host runs, so there is nothing to restart.
     expect(saved.out).not.toContain('restart')
 
-    expect((await run(unset('clientUrl'))).code).toBe(0)
-    expect(readJson(config())).toEqual({ logLevel: 'warn', port: 5000 })
-    expect((await run({ name: 'list' })).out).toContain('clientUrl  https://orch.example.com  (derived)')
+    expect((await run(unset('logLevel'))).code).toBe(0)
+    expect(readJson(config())).toEqual({ relayUrl: 'wss://relay.example.com', port: 5000 })
+  })
+
+  test('a clientUrl older hosts saved is ignored, and the next set drops it from the file', async () => {
+    writeFileSync(config(), JSON.stringify({ clientUrl: 'https://app.example.com', port: 5000 }))
+    const listed = await run({ name: 'list' })
+    expect(listed.code).toBe(0)
+    expect(listed.out).toContain('port      5000  (file)')
+    expect(listed.out).not.toContain('clientUrl')
+
+    expect((await run(set('logLevel', 'warn'))).code).toBe(0)
+    expect(readJson(config())).toEqual({ port: 5000, logLevel: 'warn' })
   })
 
   test('a bad value, an unknown key or a config.json that is not valid leaves the file as it was', async () => {
@@ -147,9 +158,10 @@ describe('corch config set and unset', () => {
   })
 
   test('with the host stopped, migrates the old remote-access addresses first', async () => {
-    writeFileSync(remoteAccessPath(dir), JSON.stringify({ enabled: true, clientUrl: 'https://app.example.com' }))
+    const old = { enabled: true, serverUrl: 'wss://relay.example.com', clientUrl: 'https://app.example.com' }
+    writeFileSync(remoteAccessPath(dir), JSON.stringify(old))
     expect((await run(set('port', '5000'))).code).toBe(0)
-    expect(readJson(config())).toEqual({ clientUrl: 'https://app.example.com', port: 5000 })
+    expect(readJson(config())).toEqual({ relayUrl: 'wss://relay.example.com', port: 5000 })
     expect(readJson(remoteAccessPath(dir))).toEqual({ enabled: true })
   })
 

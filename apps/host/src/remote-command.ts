@@ -24,7 +24,7 @@ const noHost: CallHost = async () => null
 /**
  * Runs one remote access command against the data folder `dataDir` and the host at `hostUrl`, wiring the real disk
  * and terminal to `runRemote`. A null `hostUrl` means no host is running, so the files are used directly. `env` is
- * the dev host's `SERVER_URL` and `CLIENT_URL`; `program` is the command the usage names. Answers the exit code.
+ * the dev host's `SERVER_URL`; `program` is the command the usage names. Answers the exit code.
  */
 export async function remoteCommand(
   args: string[],

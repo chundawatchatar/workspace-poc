@@ -203,13 +203,13 @@ function stopped(command: Command, deps: RemoteCliDeps): number {
 
 /**
  * Prints `status` from the files, as the host would show it at its next start
- * with this shell's `SERVER_URL` and `CLIENT_URL`, after migrating a folder
- * from before the settings file.
+ * with this shell's `SERVER_URL`, after migrating a folder from before the
+ * settings file.
  */
 function statusFromFiles(deps: RemoteCliDeps): number {
   const addresses = addressesFromFiles(deps)
   if (!addresses) return 1
-  const { relayUrl, clientUrl } = addresses
+  const { relayUrl } = addresses
   const account = readLinkedAccount(deps.dataDir, deps.err)
   const machineId = readMachineId(deps)
   printStatus(
@@ -217,8 +217,6 @@ function statusFromFiles(deps: RemoteCliDeps): number {
       serverUrl: relayUrl.value,
       serverUrlIsDefault: sameServerUrl(relayUrl.value, DEFAULT_SERVER_URL),
       serverUrlSetBy: relayUrl.setBy,
-      clientUrl: clientUrl.source === 'derived' ? null : clientUrl.value,
-      clientUrlSetBy: clientUrl.setBy,
       connected: account === undefined ? null : account !== null,
       tunnel: 'host not running',
       machineId,
@@ -250,9 +248,6 @@ interface StatusView {
   serverUrlIsDefault: boolean
   /** The flag or environment variable that sets the server address. Null means none does. */
   serverUrlSetBy: string | null
-  /** The client address in use. Null means it is derived from the server address. */
-  clientUrl: string | null
-  clientUrlSetBy: string | null
   /** True when the machine is connected to an account. Null when the linked account file could not be read. */
   connected: boolean | null
   tunnel: string
@@ -267,8 +262,6 @@ function printStatus(view: StatusView, out: (line: string) => void) {
   const from = (setBy: string | null) => setBy !== null && `(from ${printable(setBy)})`
   const marks = [view.serverUrlIsDefault && '(default)', from(view.serverUrlSetBy)].filter(Boolean)
   out(`Server address: ${[printable(view.serverUrl), ...marks].join(' ')}`)
-  const client = view.clientUrl === null ? 'derived from the server address' : printable(view.clientUrl)
-  out(`Client address: ${[client, from(view.clientUrlSetBy)].filter(Boolean).join(' ')}`)
   const connection = view.connected === null ? 'unknown' : view.connected ? 'connected' : 'not connected'
   out(`Connection:     ${connection}, tunnel ${view.tunnel}`)
   out(`Machine id:     ${view.machineId === null ? 'none yet' : printable(view.machineId)}`)
@@ -302,15 +295,15 @@ function migrate(deps: RemoteCliDeps): boolean {
 
 /**
  * The addresses a host started now would use, from the settings file and this
- * shell's `SERVER_URL` and `CLIENT_URL`, after migrating. Null after printing
- * why the files could not be read.
+ * shell's `SERVER_URL`, after migrating. Null after printing why the files
+ * could not be read.
  */
 function addressesFromFiles(deps: RemoteCliDeps): RemoteAddresses | null {
   if (!migrate(deps)) return null
   try {
     const file = readSettingsFile(settingsPath(deps.dataDir))
     const settings = loadSettings({ flags: {}, env: {}, file, defaults: SETTINGS_DEFAULTS })
-    return devAddresses(settings, deps.env, deps.err)
+    return devAddresses(settings, deps.env)
   } catch (error) {
     deps.err(messageOf(error))
     return null
