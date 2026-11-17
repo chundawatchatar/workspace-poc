@@ -2,9 +2,14 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
 
-/** The remote access setting as saved: only the flag. The addresses live in the settings file, `config.json`. */
+/**
+ * The old remote access setting: an on/off flag that no host reads any more,
+ * since the tunnel now runs exactly while the machine is connected to an
+ * account. The file is kept only so `migrateRemoteAccessAddresses` can move the
+ * addresses a folder from before `config.json` holds; it can be deleted.
+ */
 export const remoteAccessSettings = z.object({
-  /** True when the host should keep the tunnel open from its next start. */
+  /** True when the old host kept the tunnel open. Nothing reads it now. */
   enabled: z.boolean(),
 })
 export type RemoteAccessSettings = z.infer<typeof remoteAccessSettings>
@@ -21,12 +26,12 @@ const storedRemoteAccess = remoteAccessSettings.extend({
 })
 export type StoredRemoteAccess = z.infer<typeof storedRemoteAccess>
 
-/** Where the remote access setting is kept. */
+/** Where the old remote access setting is kept. */
 export function remoteAccessPath(dataDir: string) {
   return join(dataDir, 'remote-access.json')
 }
 
-/** Loads and saves the remote access setting in one JSON file. */
+/** Loads and saves the old remote access setting in one JSON file, for the address migration only. */
 export class RemoteAccessRepository {
   constructor(readonly file: string) {}
 
@@ -45,7 +50,9 @@ export class RemoteAccessRepository {
     }
     const parsed = storedRemoteAccess.safeParse(value)
     if (!parsed.success) {
-      throw new Error(`the remote access setting in ${this.file} is not valid. Fix the file, or save the setting again`)
+      throw new Error(
+        `the old remote access setting in ${this.file} is not valid. Delete the file: nothing uses it now`,
+      )
     }
     return parsed.data
   }

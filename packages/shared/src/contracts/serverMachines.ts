@@ -46,11 +46,22 @@ export function enrollmentFingerprint(key: string): string {
   return key.slice(-4)
 }
 
-/** A new enrollment key. It is shown once, works once and expires at `expiresAt`, an ISO string. */
+/**
+ * The email of the account a machine connects to, as the owner types it:
+ * trimmed, at most 254 characters. Its message never quotes the input.
+ */
+export const accountEmailSchema = z.string().trim().max(254).pipe(z.email('Not an email address.'))
+
+/**
+ * A new enrollment key. It is shown once, works once and expires at
+ * `expiresAt`, an ISO string. `serverUrl` is the address machines open their
+ * tunnel to on this server, which `corch connect --server` takes.
+ */
 export const createEnrollmentResponse = z.object({
   key: enrollmentKeySchema,
   fingerprint: z.string().length(4),
   expiresAt: z.iso.datetime(),
+  serverUrl: z.string(),
 })
 export type CreateEnrollmentResponse = z.infer<typeof createEnrollmentResponse>
 

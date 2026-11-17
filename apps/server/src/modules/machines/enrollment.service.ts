@@ -1,5 +1,6 @@
 import { type AnyPgDatabase, schema } from '@orch/domain'
 import {
+  accountEmailSchema,
   type CreateEnrollmentResponse,
   enrollmentFingerprint,
   enrollmentKeySchema,
@@ -7,7 +8,7 @@ import {
   type RelayKey,
   type ServerFrame,
 } from '@orch/shared'
-import { and, eq, gt, isNull } from 'drizzle-orm'
+import { and, eq, gt, inArray, isNull, sql } from 'drizzle-orm'
 import type { ForUser, UserData } from '../../lib/createServerRouter'
 import type { ConnectionLimiter } from '../limits/limits.service'
 import type { MachineRegistry } from '../tunnel/tunnel.service'
@@ -36,29 +37,24 @@ export function maskEmail(email: string): string {
 /**
  * Creates an enrollment key for the signed-in user, valid for
  * `ENROLLMENT_TTL_MS` from `now`. The key carries 256 random bits and is
- * returned once; the row holds only its hash.
+ * returned once, with `serverUrl`, the address machines open their tunnel to;
+ * the row holds only its hash.
  */
 export async function createEnrollment(
   machineEnrollments: UserData['machineEnrollments'],
   now: Date,
+  serverUrl: string,
 ): Promise<CreateEnrollmentResponse> {
   const key = `oek_${Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url')}`
   const expiresAt = new Date(now.getTime() + ENROLLMENT_TTL_MS)
   await machineEnrollments.insert({ keyHash: hashEnrollmentKey(key), createdAt: now, expiresAt })
-  return { key, fingerprint: enrollmentFingerprint(key), expiresAt: expiresAt.toISOString() }
+  return { key, fingerprint: enrollmentFingerprint(key), expiresAt: expiresAt.toISOString(), serverUrl }
 }
 
 /** The account an enrollment key belongs to, as a machine may see it. */
 export interface EnrollmentAccount {
   name: string
   maskedEmail: string
-}
-
-/** What a preview shows about a key that still works. */
-export interface EnrollmentPreview {
-  account: EnrollmentAccount
-  fingerprint: string
-  expiresAt: string
 }
 
 /**
@@ -91,9 +87,10 @@ export interface EnrollmentServiceDeps {
 }
 
 /**
- * Previews and redeems enrollment keys for machine tunnels. An unknown, used,
- * expired or malformed key all give null, so a caller can't tell them apart.
- * It never logs a key, a hash or an account.
+ * Redeems enrollment keys for machine tunnels, and removes a machine from an
+ * account's list at the machine's own request. An unknown, used, expired or
+ * malformed key, and an email that isn't the key owner's, all give null, so a
+ * caller can't tell them apart. It never logs a key, a hash, an email or an account.
  */
 export class EnrollmentService {
   private readonly now: () => Date
@@ -102,53 +99,52 @@ export class EnrollmentService {
     this.now = deps.now ?? (() => new Date())
   }
 
-  /** Which account `key` belongs to, without using it. Null means the key doesn't work. */
-  async preview(key: string): Promise<EnrollmentPreview | null> {
-    if (!enrollmentKeySchema.safeParse(key).success) return null
-    const [row] = await this.deps
-      .byKey()
-      .select({ name: schema.user.name, email: schema.user.email, expiresAt: enrollments.expiresAt })
-      .from(enrollments)
-      .innerJoin(schema.user, eq(schema.user.id, enrollments.userId))
-      .where(this.usable(key, this.now()))
-      .limit(1)
-    if (!row) return null
-    return {
-      account: { name: row.name, maskedEmail: maskEmail(row.email) },
-      fingerprint: enrollmentFingerprint(key),
-      expiresAt: row.expiresAt.toISOString(),
-    }
-  }
-
   /**
    * Uses `key` and links `machineId` to its owner under `name`, keeping the
-   * name of a machine the owner already linked. Null means the key doesn't work.
+   * name of a machine the owner already linked, when `email` is the owner's,
+   * in any letter case and with any spaces around it. Null means the key
+   * doesn't work or the email doesn't match, which leaves the key unused.
    */
-  async redeem(machineId: string, key: string, name: string): Promise<EnrollmentRedeemed | null> {
-    if (!enrollmentKeySchema.safeParse(key).success) return null
+  async redeem(machineId: string, key: string, email: string, name: string): Promise<EnrollmentRedeemed | null> {
+    const owner = accountEmailSchema.safeParse(email)
+    if (!enrollmentKeySchema.safeParse(key).success || !owner.success) return null
     const db = this.deps.byKey()
     const now = this.now()
-    // One conditional update, so of two redeems racing on one key exactly one gets the row back.
+    // One conditional update, so of two redeems racing on one key exactly one gets the row back, and a key sent
+    // with another email stays unused.
+    const ownerIds = db
+      .select({ id: schema.user.id })
+      .from(schema.user)
+      .where(eq(sql`lower(${schema.user.email})`, owner.data.toLowerCase()))
     const [used] = await db
       .update(enrollments)
       .set({ usedAt: now })
-      .where(this.usable(key, now))
+      .where(and(this.usable(key, now), inArray(enrollments.userId, ownerIds)))
       .returning({ userId: enrollments.userId })
     if (!used) return null
     const { userId } = used
     await new MachinesService(this.deps.forUser({ userId }).machines, this.deps.registry).link(machineId, name)
-    const [owner] = await db
+    const [account] = await db
       .select({ name: schema.user.name, email: schema.user.email })
       .from(schema.user)
       .where(eq(schema.user.id, userId))
       .limit(1)
-    if (!owner) throw new Error('The enrollment key owner is gone.')
+    if (!account) throw new Error('The enrollment key owner is gone.')
     return {
       machineId,
       accountId: userId,
-      account: { name: owner.name, maskedEmail: maskEmail(owner.email) },
+      account: { name: account.name, maskedEmail: maskEmail(account.email) },
       relayKeys: this.deps.relayKeys,
     }
+  }
+
+  /**
+   * Removes `machineId` from the list of the account `accountId`, through
+   * that account's scoped repository, so no other account's row and no other
+   * machine's can go. Nothing happens when the account doesn't list it.
+   */
+  async unlink(machineId: string, accountId: string): Promise<void> {
+    await new MachinesService(this.deps.forUser({ userId: accountId }).machines, this.deps.registry).unlink(machineId)
   }
 
   /** The rows `key` matches while it is unused and unexpired at `now`. */
@@ -161,43 +157,69 @@ export class EnrollmentService {
   }
 }
 
-/** The enrollment frames a machine sends. */
-export type EnrollFrame = Extract<MachineFrame, { type: 'enroll.preview' | 'enroll.redeem' }>
-
-/** What answering an enrollment frame needs. A missing `enrollment` means accounts are off. */
+/** What answering a machine's account frames needs. A missing `enrollment` means accounts are off. */
 export interface EnrollmentFrameDeps {
-  enrollment?: Pick<EnrollmentService, 'preview' | 'redeem'> | null
+  enrollment?: Pick<EnrollmentService, 'redeem' | 'unlink'> | null
   limiter: ConnectionLimiter
 }
 
+type Refusal = 'rate_limited' | 'unavailable'
+
 /**
- * The answer to an enrollment frame from the tunnel of `machineId`, which
- * comes from the tunnel's proof and never from the frame. Accounts off gives
- * `unavailable`, and a machine out of enrollment tokens gets `rate_limited`
- * before the database is touched. It never rejects.
+ * Runs `answer` for a frame from the tunnel of `machineId`, unless accounts
+ * are off (`unavailable`) or the machine is out of enrollment tokens
+ * (`rate_limited`), which is decided before the database is touched. A
+ * failure answers `unavailable` too. It never rejects.
  */
-export async function answerEnrollmentFrame(
-  frame: EnrollFrame,
+async function guarded(
   machineId: string,
   { enrollment, limiter }: EnrollmentFrameDeps,
+  refuse: (code: Refusal) => ServerFrame,
+  answer: (enrollment: NonNullable<EnrollmentFrameDeps['enrollment']>) => Promise<ServerFrame>,
 ): Promise<ServerFrame> {
-  const failed = (code: 'invalid_key' | 'rate_limited' | 'unavailable'): ServerFrame => ({
-    type: 'enroll.failed',
-    id: frame.id,
-    code,
-  })
-  if (!enrollment) return failed('unavailable')
-  if (!limiter.admitEnrollment(machineId).ok) return failed('rate_limited')
+  if (!enrollment) return refuse('unavailable')
+  if (!limiter.admitEnrollment(machineId).ok) return refuse('rate_limited')
   try {
-    if (frame.type === 'enroll.preview') {
-      const preview = await enrollment.preview(frame.key)
-      return preview ? { type: 'enroll.previewed', id: frame.id, ...preview } : failed('invalid_key')
-    }
-    const redeemed = await enrollment.redeem(machineId, frame.key, frame.name)
-    return redeemed ? { type: 'enroll.redeemed', id: frame.id, ...redeemed } : failed('invalid_key')
+    return await answer(enrollment)
   } catch {
-    // A database error can quote its query's parameters, the key's hash among them, so the error itself is dropped.
-    console.error('enrollment frame failed')
-    return failed('unavailable')
+    // A database error can quote its query's parameters, the key's hash and the email among them, so the error
+    // itself is dropped.
+    console.error('account frame failed')
+    return refuse('unavailable')
   }
+}
+
+/**
+ * The answer to `enroll.redeem` from the tunnel of `machineId`, which comes
+ * from the tunnel's proof and never from the frame. A key that doesn't work
+ * and an email that isn't its owner's get the same `invalid_key`.
+ */
+export function answerEnrollmentFrame(
+  frame: Extract<MachineFrame, { type: 'enroll.redeem' }>,
+  machineId: string,
+  deps: EnrollmentFrameDeps,
+): Promise<ServerFrame> {
+  const failed = (code: 'invalid_key' | Refusal): ServerFrame => ({ type: 'enroll.failed', id: frame.id, code })
+  return guarded(machineId, deps, failed, async (enrollment) => {
+    const redeemed = await enrollment.redeem(machineId, frame.key, frame.email, frame.name)
+    return redeemed ? { type: 'enroll.redeemed', id: frame.id, ...redeemed } : failed('invalid_key')
+  })
+}
+
+/**
+ * The answer to `unlink` from the tunnel of `machineId`: it removes that
+ * machine, never one the frame names, from the list of the account the frame
+ * names, and answers `unlinked` whether or not the account listed it. It
+ * counts against the machine's enrollment tokens.
+ */
+export function answerUnlinkFrame(
+  frame: Extract<MachineFrame, { type: 'unlink' }>,
+  machineId: string,
+  deps: EnrollmentFrameDeps,
+): Promise<ServerFrame> {
+  const failed = (code: Refusal): ServerFrame => ({ type: 'unlink.failed', id: frame.id, code })
+  return guarded(machineId, deps, failed, async (enrollment) => {
+    await enrollment.unlink(machineId, frame.accountId)
+    return { type: 'unlinked', id: frame.id }
+  })
 }

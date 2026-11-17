@@ -52,7 +52,7 @@ interface AccountsDeps {
 /**
  * What accounts add to the server: their API modules, the hooks that give
  * `user` endpoints a principal, and the enrollment service the tunnel answers
- * `enroll.*` frames with.
+ * `enroll.redeem` and `unlink` frames with.
  */
 interface Accounts {
   modules: ApiModule[]
@@ -94,7 +94,7 @@ function createAccountsModules({
     modules: [
       createAuthModule({ auth, clientIp }),
       createAccountModule(),
-      createMachinesModule({ registry, relayTickets }),
+      createMachinesModule({ registry, relayTickets, serverTunnelUrl: accounts.serverTunnelUrl }),
     ],
     api: { authenticate: createAuthenticate({ auth }), forUser },
     enrollment: new EnrollmentService({

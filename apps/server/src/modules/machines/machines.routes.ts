@@ -15,11 +15,14 @@ export interface MachinesModuleDeps {
   now?: () => Date
   /** Signs the relay tickets that open a listed machine without its access key. */
   relayTickets: Pick<RelayTickets, 'issue'>
+  /** `SERVER_TUNNEL_URL`, the address machines open their tunnel to, sent with every new enrollment key. */
+  serverTunnelUrl: string
 }
 
 /**
  * Builds the module that serves `serverRoutes.machines`: list, rename and
- * unlink the signed-in user's machines, create enrollment keys, and sign relay
+ * unlink the signed-in user's machines, create enrollment keys (each with the
+ * server's tunnel address), and sign relay
  * tickets for machines the user lists. It handles machine ids, names,
  * enrollment keys and tickets only, never reads a request header or an access
  * key, and never logs input or a ticket.
@@ -28,6 +31,7 @@ export function createMachinesModule({
   registry,
   now = () => new Date(),
   relayTickets,
+  serverTunnelUrl,
 }: MachinesModuleDeps): ApiModule {
   const machinesOf = (data: UserData) => new MachinesService(data.machines, registry)
   return (options) =>
@@ -41,7 +45,7 @@ export function createMachinesModule({
           if (!(await machinesOf(data).unlink(machineId))) fail('not_found')
           return { ok: true as const }
         },
-        createEnrollment: async (_input, { data }) => createEnrollment(data.machineEnrollments, now()),
+        createEnrollment: async (_input, { data }) => createEnrollment(data.machineEnrollments, now(), serverTunnelUrl),
         // Only the user's own scoped list can hold the machine, so a ticket never names a machine the user doesn't
         // list. The machine still checks that the ticket's account is the one it linked.
         relayTicket: async ({ machineId }, { principal, data, fail }) => {

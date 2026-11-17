@@ -9,7 +9,7 @@ import {
   type ServerMachine,
 } from '@orch/shared'
 import { eq } from 'drizzle-orm'
-import { accountsTestApp, cookiePair } from '../auth/auth.testing'
+import { accountsTestApp, cookiePair, TEST_SERVER_TUNNEL_URL } from '../auth/auth.testing'
 import type { MachineConnection } from '../tunnel/tunnel.service'
 import { MachinesService } from './machines.service'
 
@@ -237,7 +237,7 @@ describe('machines module', () => {
     expect(await rowsOf(machineId)).toMatchObject([{ userId: ada.userId, name: 'Laptop' }])
   })
 
-  test('creates an enrollment key that only its hash is stored for, and refuses a body or no session', async () => {
+  test('creates an enrollment key, with the tunnel address, that only its hash is stored for, and refuses a body or no session', async () => {
     const ada = await signedIn()
     const create = (body: unknown, user: Partial<User> = ada) =>
       ctx.client.call('POST', '/api/machines/enrollments', { ip: ada.ip, ...user, body })
@@ -248,6 +248,7 @@ describe('machines module', () => {
     expect(Buffer.from(created.key.slice('oek_'.length), 'base64url')).toHaveLength(32)
     expect(created.fingerprint).toBe(created.key.slice(-4))
     expect(created.expiresAt).toBe(new Date(NOW.getTime() + 15 * 60_000).toISOString())
+    expect(created.serverUrl).toBe(TEST_SERVER_TUNNEL_URL)
     const other = (await (await create({})).json()) as CreateEnrollmentResponse
     expect(other.key).not.toBe(created.key)
 

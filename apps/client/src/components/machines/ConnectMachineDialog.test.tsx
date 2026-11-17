@@ -10,6 +10,7 @@ import { renderWithProviders } from '../../test/render'
 import { MachineList } from './MachineList'
 
 const account = authUser({ id: 'u1', email: 'u1@example.com', name: 'U' })
+const serverUrl = 'wss://relay.example.com'
 const at = '2026-10-30T12:00:00.000Z'
 
 function machine(id: string, name: string): ServerMachine {
@@ -18,7 +19,8 @@ function machine(id: string, name: string): ServerMachine {
 
 /** A fake enrollment key with the contract's shape, ending in `tail` (4 characters), so its fingerprint is `tail`. */
 function enrollment(tail: string, expiresAt: number): CreateEnrollmentResponse {
-  return { key: `oek_${'k'.repeat(39)}${tail}`, fingerprint: tail, expiresAt: new Date(expiresAt).toISOString() }
+  const key = `oek_${'k'.repeat(39)}${tail}`
+  return { key, fingerprint: tail, expiresAt: new Date(expiresAt).toISOString(), serverUrl }
 }
 
 /**
@@ -77,7 +79,7 @@ afterEach(() => {
 })
 
 describe('ConnectMachineDialog', () => {
-  test('shows a new key once, copies it and its command, and says when a new machine links', async () => {
+  test('shows a new key once, copies it and its corch connect command, and says when a new machine connects', async () => {
     const first = enrollment('aaaa', Date.now() + 15 * 60_000)
     const second = enrollment('bbbb', Date.now() + 15 * 60_000)
     const state = fakeServer([first, second])
@@ -85,7 +87,7 @@ describe('ConnectMachineDialog', () => {
     const { user, queryClient, router } = await renderHome()
 
     await user.click(await screen.findByRole('button', { name: 'Connect a machine' }))
-    const command = `bun run host:remote link ${first.key}`
+    const command = `corch connect --email u1@example.com --key ${first.key} --server ${serverUrl}`
     expect(await screen.findByText(command)).toBeInTheDocument()
     expect(screen.getByText(first.key)).toBeInTheDocument()
     expect(screen.getByText('aaaa')).toBeInTheDocument()
@@ -110,7 +112,7 @@ describe('ConnectMachineDialog', () => {
     // Desktop was listed before the key was made, so only Laptop counts as the machine that used it. The dialog
     // reads the list every 2 seconds.
     state.machines = [machine('B', 'Laptop'), ...state.machines]
-    expect(await screen.findByText('Laptop is linked', {}, { timeout: 3_000 })).toBeInTheDocument()
+    expect(await screen.findByText('Laptop is connected', {}, { timeout: 3_000 })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Done' }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.getByText('Laptop')).toBeInTheDocument()
@@ -156,7 +158,7 @@ describe('ConnectMachineDialog', () => {
 
     act(() => jest.advanceTimersByTime(14 * 60_000 + 59_000))
     expect(screen.queryByText(first.key)).not.toBeInTheDocument()
-    expect(screen.queryByText(/host:remote/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/corch connect/)).not.toBeInTheDocument()
     expect(screen.getByText(/expired/)).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Create a new key' }))

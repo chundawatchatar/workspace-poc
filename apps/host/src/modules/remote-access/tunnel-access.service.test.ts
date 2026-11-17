@@ -135,7 +135,7 @@ describe('RemoteAccessService.authorize', () => {
     expect(tunnel.closed.at(-1)?.revoked(asKey)).toBe(true)
   })
 
-  test('revoking a device closes only its channels and refuses it, and unlink forgets every device', async () => {
+  test('revoking a device closes only its channels and refuses it, and disconnect forgets every device', async () => {
     writeLinked({ accountId, relayKeys })
     const { tunnel } = connected()
     const machineId = service.status().machineId ?? ''
@@ -164,7 +164,7 @@ describe('RemoteAccessService.authorize', () => {
     expect(service.listDevices().pending.map((d) => d.id)).toEqual([revoked.id])
     expect(tunnel.closed).toHaveLength(1)
 
-    service.unlink()
+    await service.disconnect()
     expect(service.listDevices()).toEqual({ pending: [], approved: [] })
     expect(existsSync(devicesFile())).toBe(false)
   })
@@ -202,10 +202,10 @@ describe('RemoteAccessService.authorize', () => {
     ended('acct-bob-2')
     expect(tunnel.closed).toHaveLength(1)
     expect(persisted()).toEqual(unchanged)
-    service.unlink()
-    const afterUnlink = tunnel.closed.length
+    await service.disconnect()
+    const afterDisconnect = tunnel.closed.length
     ended(accountId)
-    expect(tunnel.closed).toHaveLength(afterUnlink)
+    expect(tunnel.closed).toHaveLength(afterDisconnect)
   })
 
   test('an older linked file still shows the account but accepts no ticket, nor does another server', () => {

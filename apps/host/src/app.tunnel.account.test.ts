@@ -12,7 +12,6 @@ import {
   sealedRequest,
   sealedSocket,
   send,
-  server,
   stub,
   until,
   useTunnelHarness,
@@ -22,7 +21,7 @@ import { fingerprintOf } from './modules/remote-access/device-proof.service'
 import { testDevice } from './modules/remote-access/device-proof.testing'
 
 // Account access end to end, on the harness in `app.tunnel.testing.ts`: relay
-// tickets with device proofs, approval, revocation and unlink.
+// tickets with device proofs, approval, revocation and disconnect.
 useTunnelHarness()
 
 const MACHINE_KEY = routes.system.machineKey.path
@@ -41,7 +40,6 @@ describe('tunneled account access', () => {
       Buffer.concat(conn.frames.flatMap((f) => (f.type === 'http.body' && f.id === id ? [f.data] : []))).toString()
     const [first, second] = await Promise.all([testDevice(), testDevice()])
     const closes = () => conn.frames.filter((f) => f.type === 'ws.close')
-    await remoteAccess.link({ key: `oek_${'k'.repeat(43)}`, serverUrl: `ws://127.0.0.1:${server.port}` })
 
     // Before approval: a 403 with no `auth.failed`, and the device waits on the machine.
     await bootstrap(conn, first, 1)
@@ -84,14 +82,14 @@ describe('tunneled account access', () => {
       reason: 'device revoked',
     })
 
-    remoteAccess.unlink()
+    // Disconnect asks the server to remove the machine, closes the account's sockets, then stops the tunnel.
+    expect((await remoteAccess.disconnect()).removedFromAccount).toBe(true)
     await until(() => stub.attached.size === 0 && closes().length === 2)
-    expect(closes().at(-1)).toEqual({
-      type: 'ws.close',
-      channel: 3,
-      code: CLOSE_ACCESS_DENIED,
-      reason: 'account unlinked',
-    })
+    expect(closes().at(-1)).toEqual({ type: 'ws.close', channel: 3, code: CLOSE_ACCESS_DENIED, reason: 'disconnected' })
+    expect(conn.frames.filter((f) => f.type === 'unlink')).toEqual([
+      { type: 'unlink', id: expect.any(Number), accountId: ACCOUNT_ID },
+    ])
+    expect(conn.frames.at(-1)).toEqual({ type: 'remote.off' })
   })
 
   test('the sessions list counts the authorized sockets of each approved device by credential, and End closes one device without revoking it', async () => {
@@ -111,7 +109,6 @@ describe('tunneled account access', () => {
       })
     expect(JSON.parse((await sessions()).text)).toEqual({ sessions: [] })
 
-    await remoteAccess.link({ key: `oek_${'k'.repeat(43)}`, serverUrl: `ws://127.0.0.1:${server.port}` })
     for (const [id, device] of [first, second].entries()) await bootstrap(conn, device, id + 1)
     await until(() => response(1) !== undefined && response(2) !== undefined)
     remoteAccess.approveDevice(fingerprintOf(first.id))

@@ -3,7 +3,7 @@ import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import { createRouter } from '../../lib/createRouter'
 import { tunnelPrincipal } from '../../lib/principal'
-import { AmbiguousDevice, InvalidRemoteAccessSetting, LinkError, UnknownDevice } from './remote-access.errors'
+import { AmbiguousDevice, ConnectError, InvalidRemoteAccessSetting, UnknownDevice } from './remote-access.errors'
 import type { RemoteAccessService } from './remote-access.service'
 
 /** What the remote access routes need from the host. */
@@ -11,10 +11,8 @@ export interface RemoteAccessDeps {
   remoteAccess: Pick<
     RemoteAccessService,
     | 'status'
-    | 'update'
-    | 'previewLink'
-    | 'link'
-    | 'unlink'
+    | 'connect'
+    | 'disconnect'
     | 'listDevices'
     | 'approveDevice'
     | 'removeDevice'
@@ -40,19 +38,19 @@ export function createRemoteAccessRoutes({ remoteAccess }: RemoteAccessDeps) {
     '/',
     createRouter(routes.remoteAccess, {
       status: async () => remoteAccess.status(),
-      update: async (input) => {
+      connect: async (input) => {
         try {
-          return remoteAccess.update(input)
+          return await remoteAccess.connect(input)
         } catch (error) {
+          if (error instanceof ConnectError) throw new HTTPException(error.status, { message: error.message })
           if (error instanceof InvalidRemoteAccessSetting) throw new HTTPException(400, { message: error.message })
+          // The service's own errors never hold the key or the email, and nothing else sees them.
           throw new HTTPException(500, {
-            message: `remote access could not start: ${error instanceof Error ? error.message : 'unknown error'}`,
+            message: `connecting failed: ${error instanceof Error ? error.message : 'unknown error'}`,
           })
         }
       },
-      previewLink: (input) => linking(() => remoteAccess.previewLink(input)),
-      link: (input) => linking(() => remoteAccess.link(input)),
-      unlink: async () => remoteAccess.unlink(),
+      disconnect: async () => remoteAccess.disconnect(),
       devices: async () => remoteAccess.listDevices(),
       approveDevice: async ({ fingerprint }) => {
         try {
@@ -69,14 +67,4 @@ export function createRemoteAccessRoutes({ remoteAccess }: RemoteAccessDeps) {
       endSession: async ({ id }) => remoteAccess.endSession(id),
     }),
   )
-}
-
-/** Runs a link step, answering a `LinkError` with its status and message. */
-async function linking<T>(step: () => Promise<T>): Promise<T> {
-  try {
-    return await step()
-  } catch (error) {
-    if (error instanceof LinkError) throw new HTTPException(error.status, { message: error.message })
-    throw error
-  }
 }

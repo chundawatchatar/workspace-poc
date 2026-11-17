@@ -8,10 +8,36 @@ import { machineNameSchema } from './serverMachines'
 // HTTP requests and WebSockets over it as these frames. This file runs in the
 // host, the server and the browser, so it uses only web-standard APIs.
 
-export const TUNNEL_PROTOCOL_VERSION = 4
+export const TUNNEL_PROTOCOL_VERSION = 5
 
 /** The server path machines open their tunnel socket on. Its messages are tunnel frames, not JSON client messages. */
 export const TUNNEL_PATH = '/tunnel'
+
+const LOOPBACK_HOSTS = ['127.0.0.1', '[::1]', 'localhost']
+
+/**
+ * The tunnel URL for a server address, or null when it is not one: `wss:` for
+ * any host, `ws:` only for a loopback host. A base path is kept, and
+ * credentials, a query or a fragment are refused.
+ */
+export function parseServerUrl(value: string): string | null {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    return null
+  }
+  if (url.protocol !== 'wss:' && !(url.protocol === 'ws:' && LOOPBACK_HOSTS.includes(url.hostname))) return null
+  if (!url.hostname || url.username || url.password || url.search || url.hash) return null
+  url.pathname = url.pathname.replace(/\/+$/, '') + TUNNEL_PATH
+  return url.href
+}
+
+/** True when `a` and `b` are the same server address, compared as tunnel URLs. False when either is not one. */
+export function sameServerUrl(a: string, b: string): boolean {
+  const tunnel = parseServerUrl(a.trim())
+  return tunnel !== null && tunnel === parseServerUrl(b.trim())
+}
 
 /** The largest encoded frame, in bytes, that `decodeFrame` accepts. A request body must fit in one frame. */
 export const MAX_TUNNEL_FRAME_BYTES = 1024 * 1024
@@ -139,35 +165,26 @@ export const authFailedFrame = z
   .strictObject({ type: z.literal('auth.failed'), id: id.optional(), channel: id.optional() })
   .refine((frame) => (frame.id === undefined) !== (frame.channel === undefined), 'needs exactly one of id and channel')
 
-// An enrollment key is a short string, but the frames take any one up to this length, so a malformed key gets the
-// same `enroll.failed` answer as an unknown one instead of being dropped unanswered.
+// An enrollment key and an email are short strings, but the frames take any one up to these lengths, so a malformed
+// one gets the same `enroll.failed` answer as an unknown key instead of being dropped unanswered.
 const enrollmentKey = z.string().max(256)
+const enrollmentEmail = z.string().max(320)
 
 /**
- * Asks which account an enrollment key belongs to, without using it. The
- * machine id never travels in a frame: it is the tunnel's own.
+ * Redeems an enrollment key, linking this tunnel's machine to the key's
+ * account under `name`, only when `email` is that account's email. The machine
+ * id never travels in a frame: it is the tunnel's own.
  */
-export const enrollPreviewFrame = z.strictObject({ type: z.literal('enroll.preview'), id, key: enrollmentKey })
-
-/** Redeems an enrollment key, linking this tunnel's machine to the key's account under `name`. */
 export const enrollRedeemFrame = z.strictObject({
   type: z.literal('enroll.redeem'),
   id,
   key: enrollmentKey,
+  email: enrollmentEmail,
   name: machineNameSchema,
 })
 
 /** The account an enrollment key belongs to, with only the first character of the email's local part. */
 const enrollAccount = z.strictObject({ name: z.string(), maskedEmail: z.string() })
-
-/** Answers `enroll.preview` with the same `id`. `expiresAt` is an ISO string. */
-export const enrollPreviewedFrame = z.strictObject({
-  type: z.literal('enroll.previewed'),
-  id,
-  account: enrollAccount,
-  fingerprint: z.string(),
-  expiresAt: z.iso.datetime(),
-})
 
 /**
  * Answers `enroll.redeem` with the same `id`: the machine is now linked to
@@ -184,14 +201,33 @@ export const enrollRedeemedFrame = z.strictObject({
 })
 
 /**
- * Answers either enrollment frame when it fails. `invalid_key` covers an
- * unknown, used, expired and malformed key alike; `rate_limited` and
- * `unavailable` describe the machine or the server, not the key.
+ * Answers `enroll.redeem` when it fails. `invalid_key` covers an unknown,
+ * used, expired and malformed key, and an email that isn't the key owner's,
+ * alike; `rate_limited` and `unavailable` describe the machine or the server,
+ * not the key.
  */
 export const enrollFailedFrame = z.strictObject({
   type: z.literal('enroll.failed'),
   id,
   code: z.enum(['invalid_key', 'rate_limited', 'unavailable']),
+})
+
+/**
+ * Asks the server to remove this tunnel's machine from the list of the
+ * account `accountId`, the one the machine linked. The machine id never
+ * travels in a frame: it is the tunnel's own, so a machine can only ever
+ * remove itself.
+ */
+export const unlinkFrame = z.strictObject({ type: z.literal('unlink'), id, accountId: z.string().min(1).max(256) })
+
+/** Answers `unlink` with the same `id`, whether or not the account listed the machine. */
+export const unlinkedFrame = z.strictObject({ type: z.literal('unlinked'), id })
+
+/** Answers `unlink` when the server could not do it: `rate_limited`, or `unavailable` when accounts are off or it failed. */
+export const unlinkFailedFrame = z.strictObject({
+  type: z.literal('unlink.failed'),
+  id,
+  code: z.enum(['rate_limited', 'unavailable']),
 })
 
 /**
@@ -203,9 +239,9 @@ export const enrollFailedFrame = z.strictObject({
 export const sessionEndedFrame = z.strictObject({ type: z.literal('session.ended'), accountId: z.string().min(1) })
 
 /**
- * Tells the server the owner turned remote access off, just before the machine
- * closes its tunnel, so the account's machine list can say so instead of
- * Offline. It carries nothing else.
+ * Tells the server the owner disconnected the machine, just before it closes
+ * its tunnel, so the account's machine list can say so instead of Offline. It
+ * carries nothing else.
  */
 export const remoteOffFrame = z.strictObject({ type: z.literal('remote.off') })
 
@@ -221,8 +257,8 @@ export const machineFrame = z.discriminatedUnion('type', [
   wsAckFrame,
   pingFrame,
   pongFrame,
-  enrollPreviewFrame,
   enrollRedeemFrame,
+  unlinkFrame,
   remoteOffFrame,
 ])
 
@@ -239,9 +275,10 @@ export const serverFrame = z.discriminatedUnion('type', [
   wsAckFrame,
   pingFrame,
   pongFrame,
-  enrollPreviewedFrame,
   enrollRedeemedFrame,
   enrollFailedFrame,
+  unlinkedFrame,
+  unlinkFailedFrame,
   sessionEndedFrame,
 ])
 

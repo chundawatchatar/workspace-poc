@@ -38,7 +38,6 @@ import { testDevice } from './modules/remote-access/device-proof.testing'
 import { DevicesRepository } from './modules/remote-access/devices.repository'
 import { LinkedAccountRepository } from './modules/remote-access/linked-account.repository'
 import { testRelayKey } from './modules/remote-access/relay-ticket.testing'
-import { RemoteAccessRepository } from './modules/remote-access/remote-access.repository'
 import { RemoteAccessService } from './modules/remote-access/remote-access.service'
 import { startAddresses } from './modules/remote-access/remote-access.testing'
 import { TunnelClient } from './modules/tunnel/tunnel.service'
@@ -54,10 +53,10 @@ import {
 } from './modules/tunnel/tunnel.testing'
 
 // Test-only harness for the host's sockets end to end: a real app, remote
-// access service and tunnel client, wired as `index.ts` wires them and turned
-// on by a saved setting, a fake server on one side, a stub session manager on
-// the other, and the same app served locally to compare against. Each test
-// file calls `useTunnelHarness()` once. Never imported by production code.
+// access service and tunnel client, wired as `index.ts` wires them and
+// connected by a saved account, a fake server on one side, a stub session
+// manager on the other, and the same app served locally to compare against.
+// Each test file calls `useTunnelHarness()` once. Never imported by production code.
 
 /** The machine key the harness's host loads from its `machine-key` file, and the id the fake server derives from it. */
 export const machineKey = createTestMachineKey()
@@ -120,6 +119,7 @@ export let key: string
 export let remoteAccess: RemoteAccessService
 /** The end-to-end sessions the harness's host keeps, as `index.ts` builds them. */
 export let e2eSessions: E2eSessions
+/** The host's `config.json`, which holds the fake server's address. */
 export let settingsFile: string
 /** The remote access audit log the harness's service writes. */
 export const auditFile = () => join(dir, 'remote-audit.jsonl')
@@ -177,6 +177,7 @@ async function setUp() {
           const relayKeys = [relay.relayKey]
           send(conn, { type: 'enroll.redeemed', id: frame.id, machineId, accountId: ACCOUNT_ID, account, relayKeys })
         }
+        if (frame.type === 'unlink') send(conn, { type: 'unlinked', id: frame.id })
         // Like the server, it acks what it has delivered to the browser.
         if (frame.type === 'ws.data') {
           send(conn, { type: 'ws.ack', channel: frame.channel, bytes: wsPayloadBytes(frame.data) })
@@ -187,29 +188,30 @@ async function setUp() {
 
   const machineKeyFile = join(dir, 'machine-key')
   const keysFile = join(dir, 'access-keys.json')
-  settingsFile = join(dir, 'remote-access.json')
+  settingsFile = join(dir, 'config.json')
   writeFileSync(machineKeyFile, machineKey.pem, { mode: 0o600 })
   const approved = [{ id: device.id, publicKey: device.publicKey, approvedAt: new Date().toISOString() }]
   new DevicesRepository(join(dir, 'devices.json')).save(approved)
   key = new AccessKeys(new AccessKeyRepository(keysFile)).create('default')
-  writeFileSync(settingsFile, JSON.stringify({ enabled: true }))
-  const configFile = join(dir, 'config.json')
+  const serverUrl = `ws://127.0.0.1:${server.port}`
+  writeFileSync(settingsFile, JSON.stringify({ relayUrl: serverUrl, clientUrl: 'https://orch.example' }))
+  // Connected to the fake server's account, so the tunnel opens at start.
+  const linkedAt = new Date().toISOString()
+  const account = { name: 'Ada', maskedEmail: 'a***@example.com', serverUrl, linkedAt }
   writeFileSync(
-    configFile,
-    JSON.stringify({ relayUrl: `ws://127.0.0.1:${server.port}`, clientUrl: 'https://orch.example' }),
+    join(dir, 'linked-account.json'),
+    JSON.stringify({ ...account, accountId: ACCOUNT_ID, relayKeys: [relay.relayKey] }),
   )
   e2eSessions = new E2eSessions({ machineKey: () => remoteAccess.signingKey() })
   remoteAccess = new RemoteAccessService({
-    repository: new RemoteAccessRepository(settingsFile),
     linkedAccounts: new LinkedAccountRepository(join(dir, 'linked-account.json')),
     devices: new DevicesRepository(join(dir, 'devices.json')),
     audit: new AuditLogService(new AuditLogRepository(auditFile())),
     e2eSessions,
     machineKeyFile,
     keysFile,
-    settingsFile: configFile,
-    addresses: startAddresses({}, configFile),
-    autoEnable: true,
+    settingsFile,
+    addresses: startAddresses({}, settingsFile),
     handle: async (request, principal) => app.fetch(request, tunnelEnv(principal)),
     openSocket: (path, headers, conn, principal) => sockets.open(path, headers, conn, principal),
     createTunnel: (options) => {

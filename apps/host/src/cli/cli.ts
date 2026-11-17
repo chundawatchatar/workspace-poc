@@ -5,7 +5,7 @@ import { DaemonRepository, daemonRuntimeDir } from '../modules/terminals/daemon.
 import { stopDaemon } from '../modules/terminals/daemon.service'
 import { createHostCaller } from '../remote-cli'
 import { printable } from '../remote-cli-output'
-import { prompt, remoteCommand } from '../remote-command'
+import { remoteCommand } from '../remote-command'
 import { rotateKeyCommand } from '../rotate-key-command'
 import { parseCliArgs, USAGE } from './args'
 import { runConfig } from './config'
@@ -94,7 +94,6 @@ export async function runCli(
         dataDir,
         env,
         callHost: url === null ? null : createHostCaller(url),
-        prompt,
         out: (line) => console.log(line),
         err: (line) => console.error(line),
       })

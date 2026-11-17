@@ -124,7 +124,7 @@ describe('corch', () => {
     const { dataDir, cwd, port, run } = await setup()
     const stopped = await run('remote', 'status')
     expect(stopped.code).toBe(0)
-    expect(stopped.out).toContain('Remote access:')
+    expect(stopped.out).toContain('Connection:     not connected, tunnel host not running')
 
     const started = await run('start')
     expect(started.code).toBe(0)
@@ -153,9 +153,10 @@ describe('corch', () => {
     expect(status.code).toBe(0)
     expect(status.out).toContain(`pid: ${pid}`)
     expect(status.out).toContain('terminal daemon:')
+    expect(status.out).toContain('remote access: not connected')
     const remote = await run('remote', 'status')
     expect(remote.code).toBe(0)
-    expect(remote.out).toContain('Remote access:')
+    expect(remote.out).toContain('Connection:     not connected, tunnel off')
 
     // A new host opens its layout's terminals, which start the daemon.
     const socket = join(daemonRuntimeDir(dataDir, process.getuid?.() ?? 'user'), 'host.sock')
@@ -276,26 +277,60 @@ describe('corch', () => {
     expect((await run('logs', '--all')).out).toBe(lines(0, 250))
   })
 
-  test('config set saves a new relay under a running host and turns remote access off when told to', async () => {
+  test('a connected machine keeps its relay until disconnect, which asks first and names what is left to do', async () => {
     const { dataDir, port, run, typed } = await setup()
-    const relay = (spare: number) => `ws://127.0.0.1:${spare}`
-    // Spare ports nothing listens on, so the tunnel only ever retries locally.
-    const first = relay(await freePort())
-    expect((await run('config', 'set', 'relayUrl', first)).code).toBe(0)
-    expect((await run('remote', 'on')).code).toBe(0)
-    expect((await run('start')).code).toBe(0)
+    // A spare port nothing listens on, so the tunnel only ever retries locally.
+    const relay = `ws://127.0.0.1:${await freePort()}`
+    const key = `oek_${'k'.repeat(43)}`
+    expect((await run('config', 'set', 'relayUrl', relay)).code).toBe(0)
+    const account = {
+      name: 'Ada',
+      maskedEmail: 'a***@example.com',
+      serverUrl: relay,
+      linkedAt: new Date().toISOString(),
+    }
+    writeFileSync(join(dataDir, 'linked-account.json'), JSON.stringify({ ...account, accountId: 'u1' }))
+    const connectedTo = `connected to Ada (a***@example.com) through ${relay}`
+    expect((await run('status')).out).toContain(`remote access: ${connectedTo} (host not running)`)
+    for (const args of [
+      ['config', 'set', 'relayUrl', 'wss://other.example.com'],
+      ['config', 'unset', 'relayUrl'],
+    ]) {
+      const refused = await run(...args)
+      expect([refused.code, refused.err.trim()]).toEqual([
+        1,
+        'This machine is connected to an account through its server address. Run corch disconnect first.',
+      ])
+    }
+    // Checked before any host is called, and never echoed.
+    const bad = await run('connect', '--email', 'not-an-email', '--key', key)
+    expect([bad.code, bad.err.trim()]).toEqual([1, 'That is not an email address'])
+    for (const old of [
+      ['remote', 'link', key],
+      ['remote', 'on'],
+    ]) {
+      expect((await run(...old)).err).toContain('connect --email <email> --key <key>')
+    }
 
-    const next = relay(await freePort())
-    const changed = await typed('y\n', 'config', 'set', 'relayUrl', next)
-    expect(changed.code).toBe(0)
-    expect(changed.out).toContain('The running host uses the change after corch restart.')
-    expect(changed.out).toContain(`The open tunnel stays connected to ${first} until corch restart.`)
-    expect(changed.out).toContain('Turn remote access off now? [y/N]')
-    expect(changed.out).toContain('Remote access:  off, tunnel off')
-    expect(JSON.parse(readFileSync(join(dataDir, 'config.json'), 'utf8'))).toEqual({ port, relayUrl: next })
-    expect((await run('remote', 'status')).out).toContain('Remote access:  off')
-    const listed = await run('config', 'list')
-    expect(listed.out).toContain(`relayUrl   ${next}  (file)`)
+    expect((await run('start')).code).toBe(0)
+    expect((await run('status')).out).toContain(`remote access: ${connectedTo}`)
+    expect((await run('config', 'set', 'relayUrl', 'wss://other.example.com')).code).toBe(1)
+    const kept = await typed('n\n', 'disconnect')
+    expect(kept.code).toBe(1)
+    expect(kept.out).toContain('Disconnect this machine from Ada (a***@example.com)? [y/N]')
+    expect((await run('remote', 'status')).out).toContain('Connection:     connected')
+
+    // The tunnel never connected, so the server could not remove the machine from the account's list.
+    const disconnected = await run('disconnect', '--yes')
+    expect(disconnected.code).toBe(0)
+    expect(disconnected.out).toContain('Remove it in the client')
+    expect(existsSync(join(dataDir, 'linked-account.json'))).toBe(false)
+    expect((await run('status')).out).toContain('remote access: not connected')
+    expect((await run('config', 'set', 'relayUrl', 'wss://other.example.com')).code).toBe(0)
+    expect(JSON.parse(readFileSync(join(dataDir, 'config.json'), 'utf8'))).toEqual({
+      port,
+      relayUrl: 'wss://other.example.com',
+    })
   }, 60_000)
 })
 

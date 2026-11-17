@@ -12,6 +12,7 @@ import {
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { REMOVE_IN_CLIENT } from '../lib/remoteAccess'
 import { connect } from '../lib/store'
 import type { HostTransport } from '../transport'
 import { RemoteAccessSetting } from './RemoteAccessSetting'
@@ -20,10 +21,10 @@ let disconnect = () => {}
 afterEach(() => disconnect())
 
 const key = `oek_${'k'.repeat(43)}`
-const account = { name: 'Ada Lovelace', maskedEmail: 'a***@example.com' }
-
+const email = 'ada.lovelace@example.com'
 const linkedAccount: LinkedAccount = {
-  ...account,
+  name: 'Ada Lovelace',
+  maskedEmail: 'a***@example.com',
   serverUrl: 'wss://relay.example.com',
   linkedAt: '2026-11-04T12:00:00.000Z',
 }
@@ -35,11 +36,15 @@ const notWaiting = (typed: string) =>
   `No browser with the fingerprint ${typed} is waiting. Open this machine in your own browser and type the fingerprint it shows.`
 
 /**
- * Renders the dialog against a fake host that answers the link and device endpoints and records what it was sent.
+ * Renders the dialog against a fake host that answers the connect and device endpoints and records what it was sent.
  * `linked` starts it linked, with two browsers waiting and one approved. `auditLog` is what its audit log
  * holds at first, and `audit.entries` later; null makes that request fail.
  */
-function setup({ linked = false, auditLog = [] as AuditLogEntry[] | null, address = {} } = {}) {
+function setup({
+  linked = false,
+  auditLog = [] as AuditLogEntry[] | null,
+  address = {} as Partial<RemoteAccessStatus>,
+} = {}) {
   const seenAt = '2026-11-04T12:05:00.000Z'
   let devices: DevicesResponse = {
     pending: [
@@ -49,21 +54,20 @@ function setup({ linked = false, auditLog = [] as AuditLogEntry[] | null, addres
     approved: [{ ...deviceC, approvedAt: seenAt }],
   }
   let status: RemoteAccessStatus = {
-    enabled: true,
     serverUrl: 'wss://relay.example.com',
     serverUrlIsDefault: false,
+    defaultServerUrl: 'wss://orch.example.com',
     clientUrl: null,
     serverUrlSetBy: null,
     clientUrlSetBy: null,
-    savedServerUrl: 'wss://relay.example.com',
-    savedClientUrl: null,
-    restartNeeded: false,
     machineId: 'm-1',
     machineFingerprint: 'ABCD-EFGH-JKMN-PQRS',
-    tunnel: 'connected',
+    tunnel: linked ? 'connected' : 'off',
     linkedAccount: linked ? linkedAccount : null,
     ...address,
   }
+  // Whether the fake server removes the machine on disconnect.
+  const server = { removes: true }
   // The fake host's open sessions; a test sets them to stand for browsers connecting.
   const live = { sessions: [] as RemoteSession[] }
   const audit = { entries: auditLog }
@@ -81,20 +85,16 @@ function setup({ linked = false, auditLog = [] as AuditLogEntry[] | null, addres
       if (read) return read()
       const body: unknown = JSON.parse(String(init.body))
       sent.push([path, body])
-      if (path === routes.remoteAccess.previewLink.path) {
-        if ((body as { key: string }).key !== key)
-          return new Response('This key is unknown, used or expired', { status: 400 })
-        return Response.json({
-          serverUrl: status.serverUrl,
-          serverUrlIsDefault: false,
-          account,
-          fingerprint: 'kkkk',
-          expiresAt: '2026-11-04T12:15:00.000Z',
-        })
-      }
-      if (path === routes.remoteAccess.link.path) {
-        status = { ...status, linkedAccount }
+      if (path === routes.remoteAccess.connect.path) {
+        const sent = body as { key: string; serverUrl: string }
+        if (sent.key !== key) return new Response('This key is unknown, used or expired', { status: 400 })
+        status = { ...status, serverUrl: sent.serverUrl, tunnel: 'connected', linkedAccount }
         return Response.json(status)
+      }
+      if (path === routes.remoteAccess.disconnect.path) {
+        status = { ...status, tunnel: 'off', linkedAccount: null }
+        devices = { pending: [], approved: [] }
+        return Response.json({ status, removedFromAccount: server.removes })
       }
       if (path === routes.remoteAccess.approveDevice.path) {
         const { fingerprint } = body as { fingerprint: string }
@@ -120,17 +120,6 @@ function setup({ linked = false, auditLog = [] as AuditLogEntry[] | null, addres
         live.sessions = live.sessions.filter((session) => session.deviceId !== id)
         return Response.json(live)
       }
-      if (path === routes.remoteAccess.update.path) {
-        // Like the host: the address is saved for the next start, and the one in use stays.
-        const { enabled, serverUrl } = body as { enabled: boolean; serverUrl: string }
-        const saved = serverUrl || null
-        status = { ...status, enabled, savedServerUrl: saved, restartNeeded: (saved ?? '') !== status.serverUrl }
-        return Response.json(status)
-      }
-      if (path === routes.remoteAccess.unlink.path) {
-        status = { ...status, linkedAccount: null }
-        return Response.json(status)
-      }
       throw new Error(`Unexpected request: ${path}`)
     },
     openSocket: () => ({ close: () => {} }) as unknown as WebSocket,
@@ -142,64 +131,68 @@ function setup({ linked = false, auditLog = [] as AuditLogEntry[] | null, addres
       <RemoteAccessSetting />
     </QueryClientProvider>,
   )
-  return { sent, queryClient, live, audit }
+  return { sent, queryClient, live, audit, server }
 }
 
 describe('RemoteAccessSetting', () => {
-  test('shows the saved server address, saves an edit for the next start, and says so', async () => {
-    const user = userEvent.setup()
-    const { sent } = setup({ address: { savedServerUrl: 'wss://saved.example.com', restartNeeded: true } })
-    const field = await screen.findByRole('textbox', { name: 'Server address' })
-    await waitFor(() => expect(field).toHaveValue('wss://saved.example.com'))
-    expect(field).not.toHaveAttribute('readonly')
-    expect(screen.getByText('Saved. The host uses the new address from its next start.')).toBeInTheDocument()
-
-    await user.clear(field)
-    await user.type(field, 'wss://relay.example.com')
-    await user.click(screen.getByRole('button', { name: 'Save' }))
-    await waitFor(() =>
-      expect(screen.queryByText('Saved. The host uses the new address from its next start.')).not.toBeInTheDocument(),
-    )
-    expect(field).toHaveValue('wss://relay.example.com')
-    expect(sent).toEqual([
-      [routes.remoteAccess.update.path, { enabled: true, serverUrl: 'wss://relay.example.com', clientUrl: null }],
-    ])
-  })
-
-  test('previews a key, sends link only on Link, keeps the key out of the caches, and unlinks', async () => {
+  test('connects with the address in use after a confirm step, keeps a refused attempt, and caches neither key nor email', async () => {
     const user = userEvent.setup()
     const { sent, queryClient } = setup()
-    const field = await screen.findByRole('textbox', { name: 'Link key' })
-
-    await user.type(field, 'oek_wrong')
-    await user.click(screen.getByRole('button', { name: 'Preview' }))
+    expect(await screen.findByText('Not connected')).toBeInTheDocument()
+    const server = screen.getByRole('textbox', { name: 'Server address' })
+    await waitFor(() => expect(server).toHaveValue('wss://relay.example.com'))
+    await user.type(screen.getByRole('textbox', { name: 'Email' }), email)
+    await user.type(screen.getByRole('textbox', { name: 'Key' }), 'oek_wrong')
+    const connect = () => user.click(screen.getByRole('button', { name: 'Connect' }))
+    const confirm = async () => {
+      const check = await screen.findByRole('region', { name: 'Check before connecting' })
+      await user.click(within(check).getByRole('button', { name: 'Connect' }))
+    }
+    await connect()
+    await confirm()
     expect(await screen.findByText('This key is unknown, used or expired')).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Email' })).toHaveValue(email)
 
-    await user.clear(field)
-    await user.type(field, key)
-    await user.click(screen.getByRole('button', { name: 'Preview' }))
-    expect(await screen.findByRole('region', { name: 'Check before linking' })).toHaveTextContent('Ada Lovelace')
-    await user.click(screen.getByRole('button', { name: 'Cancel' }))
-    expect(screen.getByRole('textbox', { name: 'Link key' })).toHaveValue('')
-
-    await user.type(screen.getByRole('textbox', { name: 'Link key' }), key)
-    await user.click(screen.getByRole('button', { name: 'Preview' }))
-    await user.click(await screen.findByRole('button', { name: 'Link' }))
-    expect(await screen.findByRole('region', { name: 'Linked account' })).toHaveTextContent('Linked to Ada Lovelace')
-    expect(sent.map(([path]) => path)).toEqual([
-      routes.remoteAccess.previewLink.path,
-      routes.remoteAccess.previewLink.path,
-      routes.remoteAccess.previewLink.path,
-      routes.remoteAccess.link.path,
+    const keyField = screen.getByRole('textbox', { name: 'Key' })
+    await user.clear(keyField)
+    await user.type(keyField, key)
+    await connect()
+    await confirm()
+    expect(await screen.findByRole('region', { name: 'Connected account' })).toHaveTextContent('Ada Lovelace')
+    expect(screen.getByText('Connected')).toBeInTheDocument()
+    expect(screen.queryByText('This key is unknown, used or expired')).not.toBeInTheDocument()
+    expect(sent).toEqual([
+      [routes.remoteAccess.connect.path, { email, key: 'oek_wrong', serverUrl: 'wss://relay.example.com' }],
+      [routes.remoteAccess.connect.path, { email, key, serverUrl: 'wss://relay.example.com' }],
     ])
-    expect(sent[3]?.[1]).toEqual({ key, serverUrl: 'wss://relay.example.com' })
     const cached = [...queryClient.getQueryCache().getAll(), ...queryClient.getMutationCache().getAll()]
-    expect(JSON.stringify(cached.map((entry) => [entry.options, entry.state]))).not.toContain(key)
+    const held = JSON.stringify(cached.map((entry) => [entry.options, entry.state]))
+    for (const secret of [key, 'oek_wrong', email]) expect(held).not.toContain(secret)
 
-    await user.click(screen.getByRole('button', { name: 'Unlink' }))
-    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Link key' })).toHaveValue(''))
-    expect(sent.at(-1)).toEqual([routes.remoteAccess.unlink.path, {}])
+    // Once connected, the key and the email are gone: after a disconnect the fields start empty again.
+    const panel = screen.getByRole('region', { name: 'Connected account' })
+    await user.click(within(panel).getByRole('button', { name: 'Disconnect' }))
+    await user.click(within(panel).getByRole('button', { name: 'Disconnect' }))
+    expect(await screen.findByRole('textbox', { name: 'Email' })).toHaveValue('')
+    expect(screen.getByRole('textbox', { name: 'Key' })).toHaveValue('')
+    expect(screen.getByRole('textbox', { name: 'Server address' })).toHaveValue('wss://relay.example.com')
   })
+
+  test("Disconnect asks first, and says to remove the machine in the client when the server didn't", async () => {
+    const user = userEvent.setup()
+    const { sent, server } = setup({ linked: true })
+    server.removes = false
+    const panel = await screen.findByRole('region', { name: 'Connected account' })
+    await user.click(within(panel).getByRole('button', { name: 'Disconnect' }))
+    expect(sent).toEqual([])
+    await user.click(within(panel).getByRole('button', { name: 'Disconnect' }))
+    expect(await screen.findByText(REMOVE_IN_CLIENT)).toBeInTheDocument()
+    expect(screen.getByText('Not connected')).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Devices' })).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Email' })).toHaveValue('')
+    expect(sent).toEqual([[routes.remoteAccess.disconnect.path, {}]])
+  })
+
   test('lists waiting and approved browsers by fingerprint, approves only a typed one, and Dismiss and Revoke update the list', async () => {
     const user = userEvent.setup()
     const { sent } = setup({ linked: true })

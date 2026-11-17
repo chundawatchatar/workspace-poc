@@ -33,7 +33,7 @@ export interface TunnelSocketDeps extends LimitsDeps {
   pingIntervalMs?: number
   /** How long a machine may stay silent before it is dropped. Defaults to 45 s. */
   heartbeatTimeoutMs?: number
-  /** Receives the `http.*`, `ws.*`, `auth.failed` and `enroll.*` frames of a welcomed machine. */
+  /** Receives the `http.*`, `ws.*`, `auth.failed`, `enroll.redeem` and `unlink` frames of a welcomed machine. */
   onFrame?(conn: MachineConnection, frame: MachineFrame): void
   /** Called once when a welcomed machine's tunnel closes, is dropped or is replaced. */
   onClose?(conn: MachineConnection): void

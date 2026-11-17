@@ -19,7 +19,9 @@ export function MachineList() {
         <AccountMenu className="min-w-0" />
       </div>
       {user ? <AccountMachines userId={user.id} /> : <Loading />}
-      {user && connecting && <ConnectMachineDialog userId={user.id} onClose={() => setConnecting(false)} />}
+      {user && connecting && (
+        <ConnectMachineDialog userId={user.id} email={user.email} onClose={() => setConnecting(false)} />
+      )}
     </div>
   )
 }

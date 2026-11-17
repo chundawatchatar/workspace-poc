@@ -21,10 +21,6 @@ import {
   LinkedAccountRepository,
   linkedAccountPath,
 } from '../apps/host/src/modules/remote-access/linked-account.repository'
-import {
-  RemoteAccessRepository,
-  remoteAccessPath,
-} from '../apps/host/src/modules/remote-access/remote-access.repository'
 import { RemoteAccessService } from '../apps/host/src/modules/remote-access/remote-access.service'
 import {
   migrateRemoteAccessAddresses,
@@ -136,7 +132,6 @@ const settings = loadSettings({
   defaults: SETTINGS_DEFAULTS,
 })
 const remoteAccess = new RemoteAccessService({
-  repository: new RemoteAccessRepository(remoteAccessPath(dataDir)),
   linkedAccounts: new LinkedAccountRepository(linkedAccountPath(dataDir)),
   devices: new DevicesRepository(devicesPath(dataDir)),
   audit: new AuditLogService(new AuditLogRepository(auditLogPath(dataDir))),
@@ -145,7 +140,6 @@ const remoteAccess = new RemoteAccessService({
   keysFile: accessKeysPath(dataDir),
   settingsFile: settingsPath(dataDir),
   addresses: settings,
-  autoEnable: false,
   handle: async () => new Response(null, { status: 404 }),
   openSocket: () => {
     throw new Error('this check opens no tunnel')

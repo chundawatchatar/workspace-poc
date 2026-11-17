@@ -3,14 +3,14 @@ import { hostname } from 'node:os'
 import {
   type AuditLogResponse,
   CLOSE_SESSION_ENDED,
+  type ConnectBody,
   type DevicesResponse,
-  type LinkBody,
+  type DisconnectResponse,
   machineFingerprint,
-  type PreviewLinkBody,
-  type PreviewLinkResponse,
+  parseServerUrl,
   type RemoteAccessStatus,
   type SessionsResponse,
-  type UpdateRemoteAccessBody,
+  sameServerUrl,
 } from '@orch/shared'
 import type { Principal } from '../../lib/principal'
 import { AccessKeyRepository } from '../access/access.repository'
@@ -21,24 +21,28 @@ import { loadOrCreateMachineKey, type MachineKey } from '../tunnel/tunnel.reposi
 import { type EnrollAnswer, type EnrollRequest, TunnelClient, type TunnelClientOptions } from '../tunnel/tunnel.service'
 import type { OpenSocket } from '../tunnel/tunnel-channels.service'
 import type { Authorization, Credentials, Refusal, TunnelHandler } from '../tunnel/tunnel-http.service'
-import { linkClientUrl, RemoteAccessAddresses, type RemoteAddresses } from './addresses.service'
+import { linkClientUrl, RemoteAccessAddresses, type RemoteAddresses, SERVER_URL_RULE } from './addresses.service'
 import type { AuditLogService } from './audit-log.service'
 import type { DevicesRepository } from './devices.repository'
 import { DevicesService } from './devices.service'
 import type { LinkedAccountRepository, SavedLinkedAccount } from './linked-account.repository'
-import { AmbiguousDevice, InvalidRemoteAccessSetting, LinkError, UnknownDevice } from './remote-access.errors'
-import type { RemoteAccessRepository, RemoteAccessSettings } from './remote-access.repository'
+import { AmbiguousDevice, ConnectError, InvalidRemoteAccessSetting, UnknownDevice } from './remote-access.errors'
 import { groupSessions } from './sessions.service'
 import { TunnelAccess } from './tunnel-access.service'
 
 export { DEFAULT_SERVER_URL }
 
 /** The parts of a `TunnelClient` the service drives. */
-export type Tunnel = Pick<TunnelClient, 'start' | 'stop' | 'closeChannels' | 'listChannels' | 'status' | 'enroll'>
+export type Tunnel = Pick<
+  TunnelClient,
+  'start' | 'stop' | 'closeChannels' | 'listChannels' | 'status' | 'enroll' | 'unlink' | 'whenConnected'
+>
+
+/** How long Connect waits for a new tunnel to connect before it gives up. */
+export const CONNECT_TIMEOUT_MS = 15_000
 
 export interface RemoteAccessServiceOptions {
-  repository: RemoteAccessRepository
-  /** Where the linked account is kept. */
+  /** Where the account this machine is connected to is kept. */
   linkedAccounts: LinkedAccountRepository
   /** Where the browsers approved for the linked account are kept. */
   devices: DevicesRepository
@@ -50,18 +54,14 @@ export interface RemoteAccessServiceOptions {
   machineKeyFile: string
   /** The access keys file. */
   keysFile: string
-  /** The settings file, where a changed address is saved for the next start. */
+  /** The settings file, where Connect saves the server address it uses. */
   settingsFile: string
-  /** The addresses in use until the host restarts. */
+  /** The addresses the host starts with. */
   addresses: RemoteAddresses
-  /**
-   * True when a relay address set by the environment turns the tunnel on at
-   * start, whatever the saved flag says: the dev host's `SERVER_URL`. A packaged
-   * host passes false.
-   */
-  autoEnable: boolean
   /** The server address used when none is set. Defaults to `DEFAULT_SERVER_URL`. */
   defaultServerUrl?: string
+  /** How long Connect waits for the tunnel to connect. Defaults to `CONNECT_TIMEOUT_MS`. */
+  connectTimeoutMs?: number
   /** Answers each tunneled request. Read only once a tunnel is open, so it may close over the app built later. */
   handle: TunnelHandler
   /** Opens each tunneled WebSocket. Read only once a tunnel is open, like `handle`. */
@@ -77,32 +77,32 @@ export function hostMachineName(name = hostname()): string {
 
 /** The status and message each `enroll.failed` code answers with. */
 const ENROLL_FAILURES = {
-  invalid_key: [400, 'This key is unknown, used or expired'],
+  invalid_key: [400, "This key is unknown, used or expired, or the email doesn't match the account that created it"],
   rate_limited: [429, 'Too many tries. Wait a minute, then try again'],
   unavailable: [503, 'The server could not check the key. Try again later'],
 } as const
 
 /**
- * Owns remote access while the host runs: the saved setting, the machine
- * key, the access keys, the tunnel, the linked account and its devices. The
- * addresses are the ones loaded at start: a changed one is saved to the
- * settings file for the next start, and only the on/off flag applies at once.
- * With `autoEnable`, a relay address from the environment turns the tunnel on
- * at start whatever the saved flag says. Nothing is read from disk until `start()`.
+ * Owns remote access while the host runs: the machine key, the access keys,
+ * the tunnel, the account this machine is connected to and its devices. The
+ * tunnel runs exactly while the machine is connected: it opens at start when
+ * `linked-account.json` holds an account, and Connect and Disconnect open and
+ * stop it. Nothing is read from disk until `start()`.
  */
 export class RemoteAccessService {
-  private saved: RemoteAccessSettings | null = null
-  /** The addresses in use, and the ones saved for the next start. */
+  /** The addresses in use. Connect changes the server address. */
   private readonly addresses: RemoteAccessAddresses
   private linked: SavedLinkedAccount | null = null
   private machineKey: MachineKey | null = null
   private keys: AccessKeys | null = null
   private tunnel: Tunnel | null = null
-  /** The tunnel URL `tunnel` dials, so an update to the same address keeps it. */
-  private tunnelUrl: string | null = null
   /** The browsers approved on this machine, and those waiting. */
   private readonly devices: DevicesService
   private readonly access: TunnelAccess
+  /** True while a Connect is on its way, so a second one is refused. */
+  private connecting = false
+  /** The Disconnect on its way, which a second call shares. */
+  private disconnecting: Promise<DisconnectResponse> | null = null
 
   constructor(private readonly options: RemoteAccessServiceOptions) {
     this.addresses = new RemoteAccessAddresses(options.addresses, options.settingsFile, options.defaultServerUrl)
@@ -117,49 +117,46 @@ export class RemoteAccessService {
   }
 
   /**
-   * Reads the saved setting and opens the tunnel when the setting is on, or
-   * when `autoEnable` is on and the environment sets the relay address. Any
-   * problem is logged and leaves the host local only; a setting file that is
-   * not valid is left as it is.
+   * Reads the linked account and opens the tunnel when there is one, since a
+   * machine with an account counts as connected. Any problem is logged and
+   * leaves the host local only; a linked account file that is not valid is
+   * left as it is.
    */
   start() {
     try {
-      const saved = this.options.repository.load()
-      this.saved = saved && { enabled: saved.enabled }
-    } catch (error) {
-      console.error(`remote access is off: ${error instanceof Error ? error.message : 'its setting could not be read'}`)
-    }
-    this.addresses.load()
-    try {
       this.linked = this.options.linkedAccounts.load()
     } catch (error) {
-      console.error(`no linked account: ${error instanceof Error ? error.message : 'it could not be read'}`)
+      console.error(`not connected: ${error instanceof Error ? error.message : 'the linked account could not be read'}`)
     }
     this.devices.start()
+    if (!this.linked) return
     const { relayUrl } = this.addresses.inUse
-    if (!(this.autoEnabled() || this.saved?.enabled)) return
     if (!this.serverTunnelUrl()) {
       console.error(
         `${relayUrl.setBy ?? 'The server address'} must be wss://<host>, or ws:// on 127.0.0.1, [::1] or localhost. Running without a tunnel`,
       )
       return
     }
+    if (this.linked.serverUrl !== this.serverUrl()) {
+      console.warn(
+        `warning: this machine is connected through ${this.linked.serverUrl}, but the server address in use is ${relayUrl.value}, so its account can't open it. Disconnect, then connect again`,
+      )
+    }
     const keys = this.loadKeys()
     if (keys && keys.size > 0) {
       console.log('remote access is on. Lost the connect link? Run `bun run host:rotate-key` for a new one')
     }
     try {
-      this.connect()
+      this.openTunnel()
     } catch (error) {
       console.error(`no tunnel: ${error instanceof Error ? error.message : 'remote access could not start'}`)
     }
   }
 
-  /** The setting in use and where the tunnel stands. It never holds the machine's private key, an access key or a hash. */
+  /** The addresses in use and where the tunnel stands. It never holds the machine's private key, an access key or a hash. */
   status(): RemoteAccessStatus {
     const machineId = this.machineId()
     return {
-      enabled: this.tunnel !== null,
       ...this.addresses.status(),
       machineId,
       machineFingerprint: machineId === null ? null : machineFingerprint(machineId),
@@ -174,83 +171,99 @@ export class RemoteAccessService {
   }
 
   /**
-   * Saves the addresses to the settings file for the next start, and the flag,
-   * then opens or closes the tunnel to match; an open tunnel keeps the address
-   * it has. An address set by a flag or the environment keeps the saved one as
-   * it was. Throws `InvalidRemoteAccessSetting` for an address the host
-   * refuses, before anything is saved or the tunnel changes.
+   * Connects this machine to the account of `email` with the enrollment key
+   * `key`, through `serverUrl`: it makes the address the one in use and saves
+   * it (unless a flag or variable sets it), clears the approved and waiting
+   * devices, opens the tunnel there at once and waits for it, redeems the key
+   * with the email, and saves the account once the server confirms it linked
+   * this machine's own id. Throws `ConnectError` or `InvalidRemoteAccessSetting`;
+   * on any failure nothing is linked and the tunnel is stopped. No message
+   * holds the key or the email.
    */
-  update(input: UpdateRemoteAccessBody): RemoteAccessStatus {
-    this.addresses.save(input)
-    this.options.repository.save({ enabled: input.enabled })
-    this.saved = { enabled: input.enabled }
-    if (input.enabled) this.connect()
-    else this.disconnect({ remoteOff: true })
-    return this.status()
-  }
-
-  /**
-   * Asks the server which account `key` belongs to, over the open tunnel,
-   * without using the key or saving anything. Throws `LinkError`.
-   */
-  async previewLink({ key }: PreviewLinkBody): Promise<PreviewLinkResponse> {
-    const tunnel = this.linkTunnel()
-    const answer = await this.enroll(tunnel, { type: 'enroll.preview', key })
-    if (answer.type !== 'enroll.previewed')
-      throw new LinkError(502, 'The server sent an answer the host does not expect')
-    return {
-      serverUrl: this.serverUrl(),
-      serverUrlIsDefault: this.addresses.isDefault(),
-      account: answer.account,
-      fingerprint: answer.fingerprint,
-      expiresAt: answer.expiresAt,
+  async connect({ email, key, serverUrl }: ConnectBody): Promise<RemoteAccessStatus> {
+    if (this.linked) throw new ConnectError(409, 'This machine is already connected. Disconnect it first')
+    if (this.connecting) throw new ConnectError(409, 'This machine is already connecting')
+    const address = serverUrl.trim()
+    if (!parseServerUrl(address)) throw new ConnectError(400, SERVER_URL_RULE)
+    const { relayUrl } = this.addresses.inUse
+    if (relayUrl.setBy && !sameServerUrl(address, relayUrl.value)) {
+      throw new ConnectError(
+        409,
+        `${relayUrl.setBy} sets the server address. Connect to ${relayUrl.value}, or change it`,
+      )
+    }
+    this.connecting = true
+    try {
+      this.addresses.use(address)
+      // Approvals belong to an account, so none left from an earlier one carries over or uses the new tunnel.
+      this.devices.clear()
+      const tunnel = this.openTunnel()
+      try {
+        await tunnel.whenConnected(this.options.connectTimeoutMs ?? CONNECT_TIMEOUT_MS)
+      } catch {
+        throw new ConnectError(503, 'Could not connect to the server. Check the address and try again')
+      }
+      const answer = await this.redeem(tunnel, { type: 'enroll.redeem', key, email, name: hostMachineName() })
+      if (answer.machineId !== this.machineId()) {
+        throw new ConnectError(502, 'The server linked another machine id than this host has. Nothing was saved')
+      }
+      if (this.tunnel !== tunnel) throw new ConnectError(503, 'The host stopped the tunnel while connecting')
+      const account = {
+        ...answer.account,
+        serverUrl: this.serverUrl(),
+        linkedAt: new Date().toISOString(),
+        accountId: answer.accountId,
+        relayKeys: answer.relayKeys,
+      }
+      this.options.linkedAccounts.save(account)
+      this.linked = account
+      return this.status()
+    } catch (error) {
+      // Not connected, so no tunnel may stay open.
+      if (!this.linked) this.stopTunnel()
+      throw error
+    } finally {
+      this.connecting = false
     }
   }
 
   /**
-   * Redeems `key` over the open tunnel and remembers the account, once the
-   * server confirms it linked this machine's own id. `serverUrl` must be the
-   * address in use, so a key is only ever used with the server the user
-   * confirmed. Throws `LinkError` before anything is saved.
+   * Disconnects this machine from its account. While the tunnel is connected
+   * and the account's id is known, it first asks the server to remove the
+   * machine from the account's list. Then, whatever the server answered, it
+   * forgets the account and its approved and waiting devices, closes the
+   * sockets the account opened, and stops the tunnel with `remote.off`.
+   * `removedFromAccount` says whether the server removed it. A machine that
+   * is not connected changes nothing.
    */
-  async link({ key, serverUrl }: LinkBody): Promise<RemoteAccessStatus> {
-    if (this.linked) throw new LinkError(409, 'Unlink first')
-    const inUse = this.serverUrl()
-    if (serverUrl !== inUse) throw new LinkError(409, 'The server address changed. Preview the key again')
-    const tunnel = this.linkTunnel()
-    const answer = await this.enroll(tunnel, { type: 'enroll.redeem', key, name: hostMachineName() })
-    if (answer.type !== 'enroll.redeemed')
-      throw new LinkError(502, 'The server sent an answer the host does not expect')
-    if (answer.machineId !== this.machineId()) {
-      throw new LinkError(502, 'The server linked another machine id than this host has. Nothing was saved')
-    }
-    // Linked while this call waited: keep the first account rather than overwrite it.
-    if (this.linked) throw new LinkError(409, 'Unlink first')
-    // Approvals belong to an account, so none left from an earlier one carries over.
-    this.devices.clear()
-    const account = {
-      ...answer.account,
-      serverUrl: inUse,
-      linkedAt: new Date().toISOString(),
-      accountId: answer.accountId,
-      relayKeys: answer.relayKeys,
-    }
-    this.options.linkedAccounts.save(account)
-    this.linked = account
-    return this.status()
+  disconnect(): Promise<DisconnectResponse> {
+    this.disconnecting ??= this.disconnectNow().finally(() => {
+      this.disconnecting = null
+    })
+    return this.disconnecting
   }
 
-  /**
-   * Forgets the linked account on this machine, with its approved and waiting
-   * devices, and closes the sockets it opened. The server still lists the
-   * machine until it is unlinked there.
-   */
-  unlink(): RemoteAccessStatus {
+  private async disconnectNow(): Promise<DisconnectResponse> {
+    const linked = this.linked
+    if (!linked) return { status: this.status(), removedFromAccount: false }
+    const removedFromAccount = await this.removeFromAccount(linked)
     this.options.linkedAccounts.remove()
     this.linked = null
     this.devices.clear()
-    this.closeAccess((principal) => principal.kind === 'account', 'account unlinked')
-    return this.status()
+    this.closeAccess((principal) => principal.kind === 'account', 'disconnected')
+    this.stopTunnel({ remoteOff: true })
+    return { status: this.status(), removedFromAccount }
+  }
+
+  /** Asks the server over a connected tunnel to remove this machine from `linked`'s list. True once it has. */
+  private async removeFromAccount(linked: SavedLinkedAccount): Promise<boolean> {
+    const tunnel = this.tunnel
+    if (!linked.accountId || tunnel?.status !== 'connected') return false
+    try {
+      return (await tunnel.unlink(linked.accountId)).type === 'unlinked'
+    } catch {
+      return false
+    }
   }
 
   /** The browsers approved to open this machine through the linked account, and those waiting. */
@@ -349,25 +362,19 @@ export class RemoteAccessService {
 
   /** Closes the tunnel and writes pending key use, for shutdown. */
   shutdown() {
-    this.disconnect()
+    this.stopTunnel()
     this.keys?.flush()
   }
 
-  /** True when the environment sets the relay address and `autoEnable` lets it turn the tunnel on. */
-  private autoEnabled(): boolean {
-    return this.options.autoEnable && this.addresses.inUse.relayUrl.source === 'env'
-  }
-
-  /** Opens the tunnel to the server address in use, unless one to it is already open. Throws when it cannot. */
-  private connect() {
+  /** Opens a new tunnel to the server address in use, stopping any open one. Throws when it cannot. */
+  private openTunnel(): Tunnel {
     const url = this.serverTunnelUrl()
     if (!url) throw new InvalidRemoteAccessSetting('No valid server address is known')
-    if (this.tunnel && this.tunnelUrl === url && this.tunnel.status !== 'stopped') return
     const keys = this.loadKeys()
     const machineKey = this.machineKey
     if (!keys || !machineKey) throw new Error('the machine key or the access keys could not be read')
     this.ensureKey(keys, machineKey.machineId)
-    this.disconnect()
+    this.stopTunnel()
     const create = this.options.createTunnel ?? ((options) => new TunnelClient(options))
     const tunnel = create({
       url,
@@ -381,24 +388,23 @@ export class RemoteAccessService {
       record: (event) => this.options.audit.record(event),
     })
     this.tunnel = tunnel
-    this.tunnelUrl = url
     tunnel.start()
+    return tunnel
   }
 
   /**
    * Stops the tunnel, which ends its channels, and closes every end-to-end session. A stopped `TunnelClient` cannot
    * start again, so it is dropped.
-   * `remoteOff` is for the owner turning remote access off, so the server can show it instead of Offline.
+   * `remoteOff` is for the owner disconnecting, so the server can show it instead of Offline.
    */
-  private disconnect(options?: { remoteOff: true }) {
+  private stopTunnel(options?: { remoteOff: true }) {
     this.tunnel?.stop(options)
     this.options.e2eSessions.closeAll()
     this.tunnel = null
-    this.tunnelUrl = null
   }
 
   /**
-   * Creates the `default` key the first time remote access is on, and prints
+   * Creates the `default` key the first time a tunnel opens, and prints
    * its connect link. Only its hash is kept, so this is the one time it is
    * shown. Throws when the key cannot be saved.
    */
@@ -465,22 +471,8 @@ export class RemoteAccessService {
     return this.machineKey
   }
 
-  /**
-   * The tunnel to link through: there must be no linked account yet and a
-   * connected tunnel. A tunnel is never opened just for this, since opening
-   * one creates the access key and serves remote requests.
-   */
-  private linkTunnel(): Tunnel {
-    if (this.linked) throw new LinkError(409, 'Unlink first')
-    const tunnel = this.tunnel
-    if (tunnel?.status !== 'connected') {
-      throw new LinkError(409, 'Turn remote access on and wait until it is connected')
-    }
-    return tunnel
-  }
-
-  /** Sends an enrollment frame, turning `enroll.failed`, a timeout and a lost tunnel into `LinkError`s. */
-  private async enroll(
+  /** Sends `enroll.redeem`, turning `enroll.failed`, a timeout and a lost tunnel into `ConnectError`s. */
+  private async redeem(
     tunnel: Tunnel,
     request: EnrollRequest,
   ): Promise<Exclude<EnrollAnswer, { type: 'enroll.failed' }>> {
@@ -488,16 +480,16 @@ export class RemoteAccessService {
     try {
       answer = await tunnel.enroll(request)
     } catch {
-      throw new LinkError(503, 'The server did not answer. Check the connection and try again')
+      throw new ConnectError(503, 'The server did not answer. Check the connection and try again')
     }
     if (answer.type === 'enroll.failed') {
       const [status, message] = ENROLL_FAILURES[answer.code]
-      throw new LinkError(status, message)
+      throw new ConnectError(status, message)
     }
     return answer
   }
 
-  /** The server address in use, as loaded at start. */
+  /** The server address in use. */
   private serverUrl(): string {
     return this.addresses.inUse.relayUrl.value
   }

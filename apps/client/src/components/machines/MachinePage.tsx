@@ -141,10 +141,9 @@ const keyDeniedHint = (
 
 const accountDeniedHint = (
   <>
-    The machine isn't linked to this account on its host. Link it again with an enrollment key: use Connect a machine on
-    the home page, then{' '}
-    <code className="rounded bg-raised px-1.5 py-0.5 font-mono text-ink">bun run host:remote link &lt;key&gt;</code> on
-    the machine, or its Remote access setting.
+    The machine isn't connected to this account on its host. Connect it again: use Connect a machine on the home page,
+    then run the <code className="rounded bg-raised px-1.5 py-0.5 font-mono text-ink">corch connect</code> command it
+    shows on the machine, or use its Remote access setting.
   </>
 )
 

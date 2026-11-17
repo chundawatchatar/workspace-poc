@@ -16,8 +16,8 @@ export type CliCommand =
 export type ConfigAction =
   | { name: 'list' | 'path' }
   | { name: 'get'; key: string }
-  | { name: 'set'; key: string; value: string; yes: boolean }
-  | { name: 'unset'; key: string; yes: boolean }
+  | { name: 'set'; key: string; value: string }
+  | { name: 'unset'; key: string }
 
 /** What the arguments say: the command and the data folder they name, or null when none does. */
 export interface CliArgs {
@@ -44,15 +44,18 @@ Commands:
   status              Show whether the host runs, its URL, its pid and the terminal daemon
   logs [--all]        Print the last 200 lines of the background host's log, or all of it
   terminals stop      End the terminal daemon and every shell in it
+  connect --email <email> --key <key> [--server <url>] [--yes]
+                      Connect this machine to your account with a key from Connect a machine in the
+                      client, through the built-in server unless --server names another; --yes
+                      connects without asking
+  disconnect [--yes]  Disconnect this machine from its account; --yes disconnects without asking
   remote <command>    Configure remote access (corch remote help lists the commands)
   rotate-key          Replace the remote access key
   config list         Show each setting, its value and where the value comes from
   config get <key>    Print one setting's value
-  config set <key> <value> [--yes]
-                      Save a setting in config.json; --yes turns remote access off without asking
-                      when a running host's tunnel would stay on the old relay
-  config unset <key> [--yes]
-                      Remove a setting from config.json, so its default applies
+  config set <key> <value>
+                      Save a setting in config.json; relayUrl only while the machine is not connected
+  config unset <key>  Remove a setting from config.json, so its default applies
   config path         Print where config.json is
   service install     Run the host as a service of your user (launchd or systemd), so it starts at login
                       and again after a crash; start, stop, restart and status then act through it
@@ -78,6 +81,9 @@ export function parseCliArgs(argv: string[]): CliArgs | null {
   const { dataDir, rest } = taken
   const [name = 'start', ...args] = rest
   if (name === 'remote') return { command: { name, args }, dataDir }
+  // `corch connect` and `corch disconnect` are `corch remote connect` and `corch remote disconnect`.
+  if (name === 'connect' || name === 'disconnect')
+    return { command: { name: 'remote', args: [name, ...args] }, dataDir }
   const fixed = parseFixedArgs(name, args)
   if (fixed !== undefined) return fixed && { command: fixed, dataDir }
   // Bare `corch` with only flags starts the host.
@@ -111,17 +117,15 @@ function parseFixedArgs(name: string, args: string[]): CliCommand | null | undef
   return undefined
 }
 
-/** The `config` subcommand, or null when the arguments don't make one. `--yes` may come anywhere after the name. */
+/** The `config` subcommand, or null when the arguments don't make one. */
 function parseConfigArgs(args: string[]): ConfigAction | null {
   const [name, ...rest] = args
-  const yes = rest.includes('--yes')
-  const values = rest.filter((arg) => arg !== '--yes')
-  if (values.some((arg) => arg.startsWith('--'))) return null
-  const [key, value] = values as [string | undefined, string | undefined]
+  if (rest.some((arg) => arg.startsWith('--'))) return null
+  const [key, value] = rest as [string | undefined, string | undefined]
   if ((name === 'list' || name === 'path') && rest.length === 0) return { name }
   if (name === 'get' && rest.length === 1 && key) return { name, key }
-  if (name === 'set' && values.length === 2 && key && value !== undefined) return { name, key, value, yes }
-  if (name === 'unset' && values.length === 1 && key) return { name, key, yes }
+  if (name === 'set' && rest.length === 2 && key && value !== undefined) return { name, key, value }
+  if (name === 'unset' && rest.length === 1 && key) return { name, key }
   return null
 }
 

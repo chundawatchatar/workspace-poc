@@ -13,6 +13,8 @@ export interface TextFieldProps {
   onChange: (value: string) => void
   onBlur?: () => void
   disabled?: boolean
+  /** True shows the value without letting it be edited, still focusable and selectable. */
+  readOnly?: boolean
   required?: boolean
   /** Help shown under the input and read with it. */
   hint?: ReactNode
@@ -36,6 +38,7 @@ export function TextField({
   onChange,
   onBlur,
   disabled,
+  readOnly,
   required,
   hint,
   error,
@@ -71,11 +74,12 @@ export function TextField({
           onChange={(event) => onChange(event.target.value)}
           onBlur={onBlur}
           disabled={disabled}
+          readOnly={readOnly}
           required={required}
           aria-invalid={error ? true : undefined}
           aria-describedby={describedBy}
           className={cn(
-            'min-w-0 flex-1 bg-transparent text-ink outline-none placeholder:text-faint',
+            'min-w-0 flex-1 bg-transparent text-ink outline-none placeholder:text-faint read-only:text-dim',
             size === 'lg' ? 'px-3 py-2.5 text-base sm:text-sm' : 'px-2.5 py-1.5 text-[13px]',
           )}
         />
