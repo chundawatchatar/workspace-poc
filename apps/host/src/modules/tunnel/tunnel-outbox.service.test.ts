@@ -26,7 +26,7 @@ async function setup() {
     outbox.send(frame)
     mostQueued = Math.max(mostQueued, outbox.bulkBytes)
   }
-  const principal = { kind: 'key' as const, keyId: 'k1', name: 'default', deviceId: 'd1' }
+  const principal = { kind: 'account' as const, accountId: 'u1', deviceId: 'd1', ticketExp: 0 }
   const authorize = () => principal
   const http = new TunnelHttp(
     async () => new Response(new Uint8Array(4 * 1024 * 1024).fill(1)),
@@ -60,7 +60,11 @@ describe('TunnelOutbox', () => {
     http.request({ type: 'http.request', id: 1, method: 'GET', path: routes.system.machineKey.path, headers: [] })
     await until(() => outbox.bulkBytes >= BULK_CAP_BYTES)
     await Bun.sleep(30)
-    const open = { path: '/ws/term/t', auth: { type: 'auth' as const, key: 'k', device: 'p' } }
+    const open = {
+      path: '/ws/term/t',
+      auth: { type: 'auth' as const, account: true as const, device: 'p' },
+      ticket: 't',
+    }
     const { data } = await sealedSocketEnvelope(browser, SESSION_ID, 1, open)
     channels.receive({ type: 'ws.sealed', channel: 1, data })
     await Bun.sleep(10)

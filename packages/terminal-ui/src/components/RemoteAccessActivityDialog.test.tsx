@@ -124,8 +124,8 @@ describe('RemoteAccessActivityDialog', () => {
       {
         kind: 'session',
         session: 's2',
-        principal: 'key',
-        keyId: 'k1',
+        principal: 'account',
+        accountId: 'u1',
         fingerprint: deviceB.fingerprint,
         openedAt,
         closedAt: null,
@@ -144,7 +144,7 @@ describe('RemoteAccessActivityDialog', () => {
     const rows = within(list).getAllByRole('listitem')
     expect(rows.map((row) => row.textContent)).toEqual([
       `Refused: browser not approved${formatLocalDateTime(closedAt)}${deviceA.fingerprint}`,
-      `${deviceB.fingerprint}With access key k1Opened ${formatLocalDateTime(openedAt)}, still open or not recorded`,
+      `${deviceB.fingerprint}Through the accountOpened ${formatLocalDateTime(openedAt)}, still open or not recorded`,
       `${deviceC.fingerprint}Through the accountOpened ${formatLocalDateTime(openedAt)}, closed ${formatLocalDateTime(closedAt)}`,
     ])
   })

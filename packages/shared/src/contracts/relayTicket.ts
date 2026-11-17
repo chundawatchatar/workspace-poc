@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-// Relay tickets let a signed-in account open a machine without its access key.
+// Relay tickets let a signed-in account open a machine.
 // The server signs one for a machine the account lists; the browser sends it
 // with a relayed request or socket; the machine checks the signature against
 // the public keys it got when it was linked. A ticket is a compact JWS

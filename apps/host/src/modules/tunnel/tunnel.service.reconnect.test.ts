@@ -89,7 +89,7 @@ describe('TunnelClient wake and pong checks', () => {
     const client = new TunnelClient({
       url: 'ws://127.0.0.1:1/tunnel',
       key,
-      authorize: () => ({ kind: 'key', keyId: 'k1', name: 'default', deviceId: 'd1' }),
+      authorize: () => ({ kind: 'account', accountId: 'u1', deviceId: 'd1', ticketExp: 4_102_444_800 }),
       handle: async () => new Response('ok'),
       openSocket: () => ({ code: 1008, reason: 'no sockets here' }),
       random: () => 1,

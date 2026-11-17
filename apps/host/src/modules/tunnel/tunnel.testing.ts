@@ -108,6 +108,18 @@ export async function sealedSocketEnvelope(session: E2eSession, sessionId: strin
   return { channel, data }
 }
 
+/**
+ * Like `sealedSocketEnvelope`, but `open` goes into the open record as it is, without the schema check
+ * `encodeSocketOpenRecord` makes, as a browser speaking another version of the protocol would send it.
+ */
+export async function sealedUncheckedSocketEnvelope(session: E2eSession, sessionId: string, n: number, open: unknown) {
+  // The open record's tag byte, read from a valid record, so the test needs no copy of the shared constant.
+  const [tag = 0] = encodeSocketOpenRecord({ path: '/ws/x', auth: { type: 'auth', account: true, device: 'p' } })
+  const record = new Uint8Array([tag, ...new TextEncoder().encode(JSON.stringify(open))])
+  const channel = await session.channel(n)
+  return { channel, data: encodeEnvelope({ sessionId, channel: n, sealed: await channel.seal(record) }) }
+}
+
 /** `message` sealed on `channel` as the browser sends it, a `ws.data` payload. */
 export async function sealMessage(channel: E2eChannel, message: E2eSocketMessage) {
   return (await channel.seal(encodeSocketMessageRecord(message))) as Uint8Array<ArrayBuffer>

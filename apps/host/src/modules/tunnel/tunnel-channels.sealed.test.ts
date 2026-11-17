@@ -13,14 +13,20 @@ import {
 import type { Principal } from '../../lib/principal'
 import type { SocketConn, SocketData } from '../../lib/socket'
 import type { AuditEvent } from '../remote-access/audit-log.service'
-import { openMessages, sealedSocketEnvelope, sealMessage, testE2ePair } from './tunnel.testing'
+import {
+  openMessages,
+  sealedSocketEnvelope,
+  sealedUncheckedSocketEnvelope,
+  sealMessage,
+  testE2ePair,
+} from './tunnel.testing'
 import { type OpenSocket, TunnelChannels } from './tunnel-channels.service'
 import { type Authorize, type Credentials, DEVICE_NOT_APPROVED } from './tunnel-http.service'
 
 // `TunnelChannels` for `ws.sealed`: sockets opened from their envelope, authorized like plain ones, sealed both ways.
 
 const SESSION_ID = 'AAECAwQFBgcICQoLDA0ODw'
-const owner: Principal = { kind: 'key', keyId: 'k1', name: 'default', deviceId: 'd1' }
+const owner: Principal = { kind: 'account', accountId: 'u1', deviceId: 'd1', ticketExp: 0 }
 
 /** What `authorize` was asked, in order. */
 let asked: Credentials[] = []
@@ -36,26 +42,25 @@ afterEach(() => {
 })
 
 /**
- * Accepts the key `good` as `owner` and `other` as another key of the same
- * device, and the ticket `t-good` as the account `u1`, each with the proof
- * `p-good`. The proof `p-new` stands for a device the machine hasn't approved.
+ * Accepts the ticket `good` as `owner` and `other` as another account through
+ * the same device, each with the proof `p-good`. The proof `p-new` stands for
+ * a device the machine hasn't approved.
  */
 const authorize: Authorize = (credentials, refused) => {
   asked.push(credentials)
-  const { key, ticket, device } = credentials
-  if (!(key === 'good' || key === 'other' || (key === null && ticket === 't-good'))) {
-    refused?.({ reason: key === null ? 'ticket_refused' : 'key_refused' })
+  const { ticket, device } = credentials
+  if (ticket !== 'good' && ticket !== 'other') {
+    refused?.({ reason: 'ticket_refused' })
     return null
   }
   if (device?.proof === 'p-new') return DEVICE_NOT_APPROVED
-  if (key === 'good') return owner
-  if (key === 'other') return { ...owner, keyId: 'k2' }
-  return { kind: 'account', accountId: 'u1', deviceId: 'd1', ticketExp: 0 }
+  return ticket === 'good' ? owner : { ...owner, accountId: 'u2' }
 }
 
-const keyOpen = (key = 'good', device = 'p-good', path = '/ws/term/t1?cols=80'): E2eSocketOpen => ({
+const ticketOpen = (ticket = 'good', device = 'p-good', path = '/ws/term/t1?cols=80'): E2eSocketOpen => ({
   path,
-  auth: { type: 'auth', key, device },
+  auth: { type: 'auth', account: true, device },
+  ticket,
 })
 
 interface Run {
@@ -109,7 +114,7 @@ async function until(check: () => boolean, timeoutMs = 1000) {
 describe('TunnelChannels sealed sockets', () => {
   test('a sealed open runs the handler as the session principal, and messages cross both ways in order, typed', async () => {
     const { pair, channels, runs, payloads, on, audit, closeOf } = await setup()
-    const { channel, data: envelope } = await sealedSocketEnvelope(pair.browser, SESSION_ID, 3, keyOpen())
+    const { channel, data: envelope } = await sealedSocketEnvelope(pair.browser, SESSION_ID, 3, ticketOpen())
     const early = [await sealMessage(channel, '{"type":"input","data":"a"}'), await sealMessage(channel, 'b')]
     // Received in the same tick as the envelope, so before the open has finished: delivered after it, in order.
     channels.receive({ type: 'ws.sealed', channel: 5, data: envelope })
@@ -119,7 +124,7 @@ describe('TunnelChannels sealed sockets', () => {
 
     const run = runs[0] as Run
     expect([run.path, run.headers, run.principal]).toEqual(['/ws/term/t1?cols=80', [], owner])
-    expect(asked.at(-1)).toMatchObject({ key: 'good', ticket: null, device: { proof: 'p-good', method: 'WS' } })
+    expect(asked.at(-1)).toMatchObject({ ticket: 'good', once: true, device: { proof: 'p-good', method: 'WS' } })
     expect(asked.at(-1)?.device?.path).toBe('/ws/term/t1?cols=80')
     expect(run.messages).toEqual(['{"type":"input","data":"a"}', 'b'])
 
@@ -139,7 +144,7 @@ describe('TunnelChannels sealed sockets', () => {
     expect(Buffer.concat(payloads(5) as Uint8Array[]).toString('latin1')).not.toContain('snapshot')
 
     expect(channels.list()).toEqual([{ principal: owner, openedAt: expect.any(Number) }])
-    channels.closeChannels((p) => p.kind === 'key', 'access denied')
+    channels.closeChannels((p) => p.accountId === 'u1', 'access denied')
     expect(closeOf(5)).toMatchObject({ code: CLOSE_ACCESS_DENIED })
     expect([run.closes, channels.size]).toEqual([1, 0])
     expect(audit.map((e) => e.kind)).toEqual(['opened', 'closed'])
@@ -147,7 +152,7 @@ describe('TunnelChannels sealed sockets', () => {
 
   test('outgoing messages queue past the window in sealed bytes, report -1, and drain in order on ws.ack', async () => {
     const { channels, runs, open, payloads } = await setup()
-    const { channel } = await open(1, 1, keyOpen())
+    const { channel } = await open(1, 1, ticketOpen())
     await until(() => runs.length === 1)
     const conn = (runs[0] as Run).conn
     const quarter = new Uint8Array(WS_CHANNEL_WINDOW_BYTES / 4)
@@ -168,12 +173,18 @@ describe('TunnelChannels sealed sockets', () => {
   })
 
   test('refused credentials, devices and principals, and an unknown session, open no handler', async () => {
-    const { runs, open, on, closeOf, audit, live } = await setup()
-    await open(1, 1, keyOpen('wrong'))
-    await open(2, 2, keyOpen('good', 'p-new'))
-    await open(3, 3, keyOpen('other'))
-    await open(4, 4, { path: '/ws/events', auth: { type: 'auth', account: true, device: 'p-good' }, ticket: 't-bad' })
-    await open(5, 5, keyOpen(), 'BBECAwQFBgcICQoLDA0ODw')
+    const { pair, channels, runs, open, on, closeOf, audit, live } = await setup()
+    await open(1, 1, ticketOpen('wrong', 'p-good', '/ws/events'))
+    await open(2, 2, ticketOpen('good', 'p-new'))
+    await open(3, 3, ticketOpen('other'))
+    // An auth message that presents an access key instead, as an older browser would have sent.
+    const withKey = { path: '/ws/events', auth: { type: 'auth', key: 'an-old-key', device: 'p-good' } }
+    channels.receive({
+      type: 'ws.sealed',
+      channel: 4,
+      data: (await sealedUncheckedSocketEnvelope(pair.browser, SESSION_ID, 4, withKey)).data,
+    })
+    await open(5, 5, ticketOpen(), 'BBECAwQFBgcICQoLDA0ODw')
     await until(() => [1, 2, 3, 4, 5].every((id) => closeOf(id)))
 
     expect(on(1)).toEqual([
@@ -184,18 +195,22 @@ describe('TunnelChannels sealed sockets', () => {
       { type: 'ws.close', channel: 2, code: CLOSE_DEVICE_NOT_APPROVED, reason: 'device not approved' },
     ])
     expect(on(3)).toEqual([{ type: 'ws.close', channel: 3, code: CLOSE_ACCESS_DENIED, reason: 'access denied' }])
-    expect(on(4).map((f) => f.type)).toEqual(['auth.failed', 'ws.close'])
-    // The ticket comes from the open record, and an account socket spends it.
-    expect(asked.at(-1)).toMatchObject({ key: null, ticket: 't-bad', once: true, device: { path: '/ws/events' } })
+    expect(on(4)).toEqual([
+      { type: 'auth.failed', channel: 4 },
+      { type: 'ws.close', channel: 4, code: CLOSE_ACCESS_DENIED, reason: 'access denied' },
+    ])
+    // The ticket comes from the open record, and a socket spends it; the key's auth message never reaches `authorize`.
+    expect(asked.map((credentials) => credentials.ticket)).toEqual(['wrong', 'good', 'other'])
+    expect(asked[0]).toMatchObject({ ticket: 'wrong', once: true, device: { path: '/ws/events' } })
     expect(closeOf(5)).toMatchObject({ code: CLOSE_E2E_SESSION_UNKNOWN })
     expect(audit).toEqual([
-      { kind: 'refused', reason: 'key_refused' },
-      { kind: 'refused', reason: 'device_not_approved' },
       { kind: 'refused', reason: 'ticket_refused' },
+      { kind: 'refused', reason: 'device_not_approved' },
+      { kind: 'refused', reason: 'no_auth' },
     ])
 
     live.clear()
-    await open(6, 6, keyOpen())
+    await open(6, 6, ticketOpen())
     await until(() => Boolean(closeOf(6)))
     expect(closeOf(6)).toMatchObject({ code: CLOSE_E2E_SESSION_UNKNOWN })
     expect(runs).toHaveLength(0)
@@ -204,13 +219,13 @@ describe('TunnelChannels sealed sockets', () => {
   test('a bad envelope, a taken channel, a record that does not open, and bad later payloads close with 1008', async () => {
     const { pair, channels, runs, open, closeOf } = await setup()
     channels.receive({ type: 'ws.sealed', channel: 1, data: new Uint8Array(10) })
-    const first = await open(2, 7, keyOpen())
+    const first = await open(2, 7, ticketOpen())
     // The same envelope again, on a new tunnel channel: session channel 7 is taken.
     channels.receive({ type: 'ws.sealed', channel: 3, data: first.data })
     const stranger = await testE2ePair()
-    const foreign = await sealedSocketEnvelope(stranger.browser, SESSION_ID, 8, keyOpen())
+    const foreign = await sealedSocketEnvelope(stranger.browser, SESSION_ID, 8, ticketOpen())
     channels.receive({ type: 'ws.sealed', channel: 4, data: foreign.data })
-    // A sealed HTTP request's record kind doesn't open a socket.
+    // A sealed HTTP request's record kind opens, but is no socket's auth: refused as `no_auth`, like a bad credential.
     const http = await pair.browser.channel(9)
     const sealedRequest = await http.seal(encodeRequestRecord({ method: 'GET', path: '/api/health', headers: [] }))
     channels.receive({
@@ -219,23 +234,24 @@ describe('TunnelChannels sealed sockets', () => {
       data: encodeEnvelope({ sessionId: SESSION_ID, channel: 9, sealed: sealedRequest }),
     })
     await until(() => [1, 3, 4, 5].every((id) => closeOf(id)))
-    for (const id of [1, 3, 4, 5]) expect([id, closeOf(id)]).toEqual([id, expect.objectContaining({ code: 1008 })])
+    for (const id of [1, 3, 4]) expect([id, closeOf(id)]).toEqual([id, expect.objectContaining({ code: 1008 })])
+    expect(closeOf(5)).toMatchObject({ code: CLOSE_ACCESS_DENIED })
     await until(() => runs.length === 1)
 
     // Later payloads on the open channel: text, a replay, a skipped counter, a tampered record.
-    await open(6, 26, keyOpen())
+    await open(6, 26, ticketOpen())
     await until(() => runs.length === 2)
     channels.receive({ type: 'ws.data', channel: 6, data: '{"type":"input","data":"ls"}' })
-    const replayed = await open(7, 27, keyOpen())
+    const replayed = await open(7, 27, ticketOpen())
     await until(() => runs.length === 3)
     const once = await sealMessage(replayed.channel, 'x')
     channels.receive({ type: 'ws.data', channel: 7, data: once })
     channels.receive({ type: 'ws.data', channel: 7, data: once })
-    const skipping = await open(8, 28, keyOpen())
+    const skipping = await open(8, 28, ticketOpen())
     await until(() => runs.length === 4)
     await sealMessage(skipping.channel, 'skipped')
     channels.receive({ type: 'ws.data', channel: 8, data: await sealMessage(skipping.channel, 'y') })
-    const tampering = await open(9, 29, keyOpen())
+    const tampering = await open(9, 29, ticketOpen())
     await until(() => runs.length === 5)
     const tampered = await sealMessage(tampering.channel, 'z')
     tampered[tampered.length - 1] = (tampered[tampered.length - 1] ?? 0) ^ 1

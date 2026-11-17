@@ -1,5 +1,4 @@
 import {
-  ACCESS_KEY_HEADER,
   buildRequest,
   CLOSE_ACCESS_DENIED,
   CLOSE_DEVICE_NOT_APPROVED,
@@ -65,16 +64,14 @@ export interface RemoteTransportOptions {
   /** The cloud server, such as `https://example.com`. Only `http:` and `https:` are accepted. */
   serverUrl: string
   machineId: string
-  /** The machine's access key. It goes in a header or the first socket message, never in a URL, with a device proof. */
-  accessKey?: string
   /**
-   * Used when there is no `accessKey`: the signed-in account opens the machine with relay tickets, which go in a
-   * header or a socket's subprotocols, never in a URL or a cookie.
+   * The signed-in account opens the machine with relay tickets, which go in a header or a socket's subprotocols, never
+   * in a URL or a cookie.
    */
-  relayTicket?: RelayTicketSource
+  relayTicket: RelayTicketSource
   /**
-   * This browser's device key, which both modes need: every request and socket also carries a fresh proof signed
-   * with it, and the machine admits only a device its owner approved there.
+   * This browser's device key: every request and socket also carries a fresh proof signed with it, and the machine
+   * admits only a device its owner approved there.
    */
   device?: DeviceSigner
   /**
@@ -102,37 +99,35 @@ const TICKET_MARGIN_MS = 15_000
 /** How the transport authorizes what it carries: a request's headers, or the real socket behind a `pendingSocket`. */
 interface Channels {
   /**
-   * `init.headers` with the key or ticket and a fresh device proof for `path`, or the `Response` that answers the
+   * `init.headers` with the ticket and a fresh device proof for `path`, or the `Response` that answers the
    * request instead (401 when the account can't open the machine). Throws for a body that isn't a string.
    */
   credentials(path: string, init: RequestInit): Promise<Headers | Response>
   /**
-   * What a socket for `path` opens with: its auth message with a fresh `'WS'` proof, and with `account: true` a fresh
-   * ticket, or the close code it fails with instead (`CLOSE_ACCESS_DENIED` when the account can't open the machine).
+   * What a socket for `path` opens with: its auth message with a fresh `'WS'` proof and a fresh ticket, or the close
+   * code it fails with instead (`CLOSE_ACCESS_DENIED` when the account can't open the machine).
    */
   socketAuth(path: string): Promise<SocketAuth | number>
 }
 
-/** A socket's auth message, and the relay ticket an account socket opens with. */
+/** A socket's auth message, and the relay ticket the socket opens with. */
 interface SocketAuth {
   auth: SocketAuthMessage
-  ticket?: string
+  ticket: string
 }
 
 /**
- * A transport that reaches a machine through the cloud server, under `machinePathPrefix(machineId)`. With a key,
- * requests carry it in `ACCESS_KEY_HEADER`. Without one, they carry a relay ticket in `RELAY_TICKET_HEADER`, one
- * ticket shared until shortly before it expires, and each socket opens with a fresh ticket as its second
- * subprotocol. Either way every request also carries a fresh device proof in `DEVICE_PROOF_HEADER`, and every socket
- * sends `socketAuthMessage` as its first message, ahead of anything the page sends from its own `onopen`: the key, or
- * `account: true`, with a fresh `'WS'` device proof. Only string or absent request bodies are accepted, since the
+ * A transport that reaches a machine through the cloud server, under `machinePathPrefix(machineId)`. Requests carry a
+ * relay ticket in `RELAY_TICKET_HEADER`, one ticket shared until shortly before it expires, and each socket opens with
+ * a fresh ticket as its second subprotocol. Every request also carries a fresh device proof in `DEVICE_PROOF_HEADER`,
+ * and every socket sends `socketAuthMessage` as its first message, ahead of anything the page sends from its own
+ * `onopen`: `account: true`, with a fresh `'WS'` device proof. Only string or absent request bodies are accepted, since the
  * proof signs the body. With `machinePublicKey`, nothing is sent before an end-to-end session with the machine is
  * open; see `withE2eSession`.
  */
 export function createRemoteTransport({
   serverUrl,
   machineId,
-  accessKey,
   relayTicket,
   device,
   machinePublicKey,
@@ -144,7 +139,6 @@ export function createRemoteTransport({
   }
   const http = `${server.origin}${server.pathname.replace(/\/$/, '')}${machinePathPrefix(machineId)}`
   const ws = http.replace(/^http/, 'ws')
-  if (!accessKey && !relayTicket) throw new Error('A remote transport needs an access key or a relay ticket source')
   if (!device) throw new Error('A remote transport needs a device key')
   const signer = device
   /** Throws for a body a proof can't sign: only string or absent bodies are accepted. */
@@ -164,50 +158,35 @@ export function createRemoteTransport({
     return socket
   }
 
-  let channels: Channels
-  if (accessKey) {
-    channels = {
-      credentials: async (path, init) => {
-        const proof = await requestProof(path, init, signedBody(init))
-        const headers = new Headers(init.headers)
-        headers.set(ACCESS_KEY_HEADER, accessKey)
-        headers.set(DEVICE_PROOF_HEADER, proof)
-        return headers
-      },
-      socketAuth: async (path) => ({ auth: { type: 'auth', key: accessKey, device: await socketProof(path) } }),
-    }
-  } else {
-    const tickets = relayTicket as RelayTicketSource
-    let cached: RelayTicketResponse | null = null
-    let fetching: Promise<RelayTicketResponse | null> | null = null
-    const httpTicket = async () => {
-      if (cached && Date.parse(cached.expiresAt) - Date.now() > TICKET_MARGIN_MS) return cached.ticket
-      // Requests that arrive together wait for the same new ticket.
-      fetching ??= tickets().finally(() => {
-        fetching = null
-      })
-      cached = await fetching
-      return cached?.ticket ?? null
-    }
-    channels = {
-      credentials: async (path, init) => {
-        const body = signedBody(init)
-        const ticket = await httpTicket()
-        // The account can't open this machine, which the machine itself would answer with 401 too.
-        if (!ticket) return new Response(null, { status: 401 })
-        const proof = await requestProof(path, init, body)
-        const headers = new Headers(init.headers)
-        headers.set(RELAY_TICKET_HEADER, ticket)
-        headers.set(DEVICE_PROOF_HEADER, proof)
-        return headers
-      },
-      socketAuth: async (path) => {
-        // A fresh ticket per socket: the machine lets each ticket open only one.
-        const fresh = await tickets()
-        if (!fresh) return CLOSE_ACCESS_DENIED
-        return { auth: { type: 'auth', account: true, device: await socketProof(path) }, ticket: fresh.ticket }
-      },
-    }
+  let cached: RelayTicketResponse | null = null
+  let fetching: Promise<RelayTicketResponse | null> | null = null
+  const httpTicket = async () => {
+    if (cached && Date.parse(cached.expiresAt) - Date.now() > TICKET_MARGIN_MS) return cached.ticket
+    // Requests that arrive together wait for the same new ticket.
+    fetching ??= relayTicket().finally(() => {
+      fetching = null
+    })
+    cached = await fetching
+    return cached?.ticket ?? null
+  }
+  const channels: Channels = {
+    credentials: async (path, init) => {
+      const body = signedBody(init)
+      const ticket = await httpTicket()
+      // The account can't open this machine, which the machine itself would answer with 401 too.
+      if (!ticket) return new Response(null, { status: 401 })
+      const proof = await requestProof(path, init, body)
+      const headers = new Headers(init.headers)
+      headers.set(RELAY_TICKET_HEADER, ticket)
+      headers.set(DEVICE_PROOF_HEADER, proof)
+      return headers
+    },
+    socketAuth: async (path) => {
+      // A fresh ticket per socket: the machine lets each ticket open only one.
+      const fresh = await relayTicket()
+      if (!fresh) return CLOSE_ACCESS_DENIED
+      return { auth: { type: 'auth', account: true, device: await socketProof(path) }, ticket: fresh.ticket }
+    },
   }
 
   const plain: Carrier = {
@@ -219,7 +198,7 @@ export function createRemoteTransport({
     openLater: (path) => async () => {
       const opening = await channels.socketAuth(path)
       if (typeof opening === 'number') return opening
-      return authedSocket(path, opening.auth, opening.ticket ? relaySocketProtocols(opening.ticket) : undefined)
+      return authedSocket(path, opening.auth, relaySocketProtocols(opening.ticket))
     },
   }
   const base = `${server.origin}${server.pathname.replace(/\/$/, '')}`
@@ -266,13 +245,13 @@ interface Refused {
 /**
  * Wraps `plain` so the first request or socket, and the first after the session nears its expiry, first opens an
  * end-to-end session: a hello signed with the device key is posted to `routes.e2e.open` through `plain`, with the
- * same key or ticket and a device proof, and the machine's answer is checked against `machinePublicKey`. Calls that
+ * relay ticket and a device proof, and the machine's answer is checked against `machinePublicKey`. Calls that
  * arrive together share one handshake. A refused handshake answers each request with its status, and fails each
  * socket with the close code the page knows, and the next call tries again. An answer that doesn't verify (another
  * key, another hello, a bad shape, or a browser without the WebCrypto it needs) calls `onMachineUnverified` once, and
  * from then on every call fails with `E2eError` without reaching the machine.
  *
- * Every request after the handshake is sealed: it takes the session's next channel, puts its key or ticket and a
+ * Every request after the handshake is sealed: it takes the session's next channel, puts its ticket and a
  * fresh proof into the inner headers, and goes as one envelope posted to `sealedUrl`; see `sealedRequest`. Every
  * socket is sealed too; see `sealedSocketLater`.
  */

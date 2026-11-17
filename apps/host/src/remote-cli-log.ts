@@ -40,7 +40,6 @@ function entryLine(entry: AuditLogEntry): string {
     const fingerprint = entry.fingerprint ? `  ${printable(entry.fingerprint)}` : ''
     return `${formatLocalDateTime(entry.at)}  refused  ${entry.reason}${fingerprint}`
   }
-  const who = entry.principal === 'account' ? 'account' : `key ${printable(entry.keyId)}`
   const closed = entry.closedAt ? `closed ${formatLocalDateTime(entry.closedAt)}` : 'still open or not recorded'
-  return `${formatLocalDateTime(entry.openedAt)}  opened   ${who}  ${printable(entry.fingerprint)}  ${closed}`
+  return `${formatLocalDateTime(entry.openedAt)}  opened   account  ${printable(entry.fingerprint)}  ${closed}`
 }

@@ -25,8 +25,8 @@ type TestDevice = Awaited<ReturnType<typeof testDevice>>
 /** A browser hello from `device`, and the step that checks the machine's answer. */
 const hello = (device: TestDevice) => startBrowserHandshake({ machineId: machineKey.machineId, device: device.signer })
 
-const asKey = (device: TestDevice): Principal => ({ kind: 'key', keyId: 'k1', name: 'laptop', deviceId: device.id })
-const asAccount = (device: TestDevice, ticketExp: number): Principal => ({
+/** The linked account through `device`, with a ticket that expires at `ticketExp` (epoch seconds), a full lifetime by default. */
+const asAccount = (device: TestDevice, ticketExp = Math.floor(START / 1000) + RELAY_TICKET_TTL_SECONDS): Principal => ({
   kind: 'account',
   accountId: 'acct-1',
   deviceId: device.id,
@@ -34,12 +34,12 @@ const asAccount = (device: TestDevice, ticketExp: number): Principal => ({
 })
 
 describe('E2eSessions', () => {
-  test("a session the browser verifies seals with the host's copy, and expires with its ticket or a ticket's lifetime", async () => {
+  test("a session the browser verifies seals with the host's copy, and expires with its ticket", async () => {
     const { sessions, advance } = setup()
     const device = await testDevice()
 
     const browser = await hello(device)
-    const opened = await sessions.open(asKey(device), browser.hello)
+    const opened = await sessions.open(asAccount(device), browser.hello)
     expect(opened.expiresAt).toBe(new Date(START + RELAY_TICKET_TTL_SECONDS * 1000).toISOString())
     const session = await browser.finish(opened.hello, machineKey.publicKey)
     const kept = sessions.get(opened.sessionId)
@@ -62,10 +62,10 @@ describe('E2eSessions', () => {
   test('a device holds at most 8 live sessions, a ninth drops its oldest, and other devices keep theirs', async () => {
     const { sessions } = setup()
     const [device, other] = await Promise.all([testDevice(), testDevice()])
-    const others = await sessions.open(asKey(other), (await hello(other)).hello)
+    const others = await sessions.open(asAccount(other), (await hello(other)).hello)
     const ids: string[] = []
     for (let i = 0; i <= MAX_SESSIONS_PER_DEVICE; i++) {
-      ids.push((await sessions.open(asKey(device), (await hello(device)).hello)).sessionId)
+      ids.push((await sessions.open(asAccount(device), (await hello(device)).hello)).sessionId)
     }
     expect(ids.map((id) => sessions.get(id) !== null)).toEqual([false, ...Array(MAX_SESSIONS_PER_DEVICE).fill(true)])
     expect(sessions.get(others.sessionId)).not.toBeNull()
@@ -74,10 +74,10 @@ describe('E2eSessions', () => {
   test('closeWhere closes only the sessions it matches, also one still opening, and closeAll closes the rest', async () => {
     const { sessions } = setup()
     const [first, second] = await Promise.all([testDevice(), testDevice()])
-    const a = await sessions.open(asKey(first), (await hello(first)).hello)
-    const b = await sessions.open(asKey(second), (await hello(second)).hello)
+    const a = await sessions.open(asAccount(first), (await hello(first)).hello)
+    const b = await sessions.open(asAccount(second), (await hello(second)).hello)
 
-    const opening = sessions.open(asKey(first), (await hello(first)).hello)
+    const opening = sessions.open(asAccount(first), (await hello(first)).hello)
     sessions.closeWhere((principal) => principal.deviceId === first.id)
     await expect(opening).rejects.toBeInstanceOf(E2eSessionClosed)
     expect(sessions.get(a.sessionId)).toBeNull()
@@ -91,9 +91,9 @@ describe('E2eSessions', () => {
     const { sessions } = setup()
     const [device, other] = await Promise.all([testDevice(), testDevice()])
     const { hello: theirs } = await hello(other)
-    await expect(sessions.open(asKey(device), theirs)).rejects.toBeInstanceOf(E2eDeviceMismatch)
+    await expect(sessions.open(asAccount(device), theirs)).rejects.toBeInstanceOf(E2eDeviceMismatch)
     const { hello: mine } = await hello(device)
     const forged = { ...mine, signature: mine.signature.replace(/^./, (c) => (c === 'A' ? 'B' : 'A')) }
-    await expect(sessions.open(asKey(device), forged)).rejects.toBeInstanceOf(E2eError)
+    await expect(sessions.open(asAccount(device), forged)).rejects.toBeInstanceOf(E2eError)
   })
 })

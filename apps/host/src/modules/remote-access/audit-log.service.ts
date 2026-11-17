@@ -21,8 +21,8 @@ export type RecordAudit = (event: AuditEvent) => void
 
 /**
  * The remote access audit log: who opened a tunneled socket, as which device
- * and account or key, when it opened and closed, and every refusal with its
- * reason. Only ids, fingerprints, reasons and times are written, never a key,
+ * and account, when it opened and closed, and every refusal with its
+ * reason. Only ids, fingerprints, reasons and times are written, never a
  * ticket, proof, public key, path, header or anything typed.
  */
 export class AuditLogService {
@@ -74,7 +74,7 @@ export class AuditLogService {
   }
 }
 
-/** The line an event is written as. The principal keeps only its kind, its account or key id, and its device's fingerprint. */
+/** The line an event is written as. The principal keeps only its kind, its account id, and its device's fingerprint. */
 function lineOf(event: AuditEvent, at: string): AuditLine {
   if (event.kind === 'closed') return { kind: 'closed', session: event.session, at }
   if (event.kind === 'refused') {
@@ -85,7 +85,5 @@ function lineOf(event: AuditEvent, at: string): AuditLine {
   }
   const { session, principal } = event
   const fingerprint = fingerprintOf(principal.deviceId)
-  return principal.kind === 'account'
-    ? { kind: 'opened', session, principal: 'account', accountId: principal.accountId, fingerprint, at }
-    : { kind: 'opened', session, principal: 'key', keyId: principal.keyId, fingerprint, at }
+  return { kind: 'opened', session, principal: 'account', accountId: principal.accountId, fingerprint, at }
 }

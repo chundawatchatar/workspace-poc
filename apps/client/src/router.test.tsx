@@ -1,13 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
 import { PRODUCT_NAME, PRODUCT_TAGLINE } from '@orch/brand'
-import {
-  ACCESS_KEY_HEADER,
-  type E2eSocketOpen,
-  formatConnectFragment,
-  machineSealedSocketPath,
-  routes,
-  serverRoutes,
-} from '@orch/shared'
+import { type E2eSocketOpen, formatConnectFragment, machineSealedSocketPath, routes, serverRoutes } from '@orch/shared'
 import { QueryClientProvider, useQueryClient } from '@tanstack/react-query'
 import { createMemoryHistory, RouterProvider } from '@tanstack/react-router'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
@@ -180,7 +173,7 @@ describe('client routes', () => {
     const keyHeaders: (string | null)[] = []
     server.use(
       // Sees every request to the machine, then lets the handlers above answer it.
-      http.all('*/m/*', ({ request }) => void keyHeaders.push(request.headers.get(ACCESS_KEY_HEADER))),
+      http.all('*/m/*', ({ request }) => void keyHeaders.push(request.headers.get('x-orch-access-key'))),
       http.post('*/api/machines/:machineId/relay-ticket', ({ params }) => {
         ticketsFor.push(String(params.machineId))
         return HttpResponse.json({

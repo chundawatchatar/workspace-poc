@@ -16,8 +16,8 @@ import { MAX_TUNNEL_FRAME_BYTES } from './tunnel'
 
 /**
  * What a sealed socket opens with: the socket path, the auth message that used
- * to be its first message, and with `account: true` the relay ticket that used
- * to go in a subprotocol.
+ * to be its first message, and the relay ticket that used to go in a
+ * subprotocol. Without one, the machine refuses the socket.
  */
 export const e2eSocketOpen = z.strictObject({
   /** A host socket path under `/ws/`, with its query string. */

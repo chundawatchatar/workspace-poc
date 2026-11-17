@@ -128,7 +128,6 @@ export {
   ticketFromProtocols,
 } from './relayTicket'
 export {
-  ACCESS_KEY_HEADER,
   CLOSE_ACCESS_DENIED,
   CLOSE_E2E_SESSION_UNKNOWN,
   CLOSE_MACHINE_OFFLINE,

@@ -117,7 +117,7 @@ function start(options: Partial<TunnelClientOptions> = {}) {
   const client = new TunnelClient({
     url,
     key,
-    authorize: () => ({ kind: 'key', keyId: 'k1', name: 'default', deviceId: 'd1' }),
+    authorize: () => ({ kind: 'account', accountId: 'u1', deviceId: 'd1', ticketExp: 4_102_444_800 }),
     handle: async () => new Response('ok'),
     openSocket: () => ({ code: 1008, reason: 'no sockets here' }),
     timings,

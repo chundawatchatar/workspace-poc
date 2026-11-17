@@ -32,6 +32,9 @@ import { createRemoteTransport, type RemoteTransportOptions } from '../src/trans
 /** The servers the fake machines started. Each test file stops them after each test. */
 export const servers: Bun.Server<unknown>[] = []
 
+/** The relay ticket `e2eMachine`'s transport opens the machine with, unless a test passes its own. */
+export const E2E_TICKET = 'a.relay.ticket'
+
 /** A fresh WebCrypto device key, as a browser keeps one. */
 export async function testSigner(): Promise<DeviceSigner> {
   return deviceSigner(
@@ -268,7 +271,7 @@ export async function e2eMachine() {
     createRemoteTransport({
       serverUrl: `http://localhost:${server.port}`,
       machineId: machine.machineId,
-      accessKey: 'k',
+      relayTicket: async () => ({ ticket: E2E_TICKET, expiresAt: new Date(Date.now() + 60_000).toISOString() }),
       device: await testSigner(),
       machinePublicKey: machine.publicKey,
       ...options,

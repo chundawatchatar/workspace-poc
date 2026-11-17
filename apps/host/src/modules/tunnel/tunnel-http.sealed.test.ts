@@ -1,12 +1,12 @@
 import { describe, expect, test } from 'bun:test'
 import {
-  ACCESS_KEY_HEADER,
   DEVICE_NOT_APPROVED_CODE,
   DEVICE_PROOF_HEADER,
   E2E_SESSION_UNKNOWN_CODE,
   type E2eChannel,
   type E2eHttpRequest,
   type MachineFrame,
+  RELAY_TICKET_HEADER,
 } from '@orch/shared'
 import { HOST_ORIGIN } from '../../lib/localOrigin'
 import type { Principal } from '../../lib/principal'
@@ -16,7 +16,7 @@ import { type Authorize, DEVICE_NOT_APPROVED, type TunnelHandler, TunnelHttp } f
 
 // `TunnelHttp.sealed`: requests opened from their seal, authorized like plain ones, and answered sealed.
 
-const principal: Principal = { kind: 'key', keyId: 'k1', name: 'default', deviceId: 'd1' }
+const principal: Principal = { kind: 'account', accountId: 'u1', deviceId: 'd1', ticketExp: 0 }
 const allowAll: Authorize = () => principal
 
 async function until(check: () => boolean, timeoutMs = 1000) {
@@ -64,7 +64,7 @@ describe('TunnelHttp sealed requests', () => {
     return { http, frames: () => frames, audit, live, post, of, reply, rooms: () => rooms }
   }
 
-  const health = (headers: [string, string][] = [[ACCESS_KEY_HEADER, 'good']]): E2eHttpRequest => ({
+  const health = (headers: [string, string][] = [[RELAY_TICKET_HEADER, 'good']]): E2eHttpRequest => ({
     method: 'GET',
     path: '/api/health',
     headers,
@@ -94,7 +94,7 @@ describe('TunnelHttp sealed requests', () => {
       1,
       1,
       health([
-        [ACCESS_KEY_HEADER, 'good'],
+        [RELAY_TICKET_HEADER, 'good'],
         [DEVICE_PROOF_HEADER, 'p'],
         ['x-a', 'b'],
       ]),
@@ -103,7 +103,7 @@ describe('TunnelHttp sealed requests', () => {
     expect(seen).toHaveLength(1)
     expect(seen[0]?.principal).toEqual(principal)
     expect(seen[0]?.url).toBe(`${HOST_ORIGIN}/api/health`)
-    expect([ACCESS_KEY_HEADER, DEVICE_PROOF_HEADER].some((name) => seen[0]?.headers.has(name))).toBe(false)
+    expect([RELAY_TICKET_HEADER, DEVICE_PROOF_HEADER].some((name) => seen[0]?.headers.has(name))).toBe(false)
     expect(seen[0]?.headers.get('x-a')).toBe('b')
     const opened = await reply(1, channel)
     expect(opened.outer).toEqual({
@@ -129,14 +129,14 @@ describe('TunnelHttp sealed requests', () => {
 
   test('refused, unapproved and mismatched requests get sealed answers, and session or envelope trouble an unsealed one', async () => {
     let calls = 0
-    // `good` is the session's own key; `other` authorizes another device and `acct` an account.
-    const authorize: Authorize = ({ key }, refused) => {
-      if (key === 'good') return principal
-      if (key === 'other') return { ...principal, deviceId: 'd2' }
-      if (key === 'other-key') return { ...principal, keyId: 'k2' }
-      if (key === 'acct') return { kind: 'account', accountId: 'u1', deviceId: 'd1', ticketExp: 0 }
-      if (key === 'new') return DEVICE_NOT_APPROVED
-      refused?.({ reason: 'key_refused' })
+    // `good` is the ticket of the session's own access; `other` authorizes another device and `other-account`
+    // another account through the same device.
+    const authorize: Authorize = ({ ticket }, refused) => {
+      if (ticket === 'good') return principal
+      if (ticket === 'other') return { ...principal, deviceId: 'd2' }
+      if (ticket === 'other-account') return { ...principal, accountId: 'u2' }
+      if (ticket === 'new') return DEVICE_NOT_APPROVED
+      refused?.({ reason: 'ticket_refused' })
       return null
     }
     const { post, reply, of, http, live, audit, frames } = await sealedSetup(async () => {
@@ -144,22 +144,21 @@ describe('TunnelHttp sealed requests', () => {
       return new Response('ok')
     }, authorize)
 
-    const bad = await post(1, 1, health([[ACCESS_KEY_HEADER, 'bad']]))
+    const bad = await post(1, 1, health([[RELAY_TICKET_HEADER, 'bad']]))
     expect(of(1)[0]).toEqual({ type: 'auth.failed', id: 1 })
     expect(await reply(1, bad.channel)).toMatchObject({ outer: { status: 200 }, status: 401, end: { kind: 'end' } })
-    expect(audit).toEqual([{ kind: 'refused', reason: 'key_refused' }])
+    expect(audit).toEqual([{ kind: 'refused', reason: 'ticket_refused' }])
 
-    const waiting = await post(2, 2, health([[ACCESS_KEY_HEADER, 'new']]))
+    const waiting = await post(2, 2, health([[RELAY_TICKET_HEADER, 'new']]))
     const unapproved = await reply(2, waiting.channel)
     expect([unapproved.status, JSON.parse(unapproved.body).code]).toEqual([403, DEVICE_NOT_APPROVED_CODE])
     expect(of(2).some((f) => f.type === 'auth.failed')).toBe(false)
 
     for (const [id, presented] of [
       [3, 'other'],
-      [4, 'other-key'],
-      [5, 'acct'],
+      [4, 'other-account'],
     ] as const) {
-      const { channel } = await post(id, id, health([[ACCESS_KEY_HEADER, presented]]))
+      const { channel } = await post(id, id, health([[RELAY_TICKET_HEADER, presented]]))
       expect((await reply(id, channel)).status).toBe(403)
     }
 

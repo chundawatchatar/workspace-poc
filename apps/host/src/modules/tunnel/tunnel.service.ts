@@ -68,7 +68,7 @@ export interface TunnelClientOptions {
   url: string
   /** The machine key, which signs the server's `challenge` in `hello`. Only its public key and signatures leave the host. */
   key: MachineKey
-  /** Decides every tunneled request and socket, by key or account. Nothing reaches `handle` or `openSocket` without it. */
+  /** Decides every tunneled request and socket. Nothing reaches `handle` or `openSocket` without it. */
   authorize: Authorize
   /** Answers each tunneled request. */
   handle: TunnelHandler
@@ -121,7 +121,7 @@ interface Connection {
  * `challenge`, answers with a `hello` signed by the machine key, waits for
  * `welcome`, keeps both heartbeats, answers tunneled HTTP requests through
  * `handle`, serves tunneled WebSockets through `openSocket` (both only once
- * `authorize` has accepted their access key or account), and reconnects
+ * `authorize` has accepted their relay ticket), and reconnects
  * with backoff until `stop()`, a protocol version the server refuses, or
  * another host taking over this machine's tunnel. Every frame goes through
  * the connection's `TunnelOutbox`, so `ws.*` frames overtake response bodies.

@@ -1,6 +1,6 @@
 import { parseServerUrl } from '@orch/shared'
 import { z } from 'zod'
-import { clientUrlFromServerUrl, parseClientUrl } from '../access/access.service'
+import { clientUrlFromServerUrl, parseClientUrl } from '../remote-access/addresses.service'
 
 /**
  * The server address used when nothing sets one. `orch.example.com` is a

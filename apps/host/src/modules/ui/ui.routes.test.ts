@@ -12,7 +12,7 @@ import { loadEmbeddedUiSite, loadUiSite, resolveUi, type UiSite } from './ui.ser
 const indexHtml = '<!doctype html><html><head><script>boot()</script></head><body></body></html>'
 const script = new Uint8Array([0x63, 0x6f, 0x6e, 0x73, 0x74, 0xff, 0x00])
 const html = { accept: 'text/html,application/xhtml+xml' }
-const tunneled = tunnelEnv({ kind: 'key', keyId: 'k1', name: 'laptop', deviceId: 'd1' })
+const tunneled = tunnelEnv({ kind: 'account', accountId: 'u1', deviceId: 'd1', ticketExp: 4_102_444_800 })
 
 let root: string
 let dir: string

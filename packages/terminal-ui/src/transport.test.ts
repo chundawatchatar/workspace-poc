@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, setSystemTime, test } from 'bun:test'
 import {
-  ACCESS_KEY_HEADER,
   buildRequest,
   buildSocketUrl,
   CLOSE_ACCESS_DENIED,
@@ -129,19 +128,25 @@ describe('the page transport', () => {
     socket.close()
   })
 
-  test('with a key, every request and socket carries the key and a fresh device proof, and no device key throws', async () => {
+  test('requests share a relay ticket, and each request and socket carries a fresh device proof', async () => {
     const machineId = 'mac/1 a'
-    const accessKey = 'secret-key'
-    const { base, seen, messages, received: twoMessages } = recordingServer(2)
-    const port = new URL(base).port
+    const { base, seen, messages, received } = recordingServer(2)
+    let issued = 0
+    const relayTicket = async () => ({
+      ticket: `t${++issued}`,
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    })
     const device = await testSigner()
-    const transport = createRemoteTransport({ serverUrl: `${base}/`, machineId, accessKey, device })
+    const transport = createRemoteTransport({ serverUrl: `${base}/`, machineId, relayTicket, device })
 
-    await transport.request('/api/git/status?cwd=%2Ftmp', { headers: { 'content-type': 'application/json' } })
-    await transport.request('/api/system/health', { method: 'post', body: '{"a":1}' })
+    await Promise.all([
+      transport.request('/api/git/status?cwd=%2Ftmp', { headers: { 'content-type': 'application/json' } }),
+      transport.request('/api/system/health', { method: 'post', body: '{"a":1}' }),
+    ])
     expect(seen[0].url).toBe(`${base}/m/mac%2F1%20a/api/git/status?cwd=%2Ftmp`)
     expect(seen[0].headers['content-type']).toBe('application/json')
-    expect(seen.map((s) => s.headers[ACCESS_KEY_HEADER])).toEqual([accessKey, accessKey])
+    expect(seen.map((s) => s.headers[RELAY_TICKET_HEADER])).toEqual(['t1', 't1'])
+    expect(seen[0].headers.cookie).toBeUndefined()
     const proofs = seen.map((s) => s.headers[DEVICE_PROOF_HEADER] ?? '')
     expect(await Promise.all(proofs.map((proof) => signedBy(proof, device)))).toEqual([true, true])
     const [get, post] = proofs.map(payloadOf)
@@ -152,50 +157,7 @@ describe('the page transport', () => {
     await expect(transport.request('/api/x', { method: 'POST', body: new Uint8Array([1]) })).rejects.toThrow()
 
     const socket = transport.openSocket('/ws/events')
-    expect(socket.url).toBe(`ws://localhost:${port}/m/mac%2F1%20a/ws/events`)
-    socket.onopen = () => socket.send('from the page')
-    await twoMessages
-    socket.close()
-    const [auth, fromPage] = messages
-    const { device: proof, ...rest } = JSON.parse(auth ?? '')
-    expect(rest).toEqual({ type: 'auth', key: accessKey })
-    expect(await signedBy(proof, device)).toBe(true)
-    expect(payloadOf(proof)).toMatchObject({ aud: machineId, method: 'WS', path: '/ws/events' })
-    expect(fromPage).toBe('from the page')
-    expect(seen.every((s) => !s.url.includes(accessKey))).toBe(true)
-    expect(() => createRemoteTransport({ serverUrl: base, machineId, accessKey })).toThrow()
-  })
-
-  test('without a key, requests share a relay ticket, each request and socket carries a fresh device proof', async () => {
-    const { base, seen, messages, received } = recordingServer(2)
-    let issued = 0
-    const relayTicket = async () => ({
-      ticket: `t${++issued}`,
-      expiresAt: new Date(Date.now() + 60_000).toISOString(),
-    })
-    const device = await testSigner()
-    const transport = createRemoteTransport({ serverUrl: base, machineId: 'm1', relayTicket, device })
-
-    await Promise.all([
-      transport.request('/api/git/status?cwd=%2Ftmp', { headers: { 'content-type': 'application/json' } }),
-      transport.request('/api/system/health', { method: 'post', body: '{"a":1}' }),
-    ])
-    expect(seen.map((s) => [s.headers[RELAY_TICKET_HEADER], ACCESS_KEY_HEADER in s.headers])).toEqual([
-      ['t1', false],
-      ['t1', false],
-    ])
-    expect(seen[0].headers.cookie).toBeUndefined()
-    const proofs = seen.map((s) => s.headers[DEVICE_PROOF_HEADER] ?? '')
-    expect(await Promise.all(proofs.map((proof) => signedBy(proof, device)))).toEqual([true, true])
-    const [get, post] = proofs.map(payloadOf)
-    expect(get).toMatchObject({ aud: 'm1', method: 'GET', path: '/api/git/status?cwd=%2Ftmp' })
-    expect(post).toMatchObject({ aud: 'm1', method: 'POST', path: '/api/system/health' })
-    expect(get.nonce).not.toBe(post.nonce)
-    expect(get.bodySha256).not.toBe(post.bodySha256)
-    await expect(transport.request('/api/x', { method: 'POST', body: new Uint8Array([1]) })).rejects.toThrow()
-
-    const socket = transport.openSocket('/ws/events')
-    expect(socket.url).toBe(`${base.replace('http', 'ws')}/m/m1/ws/events`)
+    expect(socket.url).toBe(`${base.replace('http', 'ws')}/m/mac%2F1%20a/ws/events`)
     socket.onopen = () => socket.send('from the page')
     await received
     socket.close()
@@ -205,11 +167,11 @@ describe('the page transport', () => {
     const { device: proof, ...rest } = JSON.parse(auth ?? '')
     expect(rest).toEqual({ type: 'auth', account: true })
     expect(await signedBy(proof, device)).toBe(true)
-    expect(payloadOf(proof)).toMatchObject({ aud: 'm1', method: 'WS', path: '/ws/events' })
+    expect(payloadOf(proof)).toMatchObject({ aud: machineId, method: 'WS', path: '/ws/events' })
     expect(fromPage).toBe('from the page')
   })
 
-  test('without a key, an account that cannot open the machine gets 401 and a denied socket, and no device key throws', async () => {
+  test('an account that cannot open the machine gets 401 and a denied socket, and no device key throws', async () => {
     const { base, seen } = recordingServer(1)
     const device = await testSigner()
     const relayTicket = async () => null
@@ -234,12 +196,13 @@ describe('the page transport', () => {
       }
       addEventListener() {}
     } as unknown as typeof WebSocket
-    createRemoteTransport({ serverUrl: 'https://example.com', machineId: 'm1', accessKey: 'k', device }).openSocket(
+    const relayTicket = async () => ({ ticket: 't', expiresAt: new Date(Date.now() + 60_000).toISOString() })
+    createRemoteTransport({ serverUrl: 'https://example.com', machineId: 'm1', relayTicket, device }).openSocket(
       '/ws/events',
     )
     expect(await opened).toBe('wss://example.com/m/m1/ws/events')
     for (const serverUrl of ['ws://example.com', 'file:///tmp', 'javascript:alert(1)']) {
-      expect(() => createRemoteTransport({ serverUrl, machineId: 'm1', accessKey: 'k', device })).toThrow()
+      expect(() => createRemoteTransport({ serverUrl, machineId: 'm1', relayTicket, device })).toThrow()
     }
   })
 })

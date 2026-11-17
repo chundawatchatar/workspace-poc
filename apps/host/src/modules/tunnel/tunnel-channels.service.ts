@@ -90,12 +90,14 @@ interface Channel {
  * registered, so its `ws.data` reaches nothing.
  *
  * A `ws.sealed` channel is registered at once and opens from its envelope
- * (`openSealedChannel`, with `sessions`). No handler runs before `authorize`
- * accepts the auth message sealed in it: its key, or with `account: true` the
- * relay ticket sealed beside it, which it spends, either one with the message's
- * `device` proof for `'WS'` and the channel's path. A device that isn't
- * approved gets a `CLOSE_DEVICE_NOT_APPROVED` close and no `auth.failed`; other
- * bad credentials get `auth.failed` and a `CLOSE_ACCESS_DENIED` close. Its
+ * (`openSealedChannel`, with `sessions`). An open record that isn't valid,
+ * such as an auth message without `account: true`, is recorded as `no_auth`
+ * and gets `auth.failed` and a `CLOSE_ACCESS_DENIED` close. No handler runs
+ * before `authorize` accepts the relay ticket sealed beside the auth message,
+ * which it spends, with the message's `device` proof for `'WS'` and the
+ * channel's path. A device that isn't approved gets a
+ * `CLOSE_DEVICE_NOT_APPROVED` close and no `auth.failed`; other bad
+ * credentials get `auth.failed` and a `CLOSE_ACCESS_DENIED` close. Its
  * principal must have opened the session (`CLOSE_ACCESS_DENIED`, no
  * `auth.failed`). Its handler gets no headers, and its payloads are opened and
  * sealed in order (`SealedChannel`); windows, queues, acks and `buffered()`
@@ -221,6 +223,11 @@ export class TunnelChannels {
   private async admitSealed(channel: Channel, sealed: SealedChannel, data: Uint8Array) {
     const opened = await openSealedChannel(data, this.sessions)
     if (!channel.open || this.closed) return
+    if (!opened.ok && 'refused' in opened) {
+      this.record({ kind: 'refused', reason: opened.refused })
+      this.deny(channel, 'access denied')
+      return
+    }
     if (!opened.ok) {
       this.fail(channel, opened.code, opened.reason)
       return
@@ -246,7 +253,7 @@ export class TunnelChannels {
       this.fail(channel, CLOSE_DEVICE_NOT_APPROVED, 'device not approved')
       return
     }
-    // Valid credentials, but not the access that opened the session: not a bad key, so no `auth.failed`.
+    // Valid credentials, but not the access that opened the session: not a bad ticket, so no `auth.failed`.
     if (!samePrincipal(principal, owner)) {
       this.fail(channel, CLOSE_ACCESS_DENIED, 'access denied')
       return

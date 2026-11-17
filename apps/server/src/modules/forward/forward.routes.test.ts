@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
 import {
-  ACCESS_KEY_HEADER,
   DEVICE_PROOF_HEADER,
   decodeFrame,
   encodeFrame,
@@ -102,7 +101,6 @@ describe('forward routes', () => {
       const pending = fetch(url('/api/git/status?cwd=%2Ftmp'), {
         method: 'POST',
         headers: {
-          [ACCESS_KEY_HEADER]: 'secret-key',
           [RELAY_TICKET_HEADER]: 'a.relay.ticket',
           [DEVICE_PROOF_HEADER]: 'a.device.proof',
           'x-thing': 'a',
@@ -114,7 +112,6 @@ describe('forward routes', () => {
       await until(() => m.requests.length === 1)
       const request = m.requests[0]
       expect(request).toMatchObject({ type: 'http.request', id: 1, method: 'POST', path: '/api/git/status?cwd=%2Ftmp' })
-      expect(request?.headers).toContainEqual([ACCESS_KEY_HEADER, 'secret-key'])
       // A relay ticket and a device proof are the machine's to check, so they pass through as sent.
       expect(request?.headers).toContainEqual([RELAY_TICKET_HEADER, 'a.relay.ticket'])
       expect(request?.headers).toContainEqual([DEVICE_PROOF_HEADER, 'a.device.proof'])
@@ -175,7 +172,7 @@ describe('forward routes', () => {
       const logged = logs.flatMap((spy) => spy.mock.calls.map((call) => call.join(' ')))
       expect(
         logged.some((line) =>
-          ['secret-key', 'a.device.proof', 'git/status', 'session=abc'].some((s) => line.includes(s)),
+          ['a.relay.ticket', 'a.device.proof', 'git/status', 'session=abc'].some((s) => line.includes(s)),
         ),
       ).toBe(false)
     } finally {
@@ -230,7 +227,7 @@ describe('forward routes', () => {
       fetch(`http://127.0.0.1:${server.port}${machineSealedPath(idA)}`, {
         method: 'POST',
         headers: {
-          [ACCESS_KEY_HEADER]: 'secret-key',
+          [RELAY_TICKET_HEADER]: 'a.relay.ticket',
           Cookie: 'session=abc',
           'content-type': 'application/octet-stream',
         },

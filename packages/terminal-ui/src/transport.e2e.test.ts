@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, setSystemTime, test } from 'bun:test'
 import {
-  ACCESS_KEY_HEADER,
   CLOSE_ACCESS_DENIED,
   CLOSE_DEVICE_NOT_APPROVED,
   DEVICE_NOT_APPROVED_CODE,
@@ -9,7 +8,7 @@ import {
   E2eError,
   RELAY_TICKET_HEADER,
 } from '@orch/shared'
-import { e2eMachine, HANDSHAKE, outcome, payloadOf, servers } from '../test/e2eMachine'
+import { E2E_TICKET, e2eMachine, HANDSHAKE, outcome, payloadOf, servers } from '../test/e2eMachine'
 
 // The remote transport with a pinned machine key: the end-to-end handshake, then every request sealed on its own
 // channel, against a fake machine behind the relay that plays the host's side. Sealed sockets are in
@@ -104,10 +103,8 @@ describe('the remote transport with a pinned machine key', () => {
     expect(sealed.find((s) => s.inner.method === 'POST')?.inner.body).toBe('{"path":"/tmp/x"}')
 
     for (const { headers, raw, inner } of sealed) {
-      expect([ACCESS_KEY_HEADER, RELAY_TICKET_HEADER, DEVICE_PROOF_HEADER].some((name) => headers.has(name))).toBe(
-        false,
-      )
-      expect(new Headers(inner.headers).get(ACCESS_KEY_HEADER)).toBe('k')
+      expect([RELAY_TICKET_HEADER, DEVICE_PROOF_HEADER].some((name) => headers.has(name))).toBe(false)
+      expect(new Headers(inner.headers).get(RELAY_TICKET_HEADER)).toBe(E2E_TICKET)
       expect(payloadOf(new Headers(inner.headers).get(DEVICE_PROOF_HEADER) ?? '')).toMatchObject({
         method: inner.method,
         path: inner.path,

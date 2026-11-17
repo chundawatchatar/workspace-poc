@@ -6,8 +6,6 @@ import type { Endpoint, TunnelState } from '@orch/shared'
 import { type AppDeps, createApp } from '../../app'
 import { localRequest } from '../../app.testing'
 import type { Principal } from '../../lib/principal'
-import { AccessKeyRepository } from '../access/access.repository'
-import { AccessKeys } from '../access/access.service'
 import { E2eSessions } from '../e2e/e2e.service'
 import { readSettingsFile } from '../settings/settings.repository'
 import { loadSettings } from '../settings/settings.service'
@@ -161,7 +159,6 @@ export let service: RemoteAccessService
 export let e2eSessions: E2eSessions
 
 export const configFile = () => join(dir, 'config.json')
-export const keysFile = () => join(dir, 'access-keys.json')
 export const machineKeyFile = () => join(dir, 'machine-key')
 export const linkedFile = () => join(dir, 'linked-account.json')
 export const devicesFile = () => join(dir, 'devices.json')
@@ -234,7 +231,6 @@ export function setup(
     audit: new AuditLogService(new AuditLogRepository(join(dir, 'remote-audit.jsonl'))),
     e2eSessions,
     machineKeyFile: machineKeyFile(),
-    keysFile: keysFile(),
     settingsFile: configFile(),
     addresses: options.addresses ?? startAddresses(env),
     handle: async () => new Response('ok'),
@@ -253,14 +249,6 @@ export function setup(
   } as unknown as AppDeps)
   return app
 }
-
-export const storedKeys = () => new AccessKeyRepository(keysFile()).load()
-
-/**
- * Saves an access key named `name` in `access-keys.json` and returns it, as an earlier host would have left it. The
- * service reads the file once, so call it before `setup`.
- */
-export const seedKey = (name = 'default') => new AccessKeys(new AccessKeyRepository(keysFile())).create(name)
 
 /** Posts `body` to `endpoint` as a local caller and reads the answer. */
 export async function post(app: ReturnType<typeof setup>, endpoint: Endpoint, body: unknown) {

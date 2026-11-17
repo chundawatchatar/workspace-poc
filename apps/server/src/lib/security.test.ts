@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { ACCESS_KEY_HEADER, DEVICE_PROOF_HEADER, machinePathPrefix, RELAY_TICKET_HEADER } from '@orch/shared'
+import { DEVICE_PROOF_HEADER, machinePathPrefix, RELAY_TICKET_HEADER } from '@orch/shared'
 import { createApp } from '../app'
 import { ChannelBridge } from '../modules/bridge/bridge.service'
 import { HttpForwarder } from '../modules/forward/forward.service'
@@ -69,7 +69,7 @@ describe('security', () => {
         headers: {
           origin,
           'access-control-request-method': 'POST',
-          'access-control-request-headers': ACCESS_KEY_HEADER,
+          'access-control-request-headers': RELAY_TICKET_HEADER,
         },
       })
     const ok = await preflight(allowed)
@@ -78,7 +78,7 @@ describe('security', () => {
     expect(ok.headers.get('vary')).toBe('Origin')
     expect(ok.headers.get('access-control-allow-methods')).toContain('POST')
     expect(ok.headers.get('access-control-allow-headers')).toBe(
-      `${ACCESS_KEY_HEADER}, ${RELAY_TICKET_HEADER}, ${DEVICE_PROOF_HEADER}, content-type`,
+      `${RELAY_TICKET_HEADER}, ${DEVICE_PROOF_HEADER}, content-type`,
     )
     // A ticket travels in a header, never a cookie, so the relay never allows credentials.
     expect(ok.headers.has('access-control-allow-credentials')).toBe(false)

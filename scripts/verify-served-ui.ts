@@ -5,7 +5,6 @@ import { join, resolve } from 'node:path'
 import { websocket } from '@hono/bun'
 import { SessionManager, shellProgram } from '@orch/terminal'
 import { createApp } from '../apps/host/src/app'
-import { accessKeysPath } from '../apps/host/src/modules/access/access.repository'
 import {
   AgentTrackingRepository,
   agentTrackingPath,
@@ -137,7 +136,6 @@ const remoteAccess = new RemoteAccessService({
   audit: new AuditLogService(new AuditLogRepository(auditLogPath(dataDir))),
   e2eSessions,
   machineKeyFile: machineKeyFile(dataDir),
-  keysFile: accessKeysPath(dataDir),
   settingsFile: settingsPath(dataDir),
   addresses: settings,
   handle: async () => new Response(null, { status: 404 }),

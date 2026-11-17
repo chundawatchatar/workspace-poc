@@ -115,7 +115,7 @@ export const serverMachinesContract = defineServerContract({
   unlink: {
     method: 'DELETE',
     path: '/api/machines/:machineId',
-    description: 'Removes a machine from the account. It does not touch the machine or its access key.',
+    description: 'Removes a machine from the account. It does not touch the machine.',
     input: unlinkMachineBody,
     output: unlinkMachineResponse,
   },
@@ -157,7 +157,7 @@ export const serverMachinesContract = defineServerContract({
     method: 'POST',
     path: '/api/machines/:machineId/relay-ticket',
     description:
-      "Signs a relay ticket that opens one of the signed-in user's machines for 60 seconds, without its access key. A machine the user doesn't list answers `not_found`.",
+      "Signs a relay ticket that opens one of the signed-in user's machines for 60 seconds. A machine the user doesn't list answers `not_found`.",
     input: relayTicketBody,
     output: relayTicketResponse,
   },
