@@ -1,10 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
-import { formatConnectFragment, machineFingerprint, type RotateAccessResponse } from '@orch/shared'
 import type { Principal } from '../../lib/principal'
 import type { AccessKey, AccessKeyRepository } from './access.repository'
-
-/** The name of the key the host creates on its first tunneled start and on every rotation. */
-export const DEFAULT_KEY_NAME = 'default'
 
 /** How often, at most, `lastUsedAt` changes are written to disk. */
 export const LAST_USED_PERSIST_MS = 60_000
@@ -15,15 +11,6 @@ const KEY_LENGTH = 43
 /** SHA-256 of `value`, as raw bytes. */
 function sha256(value: string): Buffer {
   return createHash('sha256').update(value).digest()
-}
-
-/**
- * The connect link for `key`: `<clientUrl>/#machine=<id>&key=<key>&fp=<fingerprint>`, where the fingerprint is
- * `machineFingerprint(id)`, so the browser checks the id against what this host printed rather than the server.
- */
-export function connectLink(clientUrl: string, machineId: string, key: string): string {
-  const fragment = formatConnectFragment({ machineId, key, fingerprint: machineFingerprint(machineId) })
-  return `${clientUrl.replace(/\/+$/, '')}/${fragment}`
 }
 
 /** A `CLIENT_URL` value as a client URL, or null unless it is an `http:` or `https:` URL without credentials. */
@@ -56,17 +43,15 @@ export function clientUrlFromServerUrl(value: string): string | null {
 }
 
 export interface AccessKeysOptions {
-  /** Told which key ids a rotation revoked, so their open sessions can be closed. */
-  onRevoked?: (keyIds: string[]) => void
   now?: () => Date
   persistEveryMs?: number
 }
 
 /**
- * The host's access keys. `authorize` is the one place the host decides
- * whether a tunneled request or channel may in. Only hashes are kept, in
- * memory and on disk; a raw key exists only in what `create` and `rotate`
- * return.
+ * The host's saved access keys. `authorize` is the one place the host decides
+ * whether a tunneled request or channel may in with a key. The host no longer
+ * issues keys; it only reads the ones already in `access-keys.json`. Only
+ * hashes are kept, in memory and on disk.
  */
 export class AccessKeys {
   private keys: AccessKey[]
@@ -80,7 +65,7 @@ export class AccessKeys {
   /** Loads the keys from `repository`, which throws for a file that is not valid. */
   constructor(
     private readonly repository: AccessKeyRepository,
-    private readonly options: AccessKeysOptions = {},
+    options: AccessKeysOptions = {},
   ) {
     this.now = options.now ?? (() => new Date())
     this.persistEveryMs = options.persistEveryMs ?? LAST_USED_PERSIST_MS
@@ -114,23 +99,14 @@ export class AccessKeys {
     return { kind: 'key', keyId: match.id, name: match.name }
   }
 
-  /** Adds a key named `name`, saves it and returns the raw key. It cannot be read back later. */
+  /**
+   * Adds a key named `name`, saves it and returns the raw key. It cannot be read back later. Nothing in the host
+   * calls it any more; tests use it to seed a saved key.
+   */
   create(name: string): string {
     const { key, stored } = this.newKey(name)
     this.replace([...this.keys, stored])
     return key
-  }
-
-  /**
-   * Replaces every key with a new `default` key and saves it. Returns the raw
-   * key and the ids it revoked, which `onRevoked` is also told.
-   */
-  rotate(): { key: string; revoked: string[] } {
-    const revoked = this.keys.map((stored) => stored.id)
-    const { key, stored } = this.newKey(DEFAULT_KEY_NAME)
-    this.replace([stored])
-    this.options.onRevoked?.(revoked)
-    return { key, revoked }
   }
 
   /** Writes pending `lastUsedAt` changes now, for shutdown. */
@@ -182,18 +158,4 @@ export class AccessKeys {
     // A pending write must not keep the process alive; shutdown flushes it.
     this.timer.unref?.()
   }
-}
-
-/** What the rotate route needs: the keys, and what goes into a connect link. */
-export interface RemoteAccess {
-  keys: AccessKeys
-  machineId: string
-  /** Null means no client URL is known, so no link can be built. */
-  clientUrl: string | null
-}
-
-/** Rotates the key and describes the new one, with its connect link when a client URL is known. */
-export function rotateAccess({ keys, machineId, clientUrl }: RemoteAccess): RotateAccessResponse {
-  const { key } = keys.rotate()
-  return { machineId, key, link: clientUrl ? connectLink(clientUrl, machineId, key) : null }
 }

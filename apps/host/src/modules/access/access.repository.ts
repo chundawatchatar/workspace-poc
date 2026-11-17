@@ -43,9 +43,7 @@ export class AccessKeyRepository {
     }
     const parsed = accessKeysFile.safeParse(value)
     if (!parsed.success) {
-      throw new Error(
-        `the access keys in ${this.file} are not valid. Fix the file, or delete it and run \`bun run host:rotate-key\``,
-      )
+      throw new Error(`the access keys in ${this.file} are not valid. Fix the file, or delete it`)
     }
     return parsed.data.keys
   }

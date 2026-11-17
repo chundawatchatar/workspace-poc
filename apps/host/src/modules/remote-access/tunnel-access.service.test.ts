@@ -15,6 +15,7 @@ import {
   linkedFile,
   relay,
   relayKeys,
+  seedKey,
   service,
   storedKeys,
   tunnels,
@@ -89,11 +90,11 @@ describe('RemoteAccessService.authorize', () => {
     expect(authorize({ key: null, ticket: ticketFor(), device: await device.presented(health) })).toEqual(asAccount)
   })
 
-  test('a key opens only with a fresh proof from an approved device, and a refused key never reads its proof', async () => {
-    const { tunnel } = connected()
+  test('a saved key opens only with a fresh proof from an approved device, and a refused key never reads its proof', async () => {
+    // Saved before the host starts, as the host now only reads keys an earlier version issued.
+    const presented = seedKey('second')
+    connected()
     const machineId = service.status().machineId ?? ''
-    const keys = service.current()?.keys
-    const presented = keys?.create('second') ?? ''
     const device = await testDevice()
     const health = { machineId, method: 'GET', path: '/api/health' }
 
@@ -127,12 +128,6 @@ describe('RemoteAccessService.authorize', () => {
     expect(authorize({ key: presented, ticket: null, device: socket })).toBeNull()
     const again = await device.presented({ machineId, method: 'WS', path: '/ws/events' })
     expect(authorize({ key: presented, ticket: null, device: again })).toEqual(asKey)
-
-    // A rotated key is refused even from the approved device, and its sockets close.
-    keys?.rotate()
-    expect(authorize({ key: presented, ticket: null, device: await device.presented(health) })).toBeNull()
-    expect(tunnel.closed.at(-1)?.reason).toBe('key rotated')
-    expect(tunnel.closed.at(-1)?.revoked(asKey)).toBe(true)
   })
 
   test('revoking a device closes only its channels and refuses it, and disconnect forgets every device', async () => {

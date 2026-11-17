@@ -6,7 +6,6 @@ import { stopDaemon } from '../modules/terminals/daemon.service'
 import { createHostCaller } from '../remote-cli'
 import { printable } from '../remote-cli-output'
 import { remoteCommand } from '../remote-command'
-import { rotateKeyCommand } from '../rotate-key-command'
 import { parseCliArgs, USAGE } from './args'
 import { runConfig } from './config'
 import { hostState, restart, start, status, stop } from './lifecycle'
@@ -107,8 +106,6 @@ export async function runCli(
         env: {},
         program: 'corch remote',
       })
-    case 'rotate-key':
-      return rotateKeyCommand({ dataDir, hostUrl: await runningUrl(dataDir), env: {}, settingsEnv: env })
   }
 }
 

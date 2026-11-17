@@ -7,6 +7,7 @@ import { type AppDeps, createApp } from '../../app'
 import { localRequest } from '../../app.testing'
 import type { Principal } from '../../lib/principal'
 import { AccessKeyRepository } from '../access/access.repository'
+import { AccessKeys } from '../access/access.service'
 import { E2eSessions } from '../e2e/e2e.service'
 import { readSettingsFile } from '../settings/settings.repository'
 import { loadSettings } from '../settings/settings.service'
@@ -246,7 +247,6 @@ export function setup(
   })
   service.start()
   const { app } = createApp({
-    access: () => service.current(),
     instanceId: 'test-instance',
     machinePublicKey: () => service.machinePublicKey(),
     remoteAccess: service,
@@ -255,6 +255,12 @@ export function setup(
 }
 
 export const storedKeys = () => new AccessKeyRepository(keysFile()).load()
+
+/**
+ * Saves an access key named `name` in `access-keys.json` and returns it, as an earlier host would have left it. The
+ * service reads the file once, so call it before `setup`.
+ */
+export const seedKey = (name = 'default') => new AccessKeys(new AccessKeyRepository(keysFile())).create(name)
 
 /** Posts `body` to `endpoint` as a local caller and reads the answer. */
 export async function post(app: ReturnType<typeof setup>, endpoint: Endpoint, body: unknown) {

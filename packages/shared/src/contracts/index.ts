@@ -1,4 +1,3 @@
-import { accessContract } from './access'
 import { agentTrackingContract } from './agentTracking'
 import { e2eContract } from './e2eSession'
 import { eventsSocket } from './events'
@@ -11,7 +10,6 @@ import { serverSystemContract } from './serverSystem'
 import { systemContract } from './system'
 import { terminalSocket } from './terminals'
 
-export { type RotateAccessResponse, rotateAccessResponse } from './access'
 export {
   type AgentTrackingAnswer,
   type AgentTrackingStatus,
@@ -283,7 +281,6 @@ export const routes = {
   system: systemContract,
   fs: fsContract,
   git: gitContract,
-  access: accessContract,
   remoteAccess: remoteAccessContract,
   agentTracking: agentTrackingContract,
   e2e: e2eContract,

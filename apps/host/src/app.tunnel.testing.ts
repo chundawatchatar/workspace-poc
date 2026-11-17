@@ -114,7 +114,7 @@ export let stub: ReturnType<typeof stubSessions>
 export let hub: EventHub
 let spies: Mock<(...args: unknown[]) => void>[]
 export let dir: string
-export let keys: AccessKeys
+/** The access key saved in `access-keys.json` before the host starts, as an earlier host would have issued it. */
 export let key: string
 export let remoteAccess: RemoteAccessService
 /** The end-to-end sessions the harness's host keeps, as `index.ts` builds them. */
@@ -229,7 +229,6 @@ async function setUp() {
     info,
     instanceId: 'test-instance',
     machinePublicKey: () => remoteAccess.machinePublicKey(),
-    access: () => remoteAccess.current(),
     remoteAccess,
     e2eSessions,
   } as unknown as AppDeps)
@@ -237,9 +236,6 @@ async function setUp() {
   local = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: app.fetch, websocket })
 
   remoteAccess.start()
-  const current = remoteAccess.current()
-  if (!current) throw new Error('remote access did not start')
-  keys = current.keys
 }
 
 async function tearDown() {

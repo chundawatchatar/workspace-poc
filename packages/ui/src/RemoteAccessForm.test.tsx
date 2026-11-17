@@ -52,8 +52,6 @@ function setup(overrides: Partial<Props> = {}) {
     status,
     statusLabel: 'Not connected',
     statusTone: 'off',
-    onNewLink: mock(),
-    link: null,
     connection: connection(),
     devices: {
       devices: undefined,
@@ -115,10 +113,11 @@ describe('RemoteAccessForm', () => {
       'title',
       expect.stringMatching(/fingerprint/),
     )
-    // The switch, the client address and Save are gone.
+    // The switch, the client address, Save and the connect link are gone.
     expect(screen.queryByRole('switch')).not.toBeInTheDocument()
     expect(screen.queryByRole('textbox', { name: /Client address/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'New connect link' })).not.toBeInTheDocument()
 
     const connect = screen.getByRole('button', { name: 'Connect' })
     expect(connect).toBeDisabled()
@@ -196,7 +195,6 @@ describe('RemoteAccessForm', () => {
     const user = userEvent.setup()
     const notice = "The server did not remove this machine from your account's list. Remove it in the client."
     const { props } = setup({ busy: true, notice })
-    expect(screen.getByRole('button', { name: 'New connect link' })).toBeDisabled()
     await user.type(screen.getByRole('textbox', { name: 'Email' }), 'a@example.com')
     await user.type(screen.getByRole('textbox', { name: 'Key' }), `${key}{Enter}`)
     expect(screen.getByRole('button', { name: 'Connect' })).toBeDisabled()
@@ -211,7 +209,6 @@ describe('RemoteAccessForm', () => {
       status: { ...status, tunnel: 'connected', linkedAccount },
       statusLabel: 'Connected',
       statusTone: 'good',
-      link: 'https://app.example.com/#machine=m-1&key=k',
     })
     expect(screen.getByRole('status')).toHaveTextContent('Connected')
     const panel = screen.getByRole('region', { name: 'Connected account' })
@@ -229,9 +226,10 @@ describe('RemoteAccessForm', () => {
     await user.click(within(panel).getByRole('button', { name: 'Disconnect' }))
     expect(props.connection.onDisconnect).toHaveBeenCalledTimes(1)
 
-    // A new connect link can still be copied.
-    await user.click(screen.getByRole('button', { name: 'Copy the link' }))
-    expect(await navigator.clipboard.readText()).toBe('https://app.example.com/#machine=m-1&key=k')
+    // Connected or not, the dialog hands out no connect link.
+    expect(screen.queryByRole('button', { name: 'New connect link' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Copy the link' })).not.toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('#machine=')
   })
 
   test('a waiting browser can only be dismissed, and is approved only by typing its fingerprint', async () => {

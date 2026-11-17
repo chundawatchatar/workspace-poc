@@ -15,7 +15,6 @@
     "db:down": "docker compose down",
     "db:generate": "bun run --filter @orch/domain db:generate",
     "db:migrate": "bun run --filter @orch/domain db:migrate",
-    "host:rotate-key": "bun run --filter @orch/host rotate-key",
     "host:remote": "bun apps/host/src/remote.ts",
     "terminals:stop": "bun scripts/stop-terminals.ts",
     "test:bun-daemon": "bun scripts/verify-bun-daemon.ts",

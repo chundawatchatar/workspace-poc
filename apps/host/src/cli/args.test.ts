@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { parseCliArgs, settingFlagArgs } from './args'
+import { parseCliArgs, settingFlagArgs, USAGE } from './args'
 
 describe('parseCliArgs', () => {
   test('reads the commands, the data folder anywhere and the setting flags', () => {
@@ -46,6 +46,11 @@ describe('parseCliArgs', () => {
 
   test('names an unknown command, so the caller can say which', () => {
     expect(parseCliArgs(['frobnicate', '--port', '1'])?.command).toEqual({ name: 'unknown', given: 'frobnicate' })
+    // The host issues no access keys, so the command that replaced one is gone. Spelt in parts, so a search of the
+    // code for the old name finds only what is left of it.
+    const removed = ['rotate', 'key'].join('-')
+    expect(parseCliArgs([removed])?.command).toEqual({ name: 'unknown', given: removed })
+    expect(USAGE).not.toContain(removed)
   })
 
   test('refuses an unknown command or flag, a missing value and a setting flag on a command without settings', () => {

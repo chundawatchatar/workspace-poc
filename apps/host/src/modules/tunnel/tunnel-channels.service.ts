@@ -162,8 +162,8 @@ export class TunnelChannels {
 
   /**
    * Closes every channel whose principal `revoked` matches with `code` and
-   * `reason`: `CLOSE_ACCESS_DENIED` for a rotated key, a revoked device or an
-   * unlinked account, `CLOSE_SESSION_ENDED` for an account that ended a session.
+   * `reason`: `CLOSE_ACCESS_DENIED` for a revoked device or an unlinked
+   * account, `CLOSE_SESSION_ENDED` for an account that ended a session.
    */
   closeChannels(revoked: (principal: Principal) => boolean, reason: string, code = CLOSE_ACCESS_DENIED): void {
     for (const channel of [...this.channels.values()]) {

@@ -3,10 +3,8 @@ import { createHash } from 'node:crypto'
 import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { machineFingerprint, parseConnectFragment } from '@orch/shared'
-import { createTestMachineKey } from '../tunnel/tunnel.testing'
 import { type AccessKey, AccessKeyRepository } from './access.repository'
-import { AccessKeys, clientUrlFromServerUrl, connectLink, parseClientUrl, rotateAccess } from './access.service'
+import { AccessKeys, clientUrlFromServerUrl, parseClientUrl } from './access.service'
 
 let dir: string
 let file: string
@@ -20,7 +18,6 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
 const stored = () => JSON.parse(readFileSync(file, 'utf8')) as { keys: AccessKey[] }
 const sha256 = (value: string) => createHash('sha256').update(value).digest('base64url')
-const { machineId } = createTestMachineKey()
 
 describe('AccessKeys', () => {
   test('create stores only the hash of a 32-byte key, in a file only this user can read', () => {
@@ -70,30 +67,9 @@ describe('AccessKeys', () => {
     keys.flush()
     expect(stored().keys[0]?.lastUsedAt).toBe(now.toISOString())
   })
-
-  test('rotate replaces every key with a new default key and reports the revoked ids', () => {
-    let revoked: string[] = []
-    const keys = new AccessKeys(new AccessKeyRepository(file), { onRevoked: (ids) => (revoked = ids) })
-    const old = [keys.create('default'), keys.create('laptop')]
-    const oldIds = stored().keys.map((entry) => entry.id)
-
-    const result = rotateAccess({ keys, machineId, clientUrl: 'https://orch.example/app/' })
-
-    expect(revoked).toEqual(oldIds)
-    expect(stored().keys).toEqual([expect.objectContaining({ name: 'default', hash: sha256(result.key) })])
-    for (const key of old) expect(keys.authorize(key)).toBeNull()
-    expect(keys.authorize(result.key)).toMatchObject({ name: 'default' })
-    expect(result.link?.startsWith('https://orch.example/app/#')).toBe(true)
-    expect(parseConnectFragment(new URL(result.link ?? '').hash)).toEqual({
-      machineId,
-      key: result.key,
-      fingerprint: machineFingerprint(machineId),
-    })
-    expect(rotateAccess({ keys, machineId, clientUrl: null }).link).toBeNull()
-  })
 })
 
-describe('connect links', () => {
+describe('client URLs', () => {
   test('the client URL is an http(s) CLIENT_URL, or SERVER_URL with ws(s) swapped for http(s)', () => {
     expect(parseClientUrl('https://orch.example/app/')).toBe('https://orch.example/app')
     expect(parseClientUrl('http://127.0.0.1:3220')).toBe('http://127.0.0.1:3220')
@@ -103,8 +79,5 @@ describe('connect links', () => {
     expect(clientUrlFromServerUrl('wss://relay.example.com:8443/base/')).toBe('https://relay.example.com:8443/base')
     expect(clientUrlFromServerUrl('ws://127.0.0.1:4600')).toBe('http://127.0.0.1:4600')
     expect(clientUrlFromServerUrl('https://relay.example.com')).toBeNull()
-    expect(connectLink('http://127.0.0.1:4600', machineId, 'k')).toBe(
-      `http://127.0.0.1:4600/#machine=${machineId}&key=k&fp=${machineFingerprint(machineId)}`,
-    )
   })
 })

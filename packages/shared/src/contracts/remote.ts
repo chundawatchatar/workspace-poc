@@ -66,7 +66,7 @@ export const CLOSE_E2E_SESSION_UNKNOWN = 4409
 /** The close code a browser socket gets when its machine has no live tunnel, or the tunnel drops. */
 export const CLOSE_MACHINE_OFFLINE = 4502
 
-/** The close code a browser socket gets when its access key is missing, wrong, late or rotated. */
+/** The close code a browser socket gets when its access key is missing, wrong or late, or its access was revoked. */
 export const CLOSE_ACCESS_DENIED = 4401
 
 /**
