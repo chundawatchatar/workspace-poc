@@ -107,6 +107,18 @@ describe('sessionQuery', () => {
     queryClient.unmount()
   })
 
+  test('a 401 reads as signed out, and any other status, a 404 included, fails', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    server.use(http.get('*/api/auth/get-session', () => authError(401, 'UNAUTHORIZED', 'Unauthorized')))
+    expect(await refetchSession(queryClient)).toBeNull()
+    server.use(
+      http.get('*/api/auth/get-session', () =>
+        HttpResponse.json({ error: { code: 'not_found', message: 'Not found.' } }, { status: 404 }),
+      ),
+    )
+    await expect(refetchSession(queryClient)).rejects.toThrow('Reading the session failed with 404.')
+  })
+
   test('a guard waiting on the first read still gets the session when the page watching it unmounts', async () => {
     fakeAccount(userA)
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
