@@ -22,6 +22,13 @@
       "when": 1793716877524,
       "tag": "0002_machine_enrollments",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1794910750284,
+      "tag": "0003_machine_enrollment_requests",
+      "breakpoints": true
     }
   ]
 }
