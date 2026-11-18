@@ -8,7 +8,7 @@ export interface PageOptions {
   header: ReactNode
   /** Shown under "The host is not running." and "The machine is offline." */
   offlineHint: ReactNode
-  /** Shown under "The access key was rejected." */
+  /** Shown under "This account can't open this machine." */
   deniedHint: ReactNode
   /** Shown while the machine waits for its owner to approve this browser. */
   unapprovedHint: ReactNode

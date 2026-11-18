@@ -52,8 +52,8 @@ const COPY: Record<ConnectionStatus, ConnectionCopy> = {
   denied: {
     label: 'Access denied',
     dot: 'bg-bad',
-    message: 'The access key was rejected.',
-    banner: 'The access key was rejected.',
+    message: "This account can't open this machine.",
+    banner: "This account can't open this machine.",
     hint: 'denied',
     retry: true,
   },

@@ -28,7 +28,10 @@ export interface TerminalUIProps {
   header?: ReactNode
   /** Says how to start the host when it is offline. Defaults to running `bun run dev` in the project root. */
   offlineHint?: ReactNode
-  /** Says what to do when the host rejects the access key. Defaults to asking the machine's owner for a new link. */
+  /**
+   * Says what to do when the machine refuses this account. Defaults to checking that the machine is connected to the
+   * account, then trying again.
+   */
   deniedHint?: ReactNode
   /**
    * Says how to approve this browser while the machine waits for it, such as the fingerprint to approve. Defaults to
