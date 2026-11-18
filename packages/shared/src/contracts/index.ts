@@ -133,8 +133,6 @@ export {
   CLOSE_MACHINE_OFFLINE,
   CLOSE_RATE_LIMITED,
   CLOSE_SESSION_ENDED,
-  type ConnectTarget,
-  formatConnectFragment,
   MACHINE_API_ROUTE,
   MACHINE_SEALED_ROUTE,
   MACHINE_SEALED_SOCKET_ROUTE,
@@ -142,7 +140,6 @@ export {
   machinePathPrefix,
   machineSealedPath,
   machineSealedSocketPath,
-  parseConnectFragment,
   type SocketAuthMessage,
   socketAuthMessage,
 } from './remote'

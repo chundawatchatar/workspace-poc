@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test'
-import { formatConnectFragment } from '@orch/shared'
 import { testMachine } from '../test/machineKey'
 import { clearSavedMachineKeys, type SavedKeysWindow } from './machines'
 
 const machine = testMachine()
-const connectLink = formatConnectFragment({ machineId: machine.id, key: 'k1', fingerprint: machine.fingerprint })
+/** The fragment of a connect link an older host printed. */
+const connectLink = `#machine=${machine.id}&key=k1&fp=${machine.fingerprint}`
 
 /** A window at `url` over this page's storage, whose `replaceState` moves it like a browser's would. */
 function fakeWindow(url: string) {

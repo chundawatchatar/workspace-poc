@@ -75,31 +75,3 @@ export const CLOSE_SESSION_ENDED = 4410
 
 /** The close code a browser socket gets when the server refuses it for a rate limit. */
 export const CLOSE_RATE_LIMITED = 4429
-
-/**
- * What a connect link carries: the machine to open, the key to open it with, and the machine's `fingerprint`
- * (`machineFingerprint(machineId)`), which the host printed, so the browser can trust the id without the server.
- */
-export interface ConnectTarget {
-  machineId: string
-  key: string
-  fingerprint: string
-}
-
-/**
- * The URL fragment of a connect link, such as `#machine=<id>&key=<key>&fp=<fingerprint>`. Fragments never reach the
- * server.
- */
-export function formatConnectFragment({ machineId, key, fingerprint }: ConnectTarget): string {
-  return `#${new URLSearchParams({ machine: machineId, key, fp: fingerprint })}`
-}
-
-/** Reads a connect link's fragment, with or without the leading `#`; null means a field is missing or empty. */
-export function parseConnectFragment(hash: string): ConnectTarget | null {
-  const params = new URLSearchParams(hash.startsWith('#') ? hash.slice(1) : hash)
-  const machineId = params.get('machine')
-  const key = params.get('key')
-  const fingerprint = params.get('fp')
-  if (!machineId || !key || !fingerprint) return null
-  return { machineId, key, fingerprint }
-}

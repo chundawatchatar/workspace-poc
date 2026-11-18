@@ -15,7 +15,7 @@ export interface ConnectionLimiterDeps {
   perMachine?: BucketLimit
   /** Tunnel upgrades per IP. Defaults to 10, refilling 1 per 10 s. */
   tunnelPerIp?: BucketLimit
-  /** Rejected access keys per IP. Defaults to 10, refilling 1 per minute. */
+  /** Refused requests per IP, counted from `auth.failed` reports. Defaults to 10, refilling 1 per minute. */
   badKeysPerIp?: BucketLimit
   /** `enroll.request` and `unlink` frames per machine id. Defaults to 10, refilling 1 per 30 s. */
   enrollPerMachine?: BucketLimit
@@ -86,9 +86,12 @@ class TokenBuckets {
  * Rate limits for connection attempts, kept in memory for this server only.
  * Browser requests and sockets take a token from their IP's bucket, then from
  * their machine's. Tunnel upgrades have their own per-IP bucket, and
- * `enroll.request` and `unlink` frames their own per-machine one. An IP whose
- * bad-key bucket is empty is refused everywhere until it refills. It sees only
- * IPs, machine ids and `auth.failed` reports, never a key or a relayed request.
+ * `enroll.request` and `unlink` frames their own per-machine one. Each
+ * `auth.failed` a machine reports, for a refused relay ticket or device proof,
+ * takes a token from the sending IP's refused-request bucket, and an IP that
+ * is out of those tokens is refused for every machine until one refills. It
+ * sees only IPs, machine ids and `auth.failed` reports, never a ticket, a
+ * proof or a relayed request.
  */
 export class ConnectionLimiter {
   private readonly perIp: TokenBuckets
@@ -118,8 +121,8 @@ export class ConnectionLimiter {
 
   /**
    * Admits a browser request or socket from `ip` to `machineId`. An IP that is
-   * blocked for bad keys, or out of tokens, is refused before it takes a token
-   * from the machine's bucket.
+   * blocked for refused requests, or out of tokens, is refused before it takes
+   * a token from the machine's bucket.
    */
   admitBrowser(ip: string, machineId: string): Admission {
     const blocked = this.badKeys.wait(ip)
@@ -146,12 +149,15 @@ export class ConnectionLimiter {
     return wait > 0 ? refused(wait) : { ok: true }
   }
 
-  /** Counts a rejected access key against `ip`. An IP already out of bad-key tokens stays blocked. */
+  /**
+   * Counts a refused relay ticket or device proof, reported by the machine in
+   * `auth.failed`, against `ip`. An IP already out of these tokens stays blocked.
+   */
   badKey(ip: string): void {
     this.badKeys.take(ip)
   }
 
-  /** Drops full buckets, which includes the bad-key blocks that have run out. */
+  /** Drops full buckets, which includes the refused-request blocks that have run out. */
   sweep(): void {
     this.perIp.sweep()
     this.perMachine.sweep()

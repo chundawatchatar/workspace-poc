@@ -38,8 +38,9 @@ export type Theme = 'light' | 'dark'
 
 /**
  * The page's connection to the host, read from the events socket. `connecting` lasts until the first `hello`;
- * `offline` means the server is up but the machine is not; `denied` means the host rejected the access key;
- * `unapproved` means the machine waits for its owner to approve this browser there.
+ * `offline` means the server is up but the machine is not; `denied` means the machine refused this account's relay
+ * ticket or this browser's device proof; `unapproved` means the machine waits for its owner to approve this browser
+ * there.
  */
 export type ConnectionStatus = 'connecting' | 'open' | 'reconnecting' | 'offline' | 'denied' | 'unapproved'
 
@@ -195,7 +196,8 @@ export function connect(via: HostTransport, timer: ConnectTimer = realTimer): ()
       if (stopped || own !== ws) return
       own = null
       if (event.code === CLOSE_ACCESS_DENIED) {
-        // The same key can't succeed, and each try counts against the server's bad-key limit.
+        // A refused relay ticket or device proof won't pass on a plain retry, and each refused try counts against
+        // the server's per-IP limit on refused requests, so the page waits for Try again.
         set({ status: 'denied' })
         return
       }

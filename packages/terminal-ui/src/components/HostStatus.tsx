@@ -11,8 +11,8 @@ export const LOCAL_OFFLINE_HINT = (
   </>
 )
 
-/** The default `deniedHint`, for a user who doesn't own the machine. */
-export const DEFAULT_DENIED_HINT = "Ask the machine's owner for a new connect link."
+/** The default `deniedHint`, for a machine that refused this account. */
+export const DEFAULT_DENIED_HINT = 'Check that the machine is connected to this account, then try again.'
 
 /** The default `unapprovedHint`, for an app that doesn't show the browser's fingerprint. */
 export const DEFAULT_UNAPPROVED_HINT = 'Approve this browser in the Remote access setting on the machine.'
@@ -27,7 +27,7 @@ export function useConnectionHint(): ReactNode {
   return hint === 'unapproved' ? unapprovedHint : null
 }
 
-/** Opens the events socket again, for a key that was rejected. */
+/** Opens the events socket again, after the machine refused this account. */
 export function TryAgainButton() {
   return (
     <button
