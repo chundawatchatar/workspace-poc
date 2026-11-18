@@ -185,7 +185,7 @@ through the tunnel are checked by their relay ticket and device proof instead
 ## 3. Open it from a browser
 
 Once the machine is connected, any browser signed in to that account opens it
-from the client's home page: every machine in the list has an Open link. The
+from the client's home page: every machine's name in the list is a link that opens it. The
 browser reaches it only through the account, with a relay ticket and its own
 device key (section 4).
 
@@ -200,14 +200,13 @@ key (`GET /api/machine-key`, through the relay with the same ticket and device
 proof as every other request) and checks that it hashes to the machine id. The
 first time a browser opens the machine, nothing printed by the host vouches for
 the machine id the server listed, so once the machine answers its key the page
-asks you to type the fingerprint the machine shows: Machine key in its "Remote
-access…" dialog, or `bun run host:remote status`. The page doesn't show the
-fingerprint itself, so it can only come from the machine. Confirm stays
-disabled until the typed fingerprint matches (dashes, spaces and case don't
-matter), so a stray click can't pin a key; "It doesn't match" pins nothing and
-shows the warning below. The browser then pins that key in IndexedDB beside its
-device key; every later open checks the key against the pin and doesn't ask
-again.
+shows its fingerprint and asks you to check it against the one the machine
+shows: Machine key in its "Remote access…" dialog, or
+`bun run host:remote status`. "It matches" pins the key in IndexedDB beside the
+browser's device key, and every later open checks the key against the pin
+without asking again. "It doesn't match" pins nothing and shows the warning
+below. Only answer "It matches" after comparing: it is what stops a compromised
+server from posing as the machine.
 
 If the page says **"The machine key doesn't match"**, the key it got isn't the
 one this browser trusts for that machine: something between them, such as a
@@ -270,10 +269,13 @@ waits in the Remote access setting's Devices list (at most 5, for 15 minutes
 each), by the fingerprint its browser shows, such as `ABCD-EFGH-JKMN-PQRS`. The
 browser's page says which fingerprint to approve, and opens by itself once it
 is. A waiting row has only Dismiss: to approve, type the fingerprint your
-browser shows into "Fingerprint shown in your browser" under the list and press
-Approve or Enter, or run `bun run host:remote devices approve <fingerprint>`
-from a terminal on the machine (see "From the terminal" below). Case, dashes
-and spaces don't matter. The host checks the typed fingerprint against the
+browser shows into "Fingerprint shown in your browser"
+under the list and press Approve or Enter, or run
+`bun run host:remote devices approve <fingerprint>` from a terminal on the
+machine (see "From the terminal" below). The field uppercases what you type and
+adds the dashes, and once all 16 characters are in it says whether they match a
+waiting browser; Approve stays off until they do. The field shows only while a
+browser is waiting. The host checks the typed fingerprint against the
 waiting list itself: one that matches no waiting browser (unknown, expired or
 mistyped) approves nothing and gets `No browser with the fingerprint <typed> is
 waiting. Open this machine in your own browser and type the fingerprint it

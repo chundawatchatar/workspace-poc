@@ -185,8 +185,8 @@ way also sends a `session.ended` frame to the account's online machines, which c
 relay tickets opened (see [architecture](architecture.md)); browsers still signed in reconnect with a fresh ticket.
 
 The client's `/settings/security` page uses them. It is reached from the account menu
-(`apps/client/src/components/account/AccountMenu.tsx`), shown in the home page's title row and in the machine page's sidebar
-header. It changes the password with `change-password` and `revokeOtherSessions: true`, so every other session ends and
+(`apps/client/src/components/account/AccountMenu.tsx`), shown in the home page's title row and at the bottom left of the machine page's
+sidebar. It changes the password with `change-password` and `revokeOtherSessions: true`, so every other session ends and
 this browser stays signed in under a new session. It lists the sessions in a table, marks this browser's as
 "This device" and revokes any other row. "Sign out from all devices" asks for confirmation, then calls
 `revoke-sessions`. A 401 from any of these calls reads the session again, so a session revoked elsewhere lands on
@@ -268,7 +268,7 @@ server only signs tickets.
 - The accounts API (`serverRoutes.machines`, `apps/server/src/modules/machines/`) stores and returns only machine
   ids and names. Every input is strict, so a body carrying a `key` field gets 400, and the module never reads request
   headers.
-- The home page lists the account's machines, each with an Open link. A machine page opens a machine the account
+- The home page lists the account's machines, each name a link that opens it. A machine page opens a machine the account
   lists with relay tickets (`createRemoteTransport` with `relayTicket`), and only that way.
 - Relay tickets: `serverRoutes.machines.relayTicket` (`POST /api/machines/:machineId/relay-ticket`, `auth: 'user'`)
   signs one only when the machine is in the caller's scoped list, and answers `not_found` otherwise. A ticket is a

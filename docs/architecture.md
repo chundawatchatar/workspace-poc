@@ -251,8 +251,8 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   Open question: whether unlink should ask for confirmation.
 - The client's settings (`/settings`, a left nav of sections; password and sessions on `/settings/security`) are reached
   from the account menu (`src/components/account/AccountMenu.tsx`: the user's email as a button opening "Settings" and
-  "Sign out"), shown in the home page's title row and in the machine page's sidebar
-  `header`. It changes the password with Better Auth's `change-password` and `revokeOtherSessions: true`: Better Auth
+  "Sign out"), shown in the home page's title row and at the bottom left of the machine page's
+  sidebar. It changes the password with Better Auth's `change-password` and `revokeOtherSessions: true`: Better Auth
   1.7.14 deletes every session of the user and starts a new one for this browser, so the user stays signed in under a
   new session id (the user id is unchanged, so the identity watcher does nothing), and the token it answers is
   dropped. Its sessions table (TanStack Table) shows each session's device (parsed from the user agent), IP address
@@ -262,7 +262,7 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   "Sign out from all devices" asks for confirmation, then calls `revoke-sessions` (this session included) and marks
   the session as signed out. A 401 from any of these calls reads the session again, so a session revoked elsewhere
   lands on sign-in.
-- Every listed machine has an Open link, and its page opens it only through the account, with relay tickets; an id
+- Every listed machine's name is a link that opens it, and its page opens it only through the account, with relay tickets; an id
   the account doesn't list says it isn't linked to the account. Older clients saved access keys in `localStorage`
   (`orch-machines`); `clearSavedMachineKeys()` removes that entry and an old link's `key` fragment unused, before the
   router reads the URL.
@@ -709,10 +709,11 @@ terminals. An idle socket costs one TCP connection and a small ping, and one sma
   when none exists, never creating one) through the page's own transport, so it is authorized like every machine
   route. It checks `machineKeyMatches(publicKey, machineId)`, then the pin in the `machine-keys` store of the
   `orch-device` IndexedDB database (`src/lib/machineKeys.ts`, `{ publicKey, pinnedAt, source }`), never in
-  `localStorage`, a query key, a URL or a log. The id itself is vouched for out of band, only by the owner typing the
-  fingerprint the machine shows locally (`machineFingerprint(id)`), which the page never displays itself, before the
-  first key is pinned (`source: 'confirmed'`). Pins with `source: 'link'`, made by older clients from a printed
-  link, are still read. A server that lists an id for a key of its own fails that comparison. A key that doesn't hash to the id, or differs from the pin, stops the page with a warning and no Retry,
+  `localStorage`, a query key, a URL or a log. The id itself is vouched for out of band, only by the owner comparing the
+  fingerprint the page shows (`machineFingerprint(id)`) with the one the machine shows locally and answering "It
+  matches", before the first key is pinned (`source: 'confirmed'`). Pins with `source: 'link'`, made by older clients
+  from a printed link, are still read. A server that lists an id for a key of its own fails that comparison. Open risk:
+  the owner compares rather than types, so one who answers "It matches" without looking pins whatever key was served. A key that doesn't hash to the id, or differs from the pin, stops the page with a warning and no Retry,
   so no terminal socket opens and nothing reconnects. The check runs once per page open, not when sockets reconnect.
   The machine now signs for the browser with this key: `<TerminalUI>` gets a transport that opens an end-to-end session
   first, and an answer that doesn't verify against the pin stops the page the same way. Its HTTP requests and sockets are then sealed
