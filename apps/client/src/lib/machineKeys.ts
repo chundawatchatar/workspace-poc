@@ -48,7 +48,16 @@ export const indexedDbMachineKeyStore: MachineKeyStore = {
     return isPin(value) ? value : null
   },
   add: async (machineId, pin) => {
-    await withDeviceStore(STORE, 'readwrite', (store) => store.add(pin, machineId))
+    const saved: unknown = await withDeviceStore(STORE, 'readonly', (store) => store.get(machineId))
+    if (saved === undefined) {
+      await withDeviceStore(STORE, 'readwrite', (store) => store.add(pin, machineId))
+      return
+    }
+    if (isPin(saved)) throw new Error('This machine already has a pin')
+    // A record this client can't read as a pin, such as one from a version that saved other fields, is no pin at
+    // all, so it is replaced. Any two keys that hash to the same id are the same key, so a tab racing this one can only
+    // save the same key.
+    await withDeviceStore(STORE, 'readwrite', (store) => store.put(pin, machineId))
   },
 }
 

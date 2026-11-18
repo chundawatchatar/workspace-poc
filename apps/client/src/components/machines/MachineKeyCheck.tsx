@@ -1,9 +1,9 @@
-import { DEVICE_NOT_APPROVED_CODE, fingerprintKey, machineFingerprint, routes } from '@orch/shared'
+import { DEVICE_NOT_APPROVED_CODE, machineFingerprint, routes } from '@orch/shared'
 import { callApi, HostApiError, type HostTransport } from '@orch/terminal-ui'
-import { Button, TextField } from '@orch/ui'
+import { Button } from '@orch/ui'
 import { ShieldAlert } from '@orch/ui/icons'
 import { Link } from '@tanstack/react-router'
-import { type FormEvent, type ReactNode, useEffect, useRef, useState } from 'react'
+import { type ReactNode, useEffect, useState } from 'react'
 import { ZodError } from 'zod'
 import { checkMachineKey, type MachineKeyStore, machineKeyStores, pinMachineKey } from '../../lib/machineKeys'
 import { Centered, linkClass } from '../Centered'
@@ -62,8 +62,8 @@ async function checkKey({
 
 /**
  * Checks the machine's key before its page mounts. It fetches `routes.system.machineKey` through `transport` and
- * checks the key hashes to `machineId` and equals this browser's pin. With no pin yet, it pins the key only once the
- * owner confirms the fingerprint. A key that fails either check stops here with a warning and no Retry, so no
+ * checks the key hashes to `machineId` and equals this browser's pin. With no pin yet, it shows the fingerprint and
+ * pins the key only once the owner says it matches the one the machine shows. A key that fails either check stops here with a warning and no Retry, so no
  * terminal socket opens and nothing reconnects. The page gets the checked key, so its own transport can make the
  * machine prove it holds that key.
  */
@@ -150,9 +150,8 @@ export function MachineKeyCheck({
 const command = (text: string) => <code className="rounded bg-raised px-1.5 py-0.5 font-mono text-ink">{text}</code>
 
 /**
- * Asks the owner to type the fingerprint the machine shows locally. The page never shows its own, so the owner can't
- * copy it from here instead of reading the machine, and Confirm is enabled only once the typed one matches, so a stray
- * click can't pin a key. "It doesn't match" pins nothing.
+ * Shows the machine's fingerprint and asks the owner to compare it with the one the machine shows locally. "It
+ * matches" pins the key; "It doesn't match" pins nothing.
  */
 function ConfirmFingerprint({
   machineId,
@@ -166,49 +165,37 @@ function ConfirmFingerprint({
   onFailed: () => void
 }) {
   const fingerprint = machineFingerprint(machineId)
-  const [typed, setTyped] = useState('')
   const [pending, setPending] = useState(false)
-  const field = useRef<HTMLInputElement>(null)
-  useEffect(() => field.current?.focus(), [])
-  const matches = fingerprintKey(typed) === fingerprintKey(fingerprint)
-  const complete = fingerprintKey(typed).length >= fingerprintKey(fingerprint).length
-  const submit = (event: FormEvent) => {
-    event.preventDefault()
-    if (!matches || pending) return
+  const confirm = () => {
+    if (pending) return
     setPending(true)
     onConfirm().catch(onFailed)
   }
   return (
     <Centered>
-      <form onSubmit={submit} className="flex w-full max-w-md flex-col gap-3 text-[13px]">
-        <h1 className="text-base font-medium text-ink">Check this machine's key</h1>
+      <section aria-labelledby="machine-key-title" className="flex w-full max-w-md flex-col gap-3 text-[13px]">
+        <h1 id="machine-key-title" className="text-base font-medium text-ink">
+          Check this machine's key
+        </h1>
         <p>
-          This is the first time this browser opens the machine through your account. On the machine, find Machine key
-          in its Remote access setting, or run {command('bun run host:remote status')}, and type the fingerprint it
-          shows.
+          This is the first time this browser opens the machine through your account. Check that the machine shows the
+          same fingerprint: Machine key in its Remote access setting, or {command('bun run host:remote status')}.
         </p>
-        <TextField
-          ref={field}
-          label="Machine key fingerprint"
-          name="machine-fingerprint"
-          autoComplete="off"
-          value={typed}
-          onChange={setTyped}
-          error={
-            complete && !matches
-              ? "That isn't this machine's key. Check what you typed; if it's what the machine shows, it doesn't match."
-              : null
-          }
-        />
+        <dl className="flex flex-col gap-1">
+          <dt className="text-xs font-medium text-dim">Machine key fingerprint</dt>
+          <dd className="rounded-md border border-line bg-raised px-3 py-2.5 text-center font-mono text-base tracking-wider text-ink">
+            {fingerprint}
+          </dd>
+        </dl>
         <div className="flex gap-2">
-          <Button type="submit" disabled={!matches} pending={pending}>
-            Confirm
+          <Button pending={pending} onClick={confirm}>
+            It matches
           </Button>
           <Button variant="secondary" disabled={pending} onClick={onReject}>
             It doesn't match
           </Button>
         </div>
-      </form>
+      </section>
     </Centered>
   )
 }

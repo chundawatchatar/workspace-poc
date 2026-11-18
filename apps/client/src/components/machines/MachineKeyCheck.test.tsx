@@ -65,7 +65,7 @@ describe('MachineKeyCheck', () => {
     const view = await show({ machineId: machine.id, transport: first.transport, store })
     expect(await screen.findByText("The machine's page")).toBeInTheDocument()
     expect(first.paths).toEqual([routes.system.machineKey.path])
-    expect(screen.queryByRole('button', { name: 'Confirm' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'It matches' })).not.toBeInTheDocument()
     view.unmount()
 
     // Another key under the same id can only be one that doesn't hash to it.
@@ -75,26 +75,19 @@ describe('MachineKeyCheck', () => {
     expect(pins.get(machine.id)).toEqual(pin(machine.publicKey, 'link'))
   })
 
-  test('with no pin it waits for approval, then pins only once the owner types the fingerprint the machine shows', async () => {
+  test('with no pin it waits for approval, then shows the fingerprint and pins once the owner says it matches', async () => {
     const { store, pins } = memoryMachineKeyStore()
     const { transport, paths } = fakeTransport(unapproved, serves(machine.publicKey))
     const { user } = await show({ machineId: machine.id, transport, store })
     expect(await screen.findByText('Approve ABCD on the machine.')).toBeInTheDocument()
 
-    // The page never shows the fingerprint, so it can only come from the machine; the field is ready to type in.
-    const field = await screen.findByRole('textbox', { name: 'Machine key fingerprint' })
+    // The fingerprint to compare is shown; nothing is typed, and nothing is pinned until the owner answers.
+    expect(await screen.findByText(machine.fingerprint)).toBeInTheDocument()
     expect(paths.length).toBeGreaterThan(1)
-    expect(field).toHaveFocus()
-    expect(document.body).not.toHaveTextContent(machine.fingerprint)
-    const confirm = screen.getByRole('button', { name: 'Confirm' })
-    expect(confirm).toBeDisabled()
-    await user.type(field, impostor.fingerprint)
-    expect(confirm).toBeDisabled()
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
     expect(pins.size).toBe(0)
 
-    await user.clear(field)
-    await user.type(field, machine.fingerprint.toLowerCase())
-    await user.click(confirm)
+    await user.click(screen.getByRole('button', { name: 'It matches' }))
     expect(await screen.findByText("The machine's page")).toBeInTheDocument()
     expect(pins.get(machine.id)).toEqual({
       publicKey: machine.publicKey,
@@ -117,7 +110,7 @@ describe('MachineKeyCheck', () => {
     const served = fakeTransport(serves(machine.publicKey))
     const again = await show({ machineId: machine.id, transport: served.transport, store })
     expect(await screen.findByText("The machine's page")).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Confirm' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'It matches' })).not.toBeInTheDocument()
     again.unmount()
 
     for (const answer of [serves(impostor.publicKey), serves('not-a-key'), () => Response.json({})]) {
