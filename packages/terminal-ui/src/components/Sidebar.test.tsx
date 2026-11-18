@@ -119,7 +119,8 @@ function setup({
           <PageOptionsProvider
             value={{
               machine: { id: 'm1', name: 'My machine' },
-              header: <p>Account</p>,
+              header: <p>All machines</p>,
+              footer: <p>Account</p>,
               offlineHint: null,
               deniedHint: null,
               unapprovedHint: null,

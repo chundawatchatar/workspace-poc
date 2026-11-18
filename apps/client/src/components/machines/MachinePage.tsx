@@ -211,11 +211,11 @@ function MachineTerminalUI({
           <ArrowLeft size={13} />
           All machines
         </Link>
-        <AccountMenu className="ml-auto min-w-0" />
       </div>
     ),
     [],
   )
+  const footer = useMemo(() => <AccountMenu className="w-full min-w-0" opensUp />, [])
 
   return (
     <TerminalUI
@@ -225,6 +225,7 @@ function MachineTerminalUI({
       workspaceHref={workspaceHref}
       machine={info}
       header={header}
+      footer={footer}
       offlineHint={offlineHint}
       deniedHint={deniedHint}
       unapprovedHint={unapproved}

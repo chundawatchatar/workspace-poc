@@ -36,7 +36,7 @@ export function Sidebar({ activeId, open }: { activeId: string | undefined; open
   const workspaces = useApp((s) => s.state?.workspaces)
   const status = useApp((s) => s.status)
   const leader = useApp((s) => s.leader)
-  const { machine, header, remoteAccessStatus } = usePageOptions()
+  const { machine, header, footer, remoteAccessStatus } = usePageOptions()
 
   return (
     // The shell animates between the sidebar's width and zero; the sidebar inside keeps its width and is clipped.
@@ -74,6 +74,7 @@ export function Sidebar({ activeId, open }: { activeId: string | undefined; open
         </nav>
 
         {remoteAccessStatus && <RemoteAccessStatusButton />}
+        {footer && <div className="flex shrink-0 items-center border-t border-line px-1.5 py-1">{footer}</div>}
         <div className="flex h-9 shrink-0 items-center justify-between border-t border-line px-3 text-xs text-dim">
           <span className="flex items-center gap-1.5">
             <span className={`h-1.5 w-1.5 rounded-full ${connectionCopy(status).dot}`} />

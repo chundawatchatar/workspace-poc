@@ -6,6 +6,8 @@ export interface PageOptions {
   machine: { id: string; name: string } | undefined
   /** Rendered at the top of the sidebar. */
   header: ReactNode
+  /** Rendered at the bottom left of the sidebar. */
+  footer: ReactNode
   /** Shown under "The host is not running." and "The machine is offline." */
   offlineHint: ReactNode
   /** Shown under "This account can't open this machine." */

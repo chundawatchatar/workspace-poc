@@ -27,17 +27,24 @@ export function Menu(props: BaseMenu.Root.Props) {
 /** The button that opens a `Menu`. Renders a `<button>`; style it like any button. */
 export const MenuTrigger = BaseMenu.Trigger
 
-/** A `Menu`'s list, rendered in the body below its trigger, so a scrolling or narrow parent can't clip it. */
+/** A `Menu`'s list, rendered in the body below (or above) its trigger, so a scrolling or narrow parent can't clip it. */
 export function MenuPopup(props: {
   children: ReactNode
   /** Which edge of the trigger the menu lines up with. */
   align?: 'start' | 'end'
+  /** Which side of the trigger the menu opens on. Defaults to below. */
+  side?: 'top' | 'bottom'
   'aria-label'?: string
   className?: string
 }) {
   return (
     <BaseMenu.Portal>
-      <BaseMenu.Positioner className="z-50 outline-none" side="bottom" align={props.align ?? 'end'} sideOffset={4}>
+      <BaseMenu.Positioner
+        className="z-50 outline-none"
+        side={props.side ?? 'bottom'}
+        align={props.align ?? 'end'}
+        sideOffset={4}
+      >
         <BaseMenu.Popup aria-label={props['aria-label']} className={cn(popupClass, props.className)} {...popupEvents}>
           {props.children}
         </BaseMenu.Popup>

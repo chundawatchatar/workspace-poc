@@ -64,6 +64,7 @@ function setup({ remoteAccessSetting }: { remoteAccessSetting: boolean }) {
             value={{
               machine: undefined,
               header: null,
+              footer: null,
               offlineHint: null,
               deniedHint: null,
               unapprovedHint: null,

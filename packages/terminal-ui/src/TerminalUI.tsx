@@ -26,6 +26,8 @@ export interface TerminalUIProps {
   machine?: { id: string; name: string }
   /** Rendered at the top of the sidebar, such as a link back to the app's own pages. */
   header?: ReactNode
+  /** Rendered at the bottom left of the sidebar, above the connection status, such as who is signed in. */
+  footer?: ReactNode
   /** Says how to start the host when it is offline. Defaults to running `bun run dev` in the project root. */
   offlineHint?: ReactNode
   /**
@@ -65,6 +67,7 @@ export function TerminalUI({
   children,
   machine,
   header,
+  footer,
   offlineHint = LOCAL_OFFLINE_HINT,
   deniedHint = DEFAULT_DENIED_HINT,
   unapprovedHint = DEFAULT_UNAPPROVED_HINT,
@@ -88,6 +91,7 @@ export function TerminalUI({
     () => ({
       machine,
       header,
+      footer,
       offlineHint,
       deniedHint,
       unapprovedHint,
@@ -95,7 +99,17 @@ export function TerminalUI({
       remoteAccessSetting,
       remoteAccessStatus,
     }),
-    [machine, header, offlineHint, deniedHint, unapprovedHint, titleSuffix, remoteAccessSetting, remoteAccessStatus],
+    [
+      machine,
+      header,
+      footer,
+      offlineHint,
+      deniedHint,
+      unapprovedHint,
+      titleSuffix,
+      remoteAccessSetting,
+      remoteAccessStatus,
+    ],
   )
 
   useEffect(() => connect(transport), [transport])

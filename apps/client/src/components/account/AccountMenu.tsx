@@ -7,9 +7,10 @@ import { focusClass } from '../Centered'
 
 /**
  * A button showing the signed-in user's email, which opens a menu with the account page and sign out. It reads the
- * session itself, so a memoized parent needs no user dependency. Renders nothing while signed out.
+ * session itself, so a memoized parent needs no user dependency. Renders nothing while signed out. At the bottom of a
+ * page (the machine page's sidebar) it opens upward with `opensUp`.
  */
-export function AccountMenu({ className = '' }: { className?: string }) {
+export function AccountMenu({ className = '', opensUp = false }: { className?: string; opensUp?: boolean }) {
   const user = useQuery(sessionQuery).data
   const queryClient = useQueryClient()
   const navigate = useNavigate()
@@ -32,10 +33,10 @@ export function AccountMenu({ className = '' }: { className?: string }) {
         className={`flex max-w-full items-center gap-1.5 px-1.5 py-0.5 text-xs text-dim hover:bg-raised hover:text-ink active:bg-line data-popup-open:bg-raised data-popup-open:text-ink ${focusClass} ${className}`}
       >
         <CircleUser size={13} className="shrink-0" />
-        <span className="min-w-0 truncate">{user.email}</span>
+        <span className="min-w-0 flex-1 truncate text-left">{user.email}</span>
         <ChevronDown size={12} className="shrink-0" />
       </MenuTrigger>
-      <MenuPopup aria-label="Account">
+      <MenuPopup aria-label="Account" side={opensUp ? 'top' : 'bottom'} align={opensUp ? 'start' : 'end'}>
         <MenuLinkItem render={<Link to="/settings/account" />}>Settings</MenuLinkItem>
         <MenuItem onClick={() => void onSignOut()}>Sign out</MenuItem>
       </MenuPopup>
