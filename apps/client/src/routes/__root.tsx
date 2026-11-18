@@ -4,6 +4,7 @@ import { THEME_BOOT_SCRIPT, Toaster } from '@orch/ui'
 import { QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { createRootRouteWithContext, HeadContent, Outlet, Scripts } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
+import { PageError } from '../components/PageError'
 import { PageNotFound } from '../components/PageNotFound'
 import { sessionQuery } from '../lib/auth'
 import type { RouterContext } from '../router'
@@ -25,6 +26,8 @@ export const Route = createRootRouteWithContext<RouterContext>()({
   component: RootLayout,
   // Unknown paths go to the catch-all routes (`$.tsx`, `m/$machineId/$.tsx`); this covers a route throwing `notFound()`.
   notFoundComponent: PageNotFound,
+  // Child routes have none of their own, so a failed load anywhere, such as a session that can't be read, lands here.
+  errorComponent: PageError,
 })
 
 // The shell is prerendered into `index.html` at build time. The server allows inline scripts by their hashes in
