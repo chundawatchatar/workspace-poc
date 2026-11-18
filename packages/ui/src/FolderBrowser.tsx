@@ -10,10 +10,12 @@ interface Props {
   onOpen: (path: string) => void
   /** Creates `name` in the shown folder. Resolves to an error message, or null on success. */
   onCreateFolder: (name: string) => Promise<string | null>
+  /** Shows an OK button, enabled once a folder is shown, which is called with that folder's absolute path. */
+  onDone?: (path: string) => void
 }
 
 /** A list of a host folder's subfolders, with a row to go up a level and a way to create one. Clicking a folder opens it. */
-export function FolderBrowser({ listing, error, onOpen, onCreateFolder }: Props) {
+export function FolderBrowser({ listing, error, onOpen, onCreateFolder, onDone }: Props) {
   // The new folder's name, or null while the name field is hidden.
   const [newName, setNewName] = useState<string | null>(null)
   const [createError, setCreateError] = useState<string | null>(null)
@@ -71,15 +73,27 @@ export function FolderBrowser({ listing, error, onOpen, onCreateFolder }: Props)
       </div>
       <div className="border-t border-line p-1.5">
         {newName === null ? (
-          <button
-            type="button"
-            disabled={!path}
-            className="flex items-center gap-1.5 rounded px-2 py-1 text-xs text-dim hover:bg-raised hover:text-ink disabled:opacity-50"
-            onClick={() => setNewName('')}
-          >
-            <FolderPlus size={13} />
-            New folder
-          </button>
+          <div className="flex items-center justify-between gap-1.5">
+            <button
+              type="button"
+              disabled={!path}
+              className="flex items-center gap-1.5 rounded px-2 py-1 text-xs text-dim hover:bg-raised hover:text-ink disabled:opacity-50"
+              onClick={() => setNewName('')}
+            >
+              <FolderPlus size={13} />
+              New folder
+            </button>
+            {onDone && (
+              <button
+                type="button"
+                className="rounded bg-accent px-3 py-1 text-xs font-medium text-on-accent disabled:opacity-60"
+                disabled={!path}
+                onClick={() => path && onDone(path)}
+              >
+                OK
+              </button>
+            )}
+          </div>
         ) : (
           <div className="space-y-1">
             <div className="flex gap-1.5">

@@ -40,6 +40,22 @@ describe('FolderBrowser', () => {
     expect(screen.queryByText('That folder already exists.')).not.toBeInTheDocument()
   })
 
+  test('OK hands over the shown folder, waits for one to load, and shows only when asked for', async () => {
+    const user = userEvent.setup()
+    const onDone = mock()
+    const { rerender } = render(
+      <FolderBrowser listing={listing} onOpen={() => {}} onCreateFolder={async () => null} onDone={onDone} />,
+    )
+    await user.click(screen.getByRole('button', { name: 'OK' }))
+    expect(onDone).toHaveBeenCalledWith('/home/me')
+
+    rerender(<FolderBrowser listing={undefined} onOpen={() => {}} onCreateFolder={async () => null} onDone={onDone} />)
+    expect(screen.getByRole('button', { name: 'OK' })).toBeDisabled()
+
+    rerender(<FolderBrowser listing={listing} onOpen={() => {}} onCreateFolder={async () => null} />)
+    expect(screen.queryByRole('button', { name: 'OK' })).not.toBeInTheDocument()
+  })
+
   test('shows the error instead of the folders, and offers no new folder without a path', () => {
     render(
       <FolderBrowser

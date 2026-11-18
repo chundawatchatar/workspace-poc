@@ -195,6 +195,11 @@ function NewWorkspace() {
                 error={listing.isError ? 'Could not reach the host.' : null}
                 onOpen={openFolder}
                 onCreateFolder={createFolder}
+                onDone={(folder) => {
+                  // The shown folder becomes the field's value, even when the field was empty or named no folder.
+                  setPath(folder)
+                  setBrowsePath(null)
+                }}
               />
             </div>
           )}
