@@ -248,6 +248,7 @@ describe('RemoteAccessForm', () => {
         .getAllByRole('button')
         .map((button) => button.textContent),
     ).toEqual(['Dismiss'])
+    expect(waiting).toHaveTextContent('ABCD-EFGH-JKMN-PQRS')
     await user.click(within(waiting).getByRole('button', { name: 'Dismiss ABCD-EFGH-JKMN-PQRS' }))
     expect(onDevices.onDismiss).toHaveBeenCalledWith('d'.repeat(43))
 
@@ -258,8 +259,9 @@ describe('RemoteAccessForm', () => {
     expect(onDevices.onApprove).not.toHaveBeenCalled()
 
     await user.clear(field)
-    await user.type(field, 'abcd-efgh-jkmn-pqrs{Enter}')
-    expect(onDevices.onApprove).toHaveBeenCalledWith('abcd-efgh-jkmn-pqrs')
+    await user.type(field, 'abcd efgh jkmn pqrs{Enter}')
+    expect(field).toHaveValue('ABCD-EFGH-JKMN-PQRS')
+    expect(onDevices.onApprove).toHaveBeenCalledWith('ABCD-EFGH-JKMN-PQRS')
     expect(props.connection.onDisconnect).not.toHaveBeenCalled()
     await user.click(approve.getByRole('button', { name: 'Approve' }))
     expect(onDevices.onApprove).toHaveBeenCalledTimes(2)

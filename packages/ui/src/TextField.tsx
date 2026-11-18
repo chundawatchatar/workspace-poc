@@ -11,6 +11,10 @@ export interface TextFieldProps {
   /** The on-screen keyboard to offer, such as `numeric` for a code typed as digits. */
   inputMode?: HTMLAttributes<HTMLInputElement>['inputMode']
   value: string
+  placeholder?: string
+  maxLength?: number
+  /** True sets the text in the monospace font, for codes compared character by character. */
+  mono?: boolean
   /** Called with the new text on every keystroke. */
   onChange: (value: string) => void
   onBlur?: () => void
@@ -38,6 +42,9 @@ export function TextField({
   autoComplete,
   inputMode,
   value,
+  placeholder,
+  maxLength,
+  mono = false,
   onChange,
   onBlur,
   disabled,
@@ -75,6 +82,9 @@ export function TextField({
           autoComplete={autoComplete}
           inputMode={inputMode}
           value={value}
+          placeholder={placeholder}
+          maxLength={maxLength}
+          spellCheck={mono ? false : undefined}
           onChange={(event) => onChange(event.target.value)}
           onBlur={onBlur}
           disabled={disabled}
@@ -85,6 +95,7 @@ export function TextField({
           className={cn(
             'min-w-0 flex-1 bg-transparent text-ink outline-none placeholder:text-faint read-only:text-dim',
             size === 'lg' ? 'px-3 py-2.5 text-base sm:text-sm' : 'px-2.5 py-1.5 text-[13px]',
+            mono && 'font-mono tracking-wide',
           )}
         />
         {trailing}

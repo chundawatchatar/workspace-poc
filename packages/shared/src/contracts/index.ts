@@ -35,6 +35,8 @@ export {
   deviceJwk,
   deviceProofHeader,
   deviceProofPayload,
+  editFingerprint,
+  FINGERPRINT_LENGTH,
   fingerprintKey,
 } from './deviceProof'
 export {

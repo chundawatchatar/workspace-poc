@@ -97,3 +97,51 @@ export function fingerprintKey(typed: string): string {
     .replace(/[\s-]+/g, '')
     .toUpperCase()
 }
+
+/** How many characters a fingerprint has, without its dashes. */
+export const FINGERPRINT_LENGTH = 16
+
+/** The letters and digits of a typed fingerprint, uppercased, up to its full length. */
+function fingerprintChars(typed: string): string {
+  return typed
+    .toUpperCase()
+    .replace(/[^0-9A-Z]/g, '')
+    .slice(0, FINGERPRINT_LENGTH)
+}
+
+/** Characters grouped in fours with dashes between, as a browser shows a fingerprint. */
+function groupFingerprint(chars: string): string {
+  return chars.match(/.{1,4}/g)?.join('-') ?? ''
+}
+
+/**
+ * Formats one edit of a fingerprint field, shaped like the one a browser shows (uppercased, anything but letters and
+ * digits dropped, cut at 16 characters and grouped in fours), and says where its caret goes. `previous` is the field's formatted value
+ * before the edit, `typed` its raw value after, and `caret` the caret in `typed`. The caret keeps its place among the
+ * letters and digits rather than jumping to the end, and Backspace (`backward`) or Delete (`forward`) that removed
+ * only a dash removes the character on the other side of it instead, since the dash would come straight back.
+ */
+export function editFingerprint(
+  previous: string,
+  typed: string,
+  caret: number,
+  direction: 'backward' | 'forward' = 'backward',
+): { value: string; caret: number } {
+  let chars = fingerprintChars(typed)
+  // Characters before the caret that are kept, which fixes the caret's place among them.
+  let before = fingerprintChars(typed.slice(0, caret)).length
+  const removedOneDash =
+    typed.length === previous.length - 1 && chars === fingerprintChars(previous) && previous.includes('-')
+  if (removedOneDash) {
+    if (direction === 'backward' && before > 0) {
+      chars = chars.slice(0, before - 1) + chars.slice(before)
+      before -= 1
+    } else if (direction === 'forward') {
+      chars = chars.slice(0, before) + chars.slice(before + 1)
+    }
+  }
+  const value = groupFingerprint(chars)
+  // Each full group before the caret adds a dash, but the caret stays before the dash that ends its own group.
+  const dashes = before > 0 ? Math.floor((before - 1) / 4) : 0
+  return { value, caret: Math.min(before + dashes, value.length) }
+}

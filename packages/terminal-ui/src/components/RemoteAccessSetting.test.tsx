@@ -239,41 +239,48 @@ describe('RemoteAccessSetting', () => {
     const waiting = await screen.findByRole('list', { name: 'Waiting for approval' })
     expect(waiting).toHaveTextContent(deviceA.fingerprint)
     expect(waiting).toHaveTextContent(deviceB.fingerprint)
-    expect(screen.getByRole('region', { name: 'Devices' })).toHaveTextContent(
-      'Approve only a fingerprint shown in your own browser',
-    )
     expect(screen.getByRole('list', { name: 'Approved' })).toHaveTextContent(deviceC.fingerprint)
-    expect(screen.queryByRole('button', { name: `Approve ${deviceA.fingerprint}` })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Approve .+/ })).not.toBeInTheDocument()
 
+    // The field shapes what is typed like a fingerprint, and says when it matches a waiting browser.
     const field = screen.getByRole('textbox', { name: 'Fingerprint shown in your browser' })
-    await user.type(field, ' aaaaaaaa-aaaaaaaa {Enter}')
+    await user.type(field, ' aaaaaaaa aaaaaaaa')
+    expect(field).toHaveValue('AAAA-AAAA-AAAA-AAAA')
+    expect(screen.getByText(/^Matches the browser waiting since/)).toBeInTheDocument()
+    await user.keyboard('{Enter}')
     expect(await screen.findByRole('button', { name: `Revoke ${deviceA.fingerprint}` })).toBeInTheDocument()
     await waitFor(() => expect(field).toHaveValue(''))
     await user.click(screen.getByRole('button', { name: `Dismiss ${deviceB.fingerprint}` }))
     await waitFor(() => expect(screen.queryByRole('list', { name: 'Waiting for approval' })).not.toBeInTheDocument())
+    // With nothing waiting there is nothing to approve, so the field goes.
+    expect(screen.queryByRole('textbox', { name: 'Fingerprint shown in your browser' })).not.toBeInTheDocument()
+    expect(screen.getByText(/^No browser is waiting/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: `Revoke ${deviceC.fingerprint}` }))
     await waitFor(() =>
       expect(screen.getByRole('list', { name: 'Approved' })).not.toHaveTextContent(deviceC.fingerprint),
     )
 
     expect(sent).toEqual([
-      [routes.remoteAccess.approveDevice.path, { fingerprint: 'aaaaaaaa-aaaaaaaa' }],
+      [routes.remoteAccess.approveDevice.path, { fingerprint: 'AAAA-AAAA-AAAA-AAAA' }],
       [routes.remoteAccess.removeDevice.path, { id: deviceB.id }],
       [routes.remoteAccess.removeDevice.path, { id: deviceC.id }],
     ])
   })
 
-  test('a fingerprint no browser is waiting with shows the host message once and keeps the typed text', async () => {
+  test('a fingerprint no browser is waiting with says so and is never sent', async () => {
     const user = userEvent.setup()
     const { sent } = setup({ linked: true })
     const field = await screen.findByRole('textbox', { name: 'Fingerprint shown in your browser' })
-    expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled()
+    const approve = screen.getByRole('button', { name: 'Approve' })
+    expect(approve).toBeDisabled()
 
-    await user.type(field, 'ZZZZ-ZZZZ')
-    await user.click(screen.getByRole('button', { name: 'Approve' }))
-    expect(await screen.findAllByText(notWaiting('ZZZZ-ZZZZ'))).toHaveLength(1)
-    expect(field).toHaveValue('ZZZZ-ZZZZ')
-    expect(sent).toEqual([[routes.remoteAccess.approveDevice.path, { fingerprint: 'ZZZZ-ZZZZ' }]])
-    expect(screen.getByRole('list', { name: 'Approved' })).not.toHaveTextContent(deviceA.fingerprint)
+    // Typing stops at a whole fingerprint; until then nothing is judged.
+    await user.type(field, 'zzzz-zzzz-zzzz')
+    expect(screen.queryByText(/^No waiting browser/)).not.toBeInTheDocument()
+    await user.type(field, '-zzzz-zzzz{Enter}')
+    expect(field).toHaveValue('ZZZZ-ZZZZ-ZZZZ-ZZZZ')
+    expect(field).toHaveAccessibleDescription(/No waiting browser has this fingerprint/)
+    expect(approve).toBeDisabled()
+    expect(sent).toEqual([])
   })
 })
