@@ -66,10 +66,7 @@ export function signUpByEmailCode({ redeemCode, beforeCredentialWrite }: SignUpC
               password: hash,
             })
           } catch {
-            // The code is spent either way; a user with no password and an unused session must not stay behind.
-            await ctx.context.internalAdapter.deleteUser(userId).catch(() => {
-              console.error('auth: removing a half-created email-code sign-up failed')
-            })
+            await removeCreatedUser(ctx, userId)
             throw refused()
           }
 
@@ -90,14 +87,25 @@ export function signUpByEmailCode({ redeemCode, beforeCredentialWrite }: SignUpC
  * headers until the password is saved. When the address already has an
  * account, the email's unique constraint fails that insert, so the step can
  * never sign in to, promote or revoke the sessions of a user it did not create,
- * however a concurrent sign-up interleaves. Every refusal looks the same.
+ * however a concurrent sign-up interleaves. If the step fails after its insert
+ * worked, the user it made is removed. Every refusal looks the same.
  */
 async function redeemOnlyForNewUser(
   ctx: GenericEndpointContext,
   redeemCode: RedeemCodeStep,
   { email, name, code }: { email: string; name: string; code: string },
 ) {
-  const internalAdapter = { ...ctx.context.internalAdapter, findUserByEmail: async () => null }
+  const base = ctx.context.internalAdapter
+  let createdUserId: string | undefined
+  const internalAdapter: typeof base = {
+    ...base,
+    findUserByEmail: async () => null,
+    createUser: async <T extends Record<string, unknown>>(...args: Parameters<typeof base.createUser<T>>) => {
+      const user = await base.createUser<T>(...args)
+      createdUserId = user?.id
+      return user
+    },
+  }
   try {
     return await redeemCode({
       body: { email, otp: code, name },
@@ -107,11 +115,27 @@ async function redeemOnlyForNewUser(
       returnHeaders: true,
     })
   } catch (error) {
+    // The code is spent once the user exists, so a failure after that, such as starting its session, ends the
+    // sign-up: the user and anything made for it go, and the person asks for a new code.
+    if (createdUserId) {
+      await removeCreatedUser(ctx, createdUserId)
+      throw refused()
+    }
     if (isAPIError(error)) throw refused()
     // A failed insert for an address that has an account is the duplicate case; anything else is a real fault.
-    if (await ctx.context.internalAdapter.findUserByEmail(email)) throw refused()
+    if (await base.findUserByEmail(email)) throw refused()
     throw error
   }
+}
+
+/**
+ * Deletes a user this request created, with its sessions and accounts, so a
+ * failed sign-up leaves no verified account without a password behind.
+ */
+async function removeCreatedUser(ctx: GenericEndpointContext, userId: string) {
+  await ctx.context.internalAdapter.deleteUser(userId).catch(() => {
+    console.error('auth: removing a half-created email-code sign-up failed')
+  })
 }
 
 function refused() {

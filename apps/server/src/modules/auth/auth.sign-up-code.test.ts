@@ -1,8 +1,9 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import { schema } from '@orch/domain'
 import { createTestDomain, type TestDomain } from '@orch/domain/testing'
-import { count, eq } from 'drizzle-orm'
+import { count, eq, sql } from 'drizzle-orm'
 import type { CaptureTransport } from '../mailer/mailer.testing'
+import type { MailTransport } from '../mailer/mailer.transport'
 import { DISABLED_EMAIL_OTP_PATHS } from './auth.service'
 import { SIGN_UP_CODE_REFUSED } from './auth.sign-up-code'
 import { accountsTestApp, cookiePair, sessionSetCookie, TEST_BASE, TEST_PASSWORD } from './auth.testing'
@@ -14,6 +15,7 @@ let domain: TestDomain
 let mail: CaptureTransport
 let client: ReturnType<typeof accountsTestApp>['client']
 let failCredentialWrite = false
+let captureSend: MailTransport['send']
 const logLines: string[] = []
 const originalConsole = { log: console.log, warn: console.warn, error: console.error }
 
@@ -30,6 +32,13 @@ beforeAll(async () => {
   })
   mail = test.mail
   client = test.client
+  captureSend = mail.transport.send
+})
+
+afterEach(async () => {
+  failCredentialWrite = false
+  mail.transport.send = captureSend
+  await db().execute(sql`DROP TRIGGER IF EXISTS fail_session_insert ON session`)
 })
 
 afterAll(async () => {
@@ -274,6 +283,47 @@ describe('email-code sign-up', () => {
       code: client.codeTo(email),
     })
     expect(retry.status).toBe(200)
+  })
+
+  test('a step that fails after creating the user leaves no user, account or session behind', async () => {
+    const { email, code } = await newAddressWithCode()
+    // A real database fault after the step's user insert: starting the session fails.
+    await db().execute(sql`
+      CREATE OR REPLACE FUNCTION fail_session_insert() RETURNS trigger AS $$
+      BEGIN RAISE EXCEPTION 'forced session failure'; END $$ LANGUAGE plpgsql`)
+    await db().execute(sql`
+      CREATE TRIGGER fail_session_insert BEFORE INSERT ON session
+      FOR EACH ROW EXECUTE FUNCTION fail_session_insert()`)
+    const before = await rowCounts()
+
+    await expectRefused(
+      await client.signUpWithCode(client.freshIp(), { name: 'Ada', email, password: FIRST_PASSWORD, code }),
+    )
+    expect(await rowCounts()).toEqual(before)
+    expect(await userRow(email)).toBeUndefined()
+  })
+
+  test('asking for a code never waits for the email, and a failed send still gets the same answer', async () => {
+    const registered = client.freshEmail()
+    await client.register(registered, client.freshIp())
+    // A send that never finishes: the answer must not wait for it.
+    mail.transport.send = () => new Promise<void>(() => {})
+    for (const email of [client.freshEmail(), registered]) {
+      const response = await client.sendCode(email, client.freshIp())
+      expect({ status: response.status, body: await response.json() }).toEqual({ status: 200, body: { success: true } })
+    }
+
+    mail.transport.send = async () => {
+      throw Object.assign(new Error('refused'), { code: 'ECONNECTION' })
+    }
+    for (const email of [client.freshEmail(), registered]) {
+      const response = await client.sendCode(email, client.freshIp())
+      expect({ status: response.status, body: await response.json() }).toEqual({ status: 200, body: { success: true } })
+    }
+    await Bun.sleep(0)
+    expect(logLines).toEqual(
+      expect.arrayContaining(['mail signUpCode: failed (ECONNECTION)', 'mail accountExists: failed (ECONNECTION)']),
+    )
   })
 
   test('the emailOTP paths the client never calls are closed over HTTP', async () => {

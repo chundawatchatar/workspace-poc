@@ -71,7 +71,7 @@ export function renderCodeEmail({ subject, intro, code, outro }: CodeEmail): Ren
 <html>
   <body style="font-family: system-ui, sans-serif; line-height: 1.5; color: #1a1a1a">
     <p>${escapeHtml(intro)}</p>
-    <p style="font-size: 1.5em; font-weight: 600; letter-spacing: 0.2em">${escapeHtml(code)}</p>
+    <p style="font-size: 1.5em; font-weight: 600"><code style="font-family: ui-monospace, Menlo, Consolas, monospace">${escapeHtml(code)}</code></p>
     <p style="font-size: 0.875em; color: #555">${escapeHtml(outro)}</p>
   </body>
 </html>

@@ -3,6 +3,7 @@ import { betterAuth } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { emailOTP } from 'better-auth/plugins/email-otp'
 import type { Mailer } from '../mailer/mailer.service'
+import { SIGN_UP_CODE_MINUTES } from '../mailer/templates/sign-up-code'
 import { signUpByEmailCode } from './auth.sign-up-code'
 
 /** The header the routes set to the client IP the server trusts, replacing any value the client sent. */
@@ -67,19 +68,23 @@ export function createAuth({
 }: AuthDeps) {
   const otp = emailOTP({
     storeOTP: 'hashed',
-    // Length 6, 300 seconds, 3 attempts and the rate limits stay the plugin's defaults. An address with an account
-    // gets `accountExists` and never a code, whatever the type; a new address gets its code only for `sign-in`.
-    // The plugin answers `{ success: true }` either way, so the answer never says which addresses have accounts.
+    // The plugin's default of 300 seconds, set here so the email's "expires in" can't drift from it.
+    expiresIn: SIGN_UP_CODE_MINUTES * 60,
+    // Length 6, 3 attempts and the rate limits stay the plugin's defaults. An address with an account gets
+    // `accountExists` and never a code, whatever the type; a new address gets its code only for `sign-in`. The
+    // plugin answers `{ success: true }` either way, and the answer never waits for the email.
     sendVerificationOTP: async ({ email, otp, type }, ctx) => {
       if (!ctx) throw new Error('auth: a sign-up code was asked for outside a request')
       if (await ctx.context.internalAdapter.findUserByEmail(email)) {
         const origin = new URL(baseUrl).origin
-        await mailer.send(email, 'accountExists', {
-          signInUrl: `${origin}/auth/sign-in`,
-          forgotPasswordUrl: `${origin}/auth/forgot-password`,
-        })
+        sendInBackground(
+          mailer.send(email, 'accountExists', {
+            signInUrl: `${origin}/auth/sign-in`,
+            forgotPasswordUrl: `${origin}/auth/forgot-password`,
+          }),
+        )
       } else if (type === 'sign-in') {
-        await mailer.send(email, 'signUpCode', { code: otp })
+        sendInBackground(mailer.send(email, 'signUpCode', { code: otp }))
       }
     },
   })
@@ -140,6 +145,16 @@ export function createAuth({
  */
 export function emailLinkUrl(baseUrl: string, page: 'verify-email' | 'reset-password', token: string): string {
   return `${new URL(baseUrl).origin}/auth/${page}#token=${encodeURIComponent(token)}`
+}
+
+/**
+ * Lets an email send finish after the response, so how long the answer takes
+ * says nothing about the email. The mailer has already logged a failure with
+ * its template name and code, so the rejection is dropped here; the person
+ * asks again.
+ */
+function sendInBackground(send: Promise<void>) {
+  send.catch(() => {})
 }
 
 /** Calls `onSessionEnded` without waiting for it, logging a fixed line, never the user id, if it fails. */
