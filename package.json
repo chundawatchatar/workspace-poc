@@ -13,6 +13,7 @@
     "dev:site": "bun run --filter '*' dev:site",
     "db:up": "docker compose up -d --wait",
     "db:down": "docker compose down",
+    "db:reset": "docker compose rm --stop --force postgres && docker volume rm --force orch-dev_postgres-data && docker compose up -d --wait postgres && bun run db:migrate",
     "db:generate": "bun run --filter @orch/domain db:generate",
     "db:migrate": "bun run --filter @orch/domain db:migrate",
     "host:remote": "bun apps/host/src/remote.ts",
