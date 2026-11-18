@@ -415,7 +415,14 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   `USER_ALREADY_EXISTS`) and creates nothing (`sign-up.mjs`, `shouldReturnGenericDuplicateResponse`). The accepted
   risk is timing: a new sign-up waits for the verification email to send and a duplicate sends nothing, so response
   times can still differ. If the mailer fails during sign-up, Better Auth logs the failure and still answers 200; the
-  user exists unverified and recovers through a later "resend" page.
+  user exists unverified and recovers through a later "resend" page. Asking for a sign-up code
+  (`email-otp/send-verification-otp`) answers `{ success: true }` for every address and sends each exactly one email:
+  `signUpCode` with the code to an address with no account, `accountExists` with no code to one that has an account,
+  verified or not. The email-code sign-up (`sign-up/email-code`) refuses an existing address with the same 400 as a
+  wrong code. The remaining risks: timing, since both send branches look the user up and send one email but the
+  templates differ; anyone can make an address receive `accountExists` or a code, limited to 3 sends a minute per IP
+  (in memory, per process); and a new send replaces the earlier code, so someone who knows an address can spoil a
+  pending sign-up's code, though never use it.
 - The server sends email only through the mailer (`apps/server/src/modules/mailer/`), one template file per email,
   as plain text plus HTML over SMTP (Mailpit in development). Tests read emails from the capturing transport in
   `mailer.testing.ts` instead of a network. Emails carry single-use links, so the link, tokens, the recipient, the

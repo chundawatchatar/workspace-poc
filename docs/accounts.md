@@ -108,6 +108,36 @@ accounts are on.
   explicitly (`disableOriginCheck: false`, `rateLimit.enabled: true`). Keep it that way, so tests see what production
   does.
 - Its logger masks emails, URL paths and tokens, and drops error details beyond a name and code.
+- The Drizzle adapter runs with `transaction: true`, so Better Auth's own transactions (sign-up, using up a code or
+  token) are real ones, also on PGlite in tests.
+
+### Sign-up by email code
+
+A second sign-up flow sits next to the email-and-password one, for the global app (its UI is a later job):
+
+1. `POST /api/auth/email-otp/send-verification-otp` with `{ email, type: 'sign-in' }` (the `emailOTP` plugin, with
+   `storeOTP: 'hashed'` and its defaults: 6 digits, 300 seconds, 3 attempts, 3 requests a minute per IP). It always
+   answers `{ success: true }`. An address with no account gets a `signUpCode` email with the code. An address with
+   any account, verified or not, gets an `accountExists` email with no code, linking to `/auth/sign-in` and
+   `/auth/forgot-password` on the origin of `BETTER_AUTH_URL`, whatever the `type`. Nothing else is sent. A new send
+   replaces the earlier code (`resendStrategy: 'rotate'`), and the `verification` row holds only the code's hash.
+2. `POST /api/auth/sign-up/email-code` with `{ name, email, password, code }` (`signUpByEmailCode` in
+   `auth.sign-up-code.ts`, a Better Auth plugin endpoint, so the origin check, the `/sign-up*` rate limit of 3 per
+   10 seconds and the session cookie apply). It checks the password against `minPasswordLength` and
+   `maxPasswordLength` before the code is touched, and hashes it. Then it runs the plugin's `sign-in/email-otp` step
+   server-side, outside any transaction, so a wrong code's attempt count survives the failed request. That step uses
+   the code up atomically and creates the user, with the name and `emailVerified: true`, and a session. Last, it
+   saves the password as a `credential` account and answers 200 with the session cookie.
+
+The step runs in a copy of the request's context in which no user is ever found by email, so it always takes its
+create branch, and the email's unique constraint decides a race. It never signs in to, promotes or revokes the
+sessions of an account that exists: an existing address, a wrong, used-up, locked or expired code all get the same
+400 `INVALID_OR_EXPIRED_CODE` and no cookie. If the password write fails, the user the request created is deleted
+with its session, and the code stays used up. The other `emailOTP` paths (`/sign-in/email-otp`,
+`/email-otp/check-verification-otp`, `/email-otp/verify-email`, `/email-otp/request-password-reset`,
+`/forget-password/email-otp`, `/email-otp/reset-password`, `/email-otp/request-email-change`,
+`/email-otp/change-email`) are in `disabledPaths` and answer 404. Better Auth checks `disabledPaths` only in its HTTP
+router, so the server-side step still runs.
 
 ### What it owns
 
@@ -121,7 +151,13 @@ Better Auth owns exactly four tables, `user`, `session`, `account` and `verifica
 With required verification, Better Auth answers a sign-up for an already registered email exactly like a new one: the
 same status, a user of the same shape, no cookie and no `USER_ALREADY_EXISTS`, and it creates nothing. The accepted
 risk is timing: a new sign-up waits for the verification email to send and a duplicate sends nothing, so response
-times can still differ. See [architecture](architecture.md#1-dependencies-point-one-way) for the details.
+times can still differ.
+
+Asking for a sign-up code answers `{ success: true }` for every address, and each address gets exactly one email:
+the code when it has no account, `accountExists` when it has one. The email-code sign-up gives an existing address
+the same refusal as a wrong code. The accepted risk is again timing: both branches look the user up and send one
+email, but the two templates differ. See [architecture](architecture.md#1-dependencies-point-one-way) for the
+details.
 
 ## 5. Sessions and signing out everywhere
 
@@ -182,9 +218,17 @@ is built in `apps/server/src/index.ts` when accounts are on. Each email is one t
 | --- | --- | --- |
 | `templates/verify-email.ts` | `verifyEmail` | A user signs up or asks to resend the verification link. |
 | `templates/reset-password.ts` | `resetPassword` | A user asks for a password reset. |
+| `templates/sign-up-code.ts` | `signUpCode` | Someone asks for a sign-up code for an address with no account. |
+| `templates/account-exists.ts` | `accountExists` | Someone asks for a sign-up code for an address that has an account. |
 
 Every value is escaped in the HTML and no user input goes in the subject. Tests use `createCaptureTransport()` from
 `mailer.testing.ts` and read a link with `lastTo(address)`; production code never imports it.
+
+The sign-up code is the one email without a link: `signUpCode` carries the 6-digit code in its body only, never in
+the subject, and `accountExists` carries two plain links with no token, to `/auth/sign-in` and
+`/auth/forgot-password`. The flow is described under [Sign-up by email code](#sign-up-by-email-code). Never log a
+code, an address or a password; the auth test helpers `codeTo(address)` and `accountExistsTo(address)` read them from
+the capturing transport.
 
 Emailed links carry their token in the fragment, so browsers never send it to a server. `emailLinkUrl` in
 `auth.service.ts` builds them on the origin of `BETTER_AUTH_URL`:
