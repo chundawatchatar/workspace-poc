@@ -35,7 +35,6 @@ function ForgotPassword() {
         <p className="text-[13px] text-dim">Enter your email address and we will send you a link to reset it.</p>
       )}
       <EmailLinkForm
-        kind="forgot"
         submitLabel="Send the link"
         onSent={(email) => setSent((last) => ({ email, count: (last?.count ?? 0) + 1 }))}
       />

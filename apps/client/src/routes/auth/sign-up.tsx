@@ -1,12 +1,12 @@
 import { Button, FormError, PasswordField, TextField } from '@orch/ui'
 import { useForm } from '@tanstack/react-form'
-import { createFileRoute, Link } from '@tanstack/react-router'
-import { useRef, useState } from 'react'
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
+import { type ReactNode, useRef, useState } from 'react'
 import { AuthCard } from '../../components/auth/AuthCard'
-import { CheckInbox } from '../../components/auth/CheckInbox'
+import { SignUpCode } from '../../components/auth/SignUpCode'
 import { linkClass } from '../../components/Centered'
-import { leaveIfSignedIn } from '../../lib/auth'
-import { focusFirstInvalid, shownError, signUpFormOptions, submitOnce } from '../../lib/authForms'
+import { leaveIfSignedIn, safeRedirect } from '../../lib/auth'
+import { focusFirstInvalid, type SignUpDetails, shownError, signUpFormOptions, submitOnce } from '../../lib/authForms'
 
 /** The search params of `/auth/sign-up`: where to go once signed in, passed on to `/auth/sign-in`. */
 interface SignUpSearch {
@@ -20,45 +20,63 @@ export const Route = createFileRoute('/auth/sign-up')({
   component: SignUp,
 })
 
+// Two screens on one route: the details, then the emailed code. The details, password included, live only in this
+// component's state, so leaving the page drops them, and none of them enters the URL, storage or the query cache.
 function SignUp() {
+  const { queryClient } = Route.useRouteContext()
   const { redirect: target } = Route.useSearch()
-  const formRef = useRef<HTMLFormElement>(null)
-  const [problem, setProblem] = useState<string | null>(null)
-  // The address the verification email went to, once it has. Kept only in this page's state.
-  const [sentTo, setSentTo] = useState<string | null>(null)
+  const navigate = useNavigate()
+  // What the code screen creates the account from, once a code is on its way.
+  const [details, setDetails] = useState<SignUpDetails | null>(null)
+  // The name and email the details screen starts from when someone goes back to change the address.
+  const [kept, setKept] = useState({ name: '', email: '' })
   const signInSearch = target ? { redirect: target } : {}
+  const footer = (
+    <p>
+      Already have an account?{' '}
+      <Link to="/auth/sign-in" search={signInSearch} className={linkClass}>
+        Sign in instead
+      </Link>
+    </p>
+  )
 
-  const form = useForm({
-    ...signUpFormOptions({ setProblem, onSent: setSentTo }),
-    onSubmitInvalid: ({ formApi }) => focusFirstInvalid(formRef.current, formApi.state.fieldMeta),
-  })
-
-  if (sentTo) {
+  if (details) {
     return (
-      <CheckInbox
-        email={sentTo}
-        footer={
-          <Link to="/auth/sign-in" search={signInSearch} className={linkClass}>
-            Back to sign in
-          </Link>
-        }
+      <SignUpCode
+        queryClient={queryClient}
+        details={details}
+        onSignedUp={() => navigate({ href: safeRedirect(target), replace: true })}
+        onChangeEmail={() => {
+          setKept({ name: details.name, email: details.email })
+          setDetails(null)
+        }}
+        footer={footer}
       />
     )
   }
+  return <SignUpDetailsForm initial={kept} onCodeSent={setDetails} footer={footer} />
+}
+
+/** The first screen: name, email and password. Sending the code hands the checked details to `onCodeSent`. */
+function SignUpDetailsForm({
+  initial,
+  onCodeSent,
+  footer,
+}: {
+  initial: { name: string; email: string }
+  onCodeSent: (details: SignUpDetails) => void
+  footer: ReactNode
+}) {
+  const formRef = useRef<HTMLFormElement>(null)
+  const [problem, setProblem] = useState<string | null>(null)
+
+  const form = useForm({
+    ...signUpFormOptions(initial, { setProblem, onCodeSent }),
+    onSubmitInvalid: ({ formApi }) => focusFirstInvalid(formRef.current, formApi.state.fieldMeta),
+  })
 
   return (
-    <AuthCard
-      title="Create an account"
-      description="One account for every machine you connect."
-      footer={
-        <p>
-          Already have an account?{' '}
-          <Link to="/auth/sign-in" search={signInSearch} className={linkClass}>
-            Sign in instead
-          </Link>
-        </p>
-      }
-    >
+    <AuthCard title="Create an account" description="One account for every machine you connect." footer={footer}>
       <form
         ref={formRef}
         noValidate
@@ -125,7 +143,7 @@ function SignUp() {
         <form.Subscribe selector={(state) => state.isSubmitting}>
           {(submitting) => (
             <Button size="lg" type="submit" pending={submitting}>
-              Create account
+              Send code
             </Button>
           )}
         </form.Subscribe>

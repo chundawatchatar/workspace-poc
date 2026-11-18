@@ -46,7 +46,7 @@ describe('clearSavedMachineKeys', () => {
       expect(replaced).toEqual([{ key: 'router-entry' }])
     }
     for (const hash of ['#token=t1', '#machine=m1', '']) {
-      const { win, current, replaced } = fakeWindow(`https://app.test/auth/verify-email${hash}`)
+      const { win, current, replaced } = fakeWindow(`https://app.test/auth/reset-password${hash}`)
       clearSavedMachineKeys(win)
       expect(current.hash).toBe(hash)
       expect(replaced).toEqual([])

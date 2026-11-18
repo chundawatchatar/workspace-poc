@@ -5,10 +5,10 @@ import { changePassword } from './accountSessions'
 import {
   EXPIRED_LINK,
   requestPasswordReset,
-  resendVerificationEmail,
   resetPassword,
+  sendSignUpCode,
   signInWithEmail,
-  signUpWithEmail,
+  signUpWithCode,
 } from './auth'
 
 // The rules and helpers the forms under `/auth` share. The server stays the authority; these only catch
@@ -25,14 +25,23 @@ export const signInSchema = z.object({
 // A new password. The limits are Better Auth's defaults.
 const newPassword = z.string().min(8, 'Use at least 8 characters.').max(128, 'Use at most 128 characters.')
 
-/** What the sign-up form checks. */
+/** What the first sign-up screen checks. */
 export const signUpSchema = z.object({
   name: z.string().trim().min(1, 'Enter your name.'),
   email,
   password: newPassword,
 })
 
-/** What the forms that only ask for an address check: resending the verification email, and a forgotten password. */
+/** What the second sign-up screen checks: the code from the email, exactly 6 digits. */
+export const signUpCodeSchema = z.object({
+  code: z
+    .string()
+    .trim()
+    .min(1, 'Enter the code from the email.')
+    .regex(/^\d{6}$/, 'Enter the 6-digit code from the email.'),
+})
+
+/** What the form that only asks for an address checks: a forgotten password. */
 export const emailSchema = z.object({ email })
 
 /** What the reset-password form checks: the new password, with the same limits as sign-up. */
@@ -126,24 +135,55 @@ export function signInFormOptions(
   })
 }
 
+/** What the first sign-up screen hands to the second once the code is on its way, kept only in the page's state. */
+export interface SignUpDetails {
+  name: string
+  email: string
+  password: string
+}
+
 /**
- * The sign-up form's options. A submit clears the last `setProblem` message as it starts, then reports the server's
- * refusal through `setProblem`, or empties the form, so the password is gone, and calls `onSent` with the address.
+ * The first sign-up screen's options, starting from `initial` (a name and email kept from an earlier try, and never
+ * a password). A submit clears the last `setProblem` message as it starts, asks the server to email a code, and
+ * reports a refusal through `setProblem`, keeping the values, or calls `onCodeSent` with the checked details.
  */
-export function signUpFormOptions({
-  setProblem,
-  onSent,
-}: {
-  setProblem: (message: string | null) => void
-  onSent: (email: string) => void
-}) {
+export function signUpFormOptions(
+  initial: { name: string; email: string },
+  {
+    setProblem,
+    onCodeSent,
+  }: { setProblem: (message: string | null) => void; onCodeSent: (details: SignUpDetails) => void },
+) {
   return formOptions({
-    defaultValues: { name: '', email: '', password: '' },
+    defaultValues: { name: initial.name, email: initial.email, password: '' },
     validators: { onChange: signUpSchema, onBlur: signUpSchema },
+    onSubmit: async ({ value }) => {
+      setProblem(null)
+      const details = signUpSchema.parse(value)
+      const message = await sendSignUpCode(details.email).catch(() => 'Sending the code failed. Try again.')
+      if (message) setProblem(message)
+      else onCodeSent(details)
+    },
+  })
+}
+
+/**
+ * The second sign-up screen's options, for the `details` the first one checked. A submit clears the last
+ * `setProblem` message as it starts, then reports a refusal through `setProblem`, keeping the code, or empties the
+ * form and calls `onSignedUp` once the account exists and is signed in.
+ */
+export function signUpCodeFormOptions(
+  queryClient: QueryClient,
+  details: SignUpDetails,
+  { setProblem, onSignedUp }: { setProblem: (message: string | null) => void; onSignedUp: () => Promise<unknown> },
+) {
+  return formOptions({
+    defaultValues: { code: '' },
+    validators: { onChange: signUpCodeSchema, onBlur: signUpCodeSchema },
     onSubmit: async ({ value, formApi }) => {
       setProblem(null)
-      const { name, email, password } = signUpSchema.parse(value)
-      const message = await signUpWithEmail(email, password, name).catch(
+      const { code } = signUpCodeSchema.parse(value)
+      const message = await signUpWithCode(queryClient, { ...details, code }).catch(
         () => 'Creating the account failed. Try again.',
       )
       if (message) {
@@ -151,7 +191,7 @@ export function signUpFormOptions({
         return
       }
       formApi.reset()
-      onSent(email)
+      await onSignedUp()
     },
   })
 }
@@ -180,11 +220,6 @@ function emailLinkFormOptions(
       onSent(email)
     },
   })
-}
-
-/** The options of the form that sends a new verification link; see `emailLinkFormOptions`. */
-export function resendVerificationFormOptions(callbacks: Parameters<typeof emailLinkFormOptions>[1]) {
-  return emailLinkFormOptions(resendVerificationEmail, callbacks)
 }
 
 /** The options of the form that sends a password-reset link; see `emailLinkFormOptions`. */
