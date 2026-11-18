@@ -95,8 +95,11 @@ Better Auth is pinned at **1.7.14**, the version `packages/domain` generates its
 accounts are on.
 
 - It reaches the database through the Drizzle adapter on `domain.forAuthLibrary()`.
-- Email and password, with required email verification. Sign-up sends a verification email, and a password reset ends
-  every session of the account.
+- Sign-in with email and password, and sign-up only by an emailed code (below). `emailAndPassword.disableSignUp` is
+  on, so `POST /api/auth/sign-up/email` answers 400 and creates nothing, and the email verification link flow was
+  removed: no `emailVerification` options, and `/verify-email` and `/send-verification-email` are in `disabledPaths`
+  (404). `requireEmailVerification` stays on as a guard, though no path creates an unverified user. A password reset
+  ends every session of the account.
 - Sessions live in the database and the cookie cache is off, so every request reads the session there.
 - The session cookie is `Path=/api`, `HttpOnly`, `Secure` and `SameSite=Lax`, so browsers never send it to relayed
   machines under `/m/*`. Its name has the `__Secure-` prefix when `BETTER_AUTH_URL` is `https://`, and none on
@@ -113,7 +116,8 @@ accounts are on.
 
 ### Sign-up by email code
 
-A second sign-up flow sits next to the email-and-password one, for the global app (its UI is a later job):
+The only way to create an account. The global app's `/auth/sign-up` runs it in two screens on one route: name, email
+and password, then the code.
 
 1. `POST /api/auth/email-otp/send-verification-otp` with `{ email, type: 'sign-in' }` (the `emailOTP` plugin, with
    `storeOTP: 'hashed'` and its defaults: 6 digits, 300 seconds, 3 attempts, 3 requests a minute per IP). It always
@@ -151,16 +155,11 @@ Better Auth owns exactly four tables, `user`, `session`, `account` and `verifica
 
 ### Account enumeration
 
-With required verification, Better Auth answers a sign-up for an already registered email exactly like a new one: the
-same status, a user of the same shape, no cookie and no `USER_ALREADY_EXISTS`, and it creates nothing. The accepted
-risk is timing: a new sign-up waits for the verification email to send and a duplicate sends nothing, so response
-times can still differ.
-
-Asking for a sign-up code answers `{ success: true }` for every address, and never waits for the email. With
-`type: 'sign-in'`, the only type the client sends, each address gets exactly one email: the code when it has no
-account, `accountExists` when it has one. With another `type`, an address with an account still gets
-`accountExists` and one without gets nothing. The email-code sign-up gives an existing address the same refusal as a
-wrong code. The accepted risk is a small timing difference: for a `type` other than `sign-in`, an address with an
+`sign-up/email` is closed, so it answers every address with the same 400 and creates nothing. Asking for a sign-up
+code answers `{ success: true }` for every address, and never waits for the email. With `type: 'sign-in'`, the only
+type the client sends, each address gets exactly one email: the code when it has no account, `accountExists` when it
+has one. With another `type`, an address with an account still gets `accountExists` and one without gets nothing. The
+email-code sign-up gives an existing address the same refusal as a wrong code. The accepted risk is a small timing difference: for a `type` other than `sign-in`, an address with an
 account costs a second user lookup and the start of a send, where one without costs only the deletion of its code row.
 See [architecture](architecture.md#1-dependencies-point-one-way) for the details.
 
@@ -221,7 +220,6 @@ is built in `apps/server/src/index.ts` when accounts are on. Each email is one t
 
 | File | Template name | Sent when |
 | --- | --- | --- |
-| `templates/verify-email.ts` | `verifyEmail` | A user signs up or asks to resend the verification link. |
 | `templates/reset-password.ts` | `resetPassword` | A user asks for a password reset. |
 | `templates/sign-up-code.ts` | `signUpCode` | Someone asks for a sign-up code for an address with no account. |
 | `templates/account-exists.ts` | `accountExists` | Someone asks for a sign-up code for an address that has an account. |
@@ -235,18 +233,16 @@ the subject, and `accountExists` carries two plain links with no token, to `/aut
 code, an address or a password; the auth test helpers `codeTo(address)` and `accountExistsTo(address)` read them from
 the capturing transport.
 
-Emailed links carry their token in the fragment, so browsers never send it to a server. `emailLinkUrl` in
-`auth.service.ts` builds them on the origin of `BETTER_AUTH_URL`:
-
-- `/auth/verify-email#token=…`
-- `/auth/reset-password#token=…`
+The password reset is the one emailed link with a token, which it carries in the fragment, so browsers never send it
+to a server. `emailLinkUrl` in `auth.service.ts` builds it on the origin of `BETTER_AUTH_URL` as
+`/auth/reset-password#token=…`. The email verification link was removed with the link sign-up, so `/auth/verify-email`
+is no longer a page.
 
 The client's `acceptEmailLinkToken` (`apps/client/src/lib/emailLink.ts`) reads the token before the router starts,
 keeps it in memory only and removes it from the address bar. The pages that use these flows are all under `/auth`:
 
-- Sign-up's in-page "Check your inbox" (`CheckInbox`), with a button to send the link again.
-- `/auth/verify-email`, which verifies the link's token once and never signs in. With a refused token or none it
-  shows a resend form.
+- `/auth/sign-up`, whose second screen ("Enter your code") creates the account from the emailed code, with
+  "Resend code" (off for 30 seconds after a send) and "Use a different email".
 - `/auth/forgot-password`, which asks for a reset link and gives the same answer whether or not the address has an
   account.
 - `/auth/reset-password`, which sets the new password with the link's token. The reset ends every session.
@@ -261,7 +257,7 @@ the accounts settings from `.env` but never connects to the database:
 bun apps/server/scripts/send-test-mail.ts you@example.com
 ```
 
-It sends one `verifyEmail` with a dummy link through `SMTP_URL` from `.env`.
+It sends one `signUpCode` with a dummy code through `SMTP_URL` from `.env`.
 
 ## 7. Accounts and machine access
 

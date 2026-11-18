@@ -1,32 +1,17 @@
 import { Button, FormError, TextField } from '@orch/ui'
 import { useForm } from '@tanstack/react-form'
 import { useRef, useState } from 'react'
-import {
-  focusFirstInvalid,
-  forgotPasswordFormOptions,
-  resendVerificationFormOptions,
-  shownError,
-  submitOnce,
-} from '../../lib/authForms'
+import { focusFirstInvalid, forgotPasswordFormOptions, shownError, submitOnce } from '../../lib/authForms'
 
 /**
- * A one-field form that emails a link to the address typed in: a new verification link (`resend`) or a
- * password-reset link (`forgot`). It calls `onSent` with the address once the server has answered.
+ * A one-field form that emails a password-reset link to the address typed in. It calls `onSent` with the address
+ * once the server has answered.
  */
-export function EmailLinkForm({
-  kind,
-  submitLabel,
-  onSent,
-}: {
-  kind: 'resend' | 'forgot'
-  submitLabel: string
-  onSent: (email: string) => void
-}) {
+export function EmailLinkForm({ submitLabel, onSent }: { submitLabel: string; onSent: (email: string) => void }) {
   const formRef = useRef<HTMLFormElement>(null)
   const [problem, setProblem] = useState<string | null>(null)
-  const options = kind === 'resend' ? resendVerificationFormOptions : forgotPasswordFormOptions
   const form = useForm({
-    ...options({ setProblem, onSent }),
+    ...forgotPasswordFormOptions({ setProblem, onSent }),
     onSubmitInvalid: ({ formApi }) => focusFirstInvalid(formRef.current, formApi.state.fieldMeta),
   })
 

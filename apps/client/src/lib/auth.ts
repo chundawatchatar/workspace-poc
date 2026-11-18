@@ -1,6 +1,7 @@
 import type { ServerEndpointInput, ServerEndpointOutput, ServerErrorCode, ServerReadEndpoint } from '@orch/shared'
 import { type Query, type QueryClient, queryOptions } from '@tanstack/react-query'
 import { redirect } from '@tanstack/react-router'
+import { emailOTPClient } from 'better-auth/client/plugins'
 import { createAuthClient } from 'better-auth/react'
 import { callServer, ServerError } from './server'
 
@@ -20,6 +21,7 @@ function createClient() {
     // from guessing the URL from environment variables.
     baseURL: location.origin,
     fetchOptions: { credentials: 'same-origin' },
+    plugins: [emailOTPClient()],
   })
 }
 
@@ -92,7 +94,6 @@ export async function signInWithEmail(queryClient: QueryClient, email: string, p
   const { error } = await authClient().signIn.email({ email, password })
   if (error) {
     if (error.status === 401) return 'Wrong email or password.'
-    if (error.status === 403) return 'Verify your email address first: open the link we sent to your inbox.'
     if (error.status === 429) return TOO_MANY_ATTEMPTS
     return 'Signing in failed. Try again.'
   }
@@ -101,42 +102,52 @@ export async function signInWithEmail(queryClient: QueryClient, email: string, p
 }
 
 /**
- * Creates an account and asks the server to email a verification link. It never signs in: the account can't be used
- * until the address is verified. An address that already has an account gets the same answer as a new one, so this
- * can't tell which it was. Returns a message to show, or null when the email is on its way.
+ * Asks the server to email a sign-up code to `email`. It answers the same whether or not the address has an account
+ * (one with an account gets an email saying so instead of a code), so this can't tell which it was. A new code
+ * replaces the last one. Returns a message to show, or null.
  */
-export async function signUpWithEmail(email: string, password: string, name: string) {
-  const { error } = await authClient().signUp.email({ email, password, name })
+export async function sendSignUpCode(email: string) {
+  const { error } = await authClient().emailOtp.sendVerificationOtp({ email, type: 'sign-in' })
   if (!error) return null
   if (error.status === 429) return TOO_MANY_ATTEMPTS
-  return 'Creating the account failed. Try again.'
+  return 'Sending the code failed. Try again.'
+}
+
+/** What sign-up says when the server refuses the code: wrong, used up, locked, expired, or for a taken address. */
+export const SIGN_UP_CODE_REFUSED = 'That code is wrong or has expired. Check it, or send a new code.'
+
+/** The details an account is created from: what the first sign-up screen asked for, plus the emailed code. */
+export interface SignUpWithCode {
+  name: string
+  email: string
+  password: string
+  code: string
+}
+
+/**
+ * Creates a verified account from the emailed code and signs in to it, then reads the session, which hands the cache
+ * to the new user. Every refused code gets `SIGN_UP_CODE_REFUSED`, whatever the reason. Returns a message to show,
+ * or null once the account exists.
+ */
+export async function signUpWithCode(queryClient: QueryClient, { name, email, password, code }: SignUpWithCode) {
+  // The endpoint has no client plugin, so it goes through Better Auth's own fetch, with its origin and credentials.
+  const { error } = await authClient().$fetch<unknown, { code?: string }>('/sign-up/email-code', {
+    method: 'POST',
+    body: { name, email, password, code },
+  })
+  if (error) {
+    if (error.status === 400 && error.code === 'INVALID_OR_EXPIRED_CODE') return SIGN_UP_CODE_REFUSED
+    if (error.status === 429) return TOO_MANY_ATTEMPTS
+    return 'Creating the account failed. Try again.'
+  }
+  // The account exists whatever this read finds, and the code is spent, so a failed read must not offer a retry;
+  // the guards read the session again on the next page.
+  await refetchSession(queryClient).catch(() => {})
+  return null
 }
 
 /** What a link page shows when the server refuses its token: expired, already used, malformed or for no account. */
 export const EXPIRED_LINK = 'This link has expired or is no longer valid.'
-
-/**
- * Asks the server to email a new verification link to `email`. The server answers the same whether the address has
- * an unverified account, a verified one or none, so this can't tell either. Returns a message to show, or null.
- */
-export async function resendVerificationEmail(email: string) {
-  const { error } = await authClient().sendVerificationEmail({ email })
-  if (!error) return null
-  if (error.status === 429) return TOO_MANY_ATTEMPTS
-  return 'Sending the email failed. Try again.'
-}
-
-/**
- * Verifies an email address with the token from its emailed link. It never signs in. Returns a message to show,
- * `EXPIRED_LINK` for any refused token, or null once the address is verified.
- */
-export async function verifyEmailToken(token: string) {
-  const { error } = await authClient().verifyEmail({ query: { token } })
-  if (!error) return null
-  if (error.status === 400 || error.status === 401) return EXPIRED_LINK
-  if (error.status === 429) return TOO_MANY_ATTEMPTS
-  return 'Verifying the address failed. Try again.'
-}
 
 /**
  * Asks the server to email a password-reset link to `email`. The answer is the same whether or not the address has

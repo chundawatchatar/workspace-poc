@@ -26,7 +26,7 @@ export const TEST_BASE = 'http://orch.example'
 /** The one origin besides `TEST_BASE` that test apps trust. */
 export const TEST_TRUSTED_ORIGIN = 'https://app.example'
 
-/** The test password every `verifiedUser` signs up with. */
+/** The test password every `register` and `verifiedUser` signs up with. */
 export const TEST_PASSWORD = 'correct horse battery'
 
 /** The tunnel address test apps send with every new enrollment key. */
@@ -104,9 +104,8 @@ export function authTestClient({
   }
 
   /** The link in the last email of `template` sent to `address`. */
-  function linkTo(address: string, template: 'verifyEmail' | 'resetPassword'): URL {
-    const subject = template === 'verifyEmail' ? 'Verify your email address' : 'Reset your password'
-    const message = mail.sent.filter((m) => m.to === address && m.subject === subject).at(-1)
+  function linkTo(address: string, template: 'resetPassword'): URL {
+    const message = mail.sent.filter((m) => m.to === address && m.subject === 'Reset your password').at(-1)
     const url = message?.text.match(/https?:\/\/\S+/)?.[0]
     if (!url) throw new Error(`no ${template} link for the address`)
     return new URL(url)
@@ -138,20 +137,27 @@ export function authTestClient({
     return call('POST', '/api/auth/sign-up/email-code', { ip, body })
   }
 
-  /** Signs up and verifies with the link's token as the client page does, leaving a verified user with no session. */
-  async function register(email: string, ip: string, name = 'Test'): Promise<void> {
-    await call('POST', '/api/auth/sign-up/email', { ip, body: { email, password: TEST_PASSWORD, name } })
-    const token = linkToken(linkTo(email, 'verifyEmail'))
-    const verify = await call('GET', `/api/auth/verify-email?token=${encodeURIComponent(token)}`, { ip })
-    if (verify.status !== 200) throw new Error(`verify-email answered ${verify.status}`)
+  /**
+   * Signs up with `TEST_PASSWORD` from `ip` as the client does, asking for a
+   * code and sending it back, and returns the session cookie line the sign-up
+   * set. Each call spends one of the IP's three code sends a minute, so give
+   * each its own `freshIp()`.
+   */
+  async function verifiedUser(email: string, ip: string, name = 'Test'): Promise<string> {
+    const send = await sendCode(email, ip)
+    if (send.status !== 200) throw new Error(`send-verification-otp answered ${send.status}`)
+    const signUp = await signUpWithCode(ip, { name, email, password: TEST_PASSWORD, code: codeTo(email) })
+    if (signUp.status !== 200) throw new Error(`sign-up/email-code answered ${signUp.status}`)
+    const setCookie = sessionSetCookie(signUp)
+    if (!setCookie) throw new Error('sign-up set no session cookie')
+    return setCookie
   }
 
-  /** Signs up, follows the verification link and signs in, returning the session cookie line. */
-  async function verifiedUser(email: string, ip: string, name = 'Test'): Promise<string> {
-    await register(email, ip, name)
-    const setCookie = sessionSetCookie(await signInResponse(email, ip))
-    if (!setCookie) throw new Error('sign-in set no session cookie')
-    return setCookie
+  /** Signs up like `verifiedUser`, then signs out, leaving a verified user with no session. */
+  async function register(email: string, ip: string, name = 'Test'): Promise<void> {
+    const cookie = cookiePair(await verifiedUser(email, ip, name))
+    const signOut = await call('POST', '/api/auth/sign-out', { ip, cookie })
+    if (signOut.status !== 200) throw new Error(`sign-out answered ${signOut.status}`)
   }
 
   /**

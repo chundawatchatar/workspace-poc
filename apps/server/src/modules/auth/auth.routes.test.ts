@@ -70,36 +70,27 @@ async function sessionEmail(cookie: string, ip: string): Promise<string | null> 
 }
 
 describe('auth module', () => {
-  test('sign-up sends one verification email and allows sign-in only after the link is followed', async () => {
+  test('the link flow is gone: no sign-up without a code, and no verification link to follow or ask for', async () => {
     const email = client.freshEmail()
     const ip = client.freshIp()
     const signUp = await client.call('POST', '/api/auth/sign-up/email', {
       ip,
       body: { email, password: TEST_PASSWORD, name: 'A' },
     })
-    expect(signUp.status).toBe(200)
+    expect(signUp.status).toBeGreaterThanOrEqual(400)
     expect(sessionSetCookie(signUp)).toBeUndefined()
-    expect(mail.sent.filter((m) => m.to === email)).toHaveLength(1)
+    expect(await domain.forAuthLibrary().select().from(schema.user).where(eq(schema.user.email, email))).toEqual([])
+    expect(mail.sent.filter((m) => m.to === email)).toEqual([])
 
-    const early = await client.call('POST', '/api/auth/sign-in/email', { ip, body: { email, password: TEST_PASSWORD } })
-    expect(early.status).toBe(403)
+    const verify = await client.call('GET', '/api/auth/verify-email?token=x', { ip })
+    expect(verify.status).toBe(404)
+    const resend = await client.call('POST', '/api/auth/send-verification-email', { ip, body: { email } })
+    expect(resend.status).toBe(404)
+    expect(mail.sent.filter((m) => m.to === email)).toEqual([])
 
-    const link = client.linkTo(email, 'verifyEmail')
-    expect(link.origin).toBe(BASE)
-    expect(link.pathname).toBe('/auth/verify-email')
-    expect(link.search).toBe('')
-    const token = linkToken(link)
-    expect(link.hash).toBe(`#token=${encodeURIComponent(token)}`)
-    const verify = await client.call('GET', `/api/auth/verify-email?token=${encodeURIComponent(token)}`, { ip })
-    expect(verify.status).toBe(200)
-
-    const signIn = await client.call('POST', '/api/auth/sign-in/email', {
-      ip,
-      body: { email, password: TEST_PASSWORD },
-    })
-    expect(signIn.status).toBe(200)
-    expect(sessionSetCookie(signIn)).toBeDefined()
-    expect(mail.sent.filter((m) => m.to === email)).toHaveLength(1)
+    // The email-code sign-up still makes the account.
+    await client.verifiedUser(email, client.freshIp())
+    expect(await domain.forAuthLibrary().select().from(schema.user).where(eq(schema.user.email, email))).toHaveLength(1)
   })
 
   test('the session cookie is scoped to `/api`, so a browser never sends it to a relayed machine', async () => {
@@ -188,38 +179,17 @@ describe('auth module', () => {
     expect(trusted.status).toBe(401)
   })
 
-  test('signing up with a registered email looks like a new sign-up and changes nothing', async () => {
-    const email = client.freshEmail()
-    const first = await client.call('POST', '/api/auth/sign-up/email', {
-      ip: client.freshIp(),
-      body: { email, password: TEST_PASSWORD, name: 'A' },
-    })
-    const again = await client.call('POST', '/api/auth/sign-up/email', {
-      ip: client.freshIp(),
-      body: { email, password: 'another password', name: 'B' },
-    })
-    expect(again.status).toBe(first.status)
-    expect(again.headers.getSetCookie()).toEqual(first.headers.getSetCookie())
-    const firstBody = (await first.json()) as { token: unknown; user: Record<string, unknown> }
-    const againBody = (await again.json()) as { token: unknown; user: Record<string, unknown>; code?: string }
-    expect(againBody.code).toBeUndefined()
-    expect(againBody.token).toBe(firstBody.token)
-    expect(Object.keys(againBody.user).sort()).toEqual(Object.keys(firstBody.user).sort())
-
-    const rows = await domain.forAuthLibrary().select().from(schema.user).where(eq(schema.user.email, email))
-    expect(rows).toHaveLength(1)
-    expect(mail.sent.filter((m) => m.to === email)).toHaveLength(1)
-  })
-
   // Runs last, after every flow above has logged what it logs.
-  test('no log line holds an email address, a token or a link', () => {
+  test('no log line holds an email address, a code, a token or a link', () => {
     const secrets = new Set<string>()
     for (const message of mail.sent) {
       secrets.add(message.to)
-      const url = new URL(message.text.match(/https?:\/\/\S+/)?.[0] as string)
-      secrets.add(url.href)
-      secrets.add(url.hash)
-      secrets.add(linkToken(url))
+      for (const code of message.text.match(/\b\d{6}\b/g) ?? []) secrets.add(code)
+      for (const link of message.text.match(/https?:\/\/\S+/g) ?? []) {
+        const url = new URL(link)
+        secrets.add(url.href)
+        if (url.hash) secrets.add(linkToken(url))
+      }
     }
     expect(secrets.size).toBeGreaterThan(0)
     for (const line of logLines) {

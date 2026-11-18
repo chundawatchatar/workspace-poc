@@ -1,11 +1,11 @@
 import { useSyncExternalStore } from 'react'
 
-// The token an emailed link carries in its fragment (`/auth/verify-email#token=…`, `/auth/reset-password#token=…`).
+// The token an emailed link carries in its fragment (`/auth/reset-password#token=…`).
 // It is read before the router starts and removed from the address bar, so it never enters the router's history, a
 // query key or storage. It lives only in this module until its page takes it; a reload finds none.
 
 /** The pages an emailed link opens. */
-export type EmailLinkPage = 'verify-email' | 'reset-password'
+export type EmailLinkPage = 'reset-password'
 
 /** The parts of `window` that `acceptEmailLinkToken` uses. */
 export interface EmailLinkWindow {
@@ -14,7 +14,6 @@ export interface EmailLinkWindow {
 }
 
 const PAGES: Record<string, EmailLinkPage> = {
-  '/auth/verify-email': 'verify-email',
   '/auth/reset-password': 'reset-password',
 }
 

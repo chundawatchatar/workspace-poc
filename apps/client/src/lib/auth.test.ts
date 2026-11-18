@@ -13,15 +13,15 @@ import {
   refetchSession,
   requestPasswordReset,
   requireSession,
-  resendVerificationEmail,
   resetPassword,
   type SessionUser,
+  SIGN_UP_CODE_REFUSED,
   safeRedirect,
+  sendSignUpCode,
   sessionQuery,
   signInWithEmail,
   signOut,
-  signUpWithEmail,
-  verifyEmailToken,
+  signUpWithCode,
   watchIdentity,
 } from './auth'
 import { serverQuery } from './server'
@@ -189,85 +189,91 @@ describe('watchIdentity', () => {
 })
 
 describe('signInWithEmail', () => {
-  test('an unverified address is told to open the link in its inbox, and stays signed out', async () => {
+  test('a 403 gets the generic failure, with no mention of a verification link, and stays signed out', async () => {
     const { queryClient } = await setup(null)
-    expect(await signInWithEmail(queryClient, 'unverified@example.com', 'pw')).toBe(
-      'Verify your email address first: open the link we sent to your inbox.',
-    )
+    expect(await signInWithEmail(queryClient, 'unverified@example.com', 'pw')).toBe('Signing in failed. Try again.')
     expect(queryClient.getQueryData(sessionQuery.queryKey)).toBeNull()
   })
 })
 
-describe('signUpWithEmail', () => {
-  test('posts the name, email and password and stays signed out, alike for a taken address', async () => {
-    const { queryClient } = await setup(null)
-    const signUps: Request[] = []
+describe('sign-up by email code', () => {
+  test('asking for a code posts only the address with type sign-in, and reports a rate limit', async () => {
+    const requests: Request[] = []
     server.use(
-      http.post('*/api/auth/sign-up/email', async ({ request }) => {
-        signUps.push(request.clone())
-        // Like the cloud server: a new and a taken address get the same answer, and no session either way.
-        const { email, name } = (await request.json()) as { email: string; name: string }
+      http.post('*/api/auth/email-otp/send-verification-otp', async ({ request }) => {
+        requests.push(request.clone())
+        const { email } = (await request.json()) as { email: string }
         if (email === 'busy@example.com') return rateLimited()
         if (email === 'broken@example.com') return authError(500, 'INTERNAL_SERVER_ERROR', 'Internal Server Error')
-        return HttpResponse.json({ token: null, user: authUser({ id: 'u1', email, name }) })
+        // Like the cloud server: the same answer whether or not the address has an account.
+        return HttpResponse.json({ success: true })
       }),
     )
-    for (const email of ['new@example.com', userA.email]) {
-      expect(await signUpWithEmail(email, 'long enough', 'Ada')).toBeNull()
-      const request = signUps.at(-1)
-      expect(request?.method).toBe('POST')
-      expect(await request?.json()).toMatchObject({ email, password: 'long enough', name: 'Ada' })
-    }
-    expect(await refetchSession(queryClient)).toBeNull()
+    expect(await sendSignUpCode('new@example.com')).toBeNull()
+    expect(await sent(requests[0] as Request)).toEqual({
+      method: 'POST',
+      search: '',
+      body: { email: 'new@example.com', type: 'sign-in' },
+    })
+    expect(await sendSignUpCode('busy@example.com')).toBe('Too many attempts. Wait a minute and try again.')
+    expect(await sendSignUpCode('broken@example.com')).toBe('Sending the code failed. Try again.')
+  })
 
-    expect(await signUpWithEmail('busy@example.com', 'long enough', 'Ada')).toBe(
+  test('the code creates the account and reads the session; each refusal gets its own message', async () => {
+    const { queryClient, account, changes } = await setup(null)
+    const requests: Request[] = []
+    server.use(
+      http.post('*/api/auth/sign-up/email-code', async ({ request }) => {
+        requests.push(request.clone())
+        const { code } = (await request.json()) as { code: string }
+        if (code === '111111') return authError(400, 'INVALID_OR_EXPIRED_CODE', 'Invalid or expired code')
+        if (code === '222222') return rateLimited()
+        if (code === '333333') return authError(400, 'PASSWORD_TOO_SHORT', 'Password too short')
+        if (code === '444444') return authError(500, 'INTERNAL_SERVER_ERROR', 'Internal Server Error')
+        account.user = userA
+        return HttpResponse.json({ token: 't1', user: authUser(userA) })
+      }),
+    )
+    const details = { name: userA.name, email: userA.email, password: 'long enough' }
+    expect(await signUpWithCode(queryClient, { ...details, code: '111111' })).toBe(SIGN_UP_CODE_REFUSED)
+    expect(await signUpWithCode(queryClient, { ...details, code: '222222' })).toBe(
       'Too many attempts. Wait a minute and try again.',
     )
-    expect(await signUpWithEmail('broken@example.com', 'long enough', 'Ada')).toBe(
-      'Creating the account failed. Try again.',
-    )
+    for (const code of ['333333', '444444']) {
+      expect(await signUpWithCode(queryClient, { ...details, code })).toBe('Creating the account failed. Try again.')
+    }
+    expect(changes()).toBe(0)
+
+    expect(await signUpWithCode(queryClient, { ...details, code: '123456' })).toBeNull()
+    expect(await sent(requests.at(-1) as Request)).toEqual({
+      method: 'POST',
+      search: '',
+      body: { ...details, code: '123456' },
+    })
+    expect(queryClient.getQueryData(sessionQuery.queryKey)).toEqual(userA)
+    expect(changes()).toBe(1)
   })
 })
 
 describe('the email link functions', () => {
-  test('resend and forgot password post the address, answer alike for any account, and report a rate limit', async () => {
-    for (const [send, path] of [
-      [resendVerificationEmail, '/api/auth/send-verification-email'],
-      [requestPasswordReset, '/api/auth/request-password-reset'],
-    ] as const) {
-      const requests: Request[] = []
-      server.use(
-        http.post(`*${path}`, async ({ request }) => {
-          requests.push(request.clone())
-          // Like the cloud server: the same answer whether or not the address has an account.
-          const { email } = (await request.json()) as { email: string }
-          if (email === 'busy@example.com') return rateLimited()
-          return HttpResponse.json({ status: true })
-        }),
-      )
-      expect(await send('new@example.com')).toBeNull()
-      expect(await send(userA.email)).toBeNull()
-      expect(await Promise.all(requests.map(sent))).toEqual([
-        { method: 'POST', search: '', body: { email: 'new@example.com' } },
-        { method: 'POST', search: '', body: { email: userA.email } },
-      ])
-      expect(await send('busy@example.com')).toBe('Too many attempts. Wait a minute and try again.')
-    }
-  })
-
-  test('verifying sends the token once in the query and reports any refusal as an expired link', async () => {
+  test('forgot password posts the address, answers alike for any account, and reports a rate limit', async () => {
     const requests: Request[] = []
     server.use(
-      http.get('*/api/auth/verify-email', ({ request }) => {
-        requests.push(request)
-        if (new URL(request.url).searchParams.get('token') === 'good')
-          return HttpResponse.json({ status: true, user: null })
-        return authError(401, 'TOKEN_EXPIRED', 'Token expired')
+      http.post('*/api/auth/request-password-reset', async ({ request }) => {
+        requests.push(request.clone())
+        // Like the cloud server: the same answer whether or not the address has an account.
+        const { email } = (await request.json()) as { email: string }
+        if (email === 'busy@example.com') return rateLimited()
+        return HttpResponse.json({ status: true })
       }),
     )
-    expect(await verifyEmailToken('good')).toBeNull()
-    expect(await Promise.all(requests.map(sent))).toEqual([{ method: 'GET', search: '?token=good', body: null }])
-    expect(await verifyEmailToken('old')).toBe(EXPIRED_LINK)
+    expect(await requestPasswordReset('new@example.com')).toBeNull()
+    expect(await requestPasswordReset(userA.email)).toBeNull()
+    expect(await Promise.all(requests.map(sent))).toEqual([
+      { method: 'POST', search: '', body: { email: 'new@example.com' } },
+      { method: 'POST', search: '', body: { email: userA.email } },
+    ])
+    expect(await requestPasswordReset('busy@example.com')).toBe('Too many attempts. Wait a minute and try again.')
   })
 
   test('a reset posts the token and password, then rereads the session, which the reset ended', async () => {

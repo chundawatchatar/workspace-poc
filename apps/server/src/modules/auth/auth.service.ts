@@ -51,8 +51,14 @@ export const DISABLED_EMAIL_OTP_PATHS = [
 ]
 
 /**
- * Builds the Better Auth instance behind `/api/auth/*`: email and password
- * with required verification, sign-up by an emailed code
+ * The email verification link's paths, closed over HTTP: an account is only
+ * ever made by the email-code sign-up, which verifies the address first.
+ */
+export const DISABLED_VERIFY_EMAIL_PATHS = ['/verify-email', '/send-verification-email']
+
+/**
+ * Builds the Better Auth instance behind `/api/auth/*`: sign-in with email and
+ * password, sign-up only by an emailed code
  * (`email-otp/send-verification-otp`, then `sign-up/email-code`), sessions in
  * the database and never cached in a cookie, and a session cookie on
  * `Path=/api`, so browsers never send it to the relayed machines under `/m/*`.
@@ -101,18 +107,16 @@ export function createAuth({
         beforeCredentialWrite: beforeSignUpCredentialWrite,
       }),
     ],
-    disabledPaths: [...DISABLED_EMAIL_OTP_PATHS],
+    disabledPaths: [...DISABLED_EMAIL_OTP_PATHS, ...DISABLED_VERIFY_EMAIL_PATHS],
     emailAndPassword: {
       enabled: true,
+      // `sign-up/email` would make an unverified account, holding a password, for any address; it answers 400.
+      disableSignUp: true,
+      // No path makes an unverified user any more, so this never fires; it stays on as a guard.
       requireEmailVerification: true,
       revokeSessionsOnPasswordReset: true,
       sendResetPassword: ({ user, token }) =>
         mailer.send(user.email, 'resetPassword', { url: emailLinkUrl(baseUrl, 'reset-password', token) }),
-    },
-    emailVerification: {
-      sendOnSignUp: true,
-      sendVerificationEmail: ({ user, token }) =>
-        mailer.send(user.email, 'verifyEmail', { url: emailLinkUrl(baseUrl, 'verify-email', token) }),
     },
     session: {
       // Every request reads the session from the database, so a revoked session ends at once.
@@ -143,7 +147,7 @@ export function createAuth({
  * a server, so the token stays out of access logs and `Referer`. The client
  * reads it and removes it from the address bar before its router starts.
  */
-export function emailLinkUrl(baseUrl: string, page: 'verify-email' | 'reset-password', token: string): string {
+export function emailLinkUrl(baseUrl: string, page: 'reset-password', token: string): string {
   return `${new URL(baseUrl).origin}/auth/${page}#token=${encodeURIComponent(token)}`
 }
 

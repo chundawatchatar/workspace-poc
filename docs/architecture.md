@@ -214,28 +214,33 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   left or the form submitted, a failed submit focuses the first invalid field, and a second submit while one is in
   flight sends nothing. The schemas only catch mistakes early (the password's 8 to 128 characters mirror Better
   Auth's defaults); the server stays the authority. A new submit clears the last form-level error before its request
-  goes out, and a successful sign-up empties the form before showing "Check your inbox", whose heading then takes
-  focus. Neither page keeps the email or password outside the form state, logs them or puts them in the URL.
-- The client's email pages live under `/auth` too. Sign-up success is an in-page "Check your inbox" state
-  (`src/components/auth/CheckInbox.tsx`), so the address never enters the URL; its "Send the link again" button posts
-  `/api/auth/send-verification-email` and then stays off for 30 seconds (not kept across a reload; Better Auth's limit
-  of 3 a minute is the real guard). `/auth/verify-email` verifies the token from its link once, with
-  `GET /api/auth/verify-email?token=…`, and never signs in; with a refused token (one message for expired, invalid and
-  unknown user) or none it shows a resend form. `/auth/forgot-password` posts `/api/auth/request-password-reset`, and
-  `/auth/reset-password` posts `/api/auth/reset-password` with the link's token and the new password, then reads the
-  session again, since the reset ends every session of the account. Resend and forgot-password give the same
-  confirmation whether or not the address has an account, as the server does. Only `/auth/forgot-password` uses
-  `leaveIfSignedIn`: a verify or reset link may be opened while signed in. The sign-in page links to forgot-password
-  and to verify-email's resend form.
+  goes out. Neither page keeps the email or password outside React state, logs them or puts them in the URL.
+- `/auth/sign-up` is two screens on one route. The first takes the name, email and password and posts only the
+  address to `/api/auth/email-otp/send-verification-otp` with `type: 'sign-in'` (`sendSignUpCode`). The second
+  (`src/components/auth/SignUpCode.tsx`, "Enter your code", whose heading takes focus) names the address, takes the
+  6-digit code (`inputMode="numeric"`, `autoComplete="one-time-code"`) and posts `{ name, email, password, code }` to
+  `/api/auth/sign-up/email-code` through `authClient().$fetch` (`signUpWithCode`), then reads the session again and
+  lands on `safeRedirect(redirect)` with `replace`. A refused code gets one message whatever the reason. "Resend
+  code" sends a new code, which replaces the previous one, and then stays off for 30 seconds (`RESEND_COOLDOWN_MS`,
+  not kept across a reload; the server's 3 a minute per IP is the real guard). "Use a different email" goes back to
+  the first screen with the name and email kept and the password empty. Neither request goes through `useMutation`,
+  whose variables would keep the password in the mutation cache: they run from TanStack Form's `onSubmit`, and the
+  details live only in the page's React state until it unmounts.
+- The client's email pages live under `/auth` too. The email verification link flow was removed, so there is no
+  "Check your inbox" card and no `/auth/verify-email` page (it shows not found). `/auth/forgot-password` posts
+  `/api/auth/request-password-reset`, and `/auth/reset-password` posts `/api/auth/reset-password` with the link's
+  token and the new password, then reads the session again, since the reset ends every session of the account. Sending a sign-up code and forgot-password give
+  the same confirmation whether or not the address has an account, as the server does. Only `/auth/forgot-password`
+  uses `leaveIfSignedIn`: a reset link may be opened while signed in. The sign-in page links to forgot-password.
 - Emailed links carry their token in the fragment: the server builds them from the origin of `BETTER_AUTH_URL` and
-  the token Better Auth hands its email callbacks (`emailLinkUrl` in `auth.service.ts`), as
-  `/auth/verify-email#token=<t>` and `/auth/reset-password#token=<t>`, never Better Auth's own `url`. Browsers never
+  the token Better Auth hands its email callback (`emailLinkUrl` in `auth.service.ts`), as
+  `/auth/reset-password#token=<t>`, never Better Auth's own `url`. Browsers never
   send a fragment, so the token stays out of server logs and `Referer`. `acceptEmailLinkToken` (`src/lib/emailLink.ts`)
   runs in `getRouter()` next to `acceptConnectLink`, and again on `popstate` (registered before the router's own
   listener) for a link opened in a tab already on its page: it keeps the token in a module variable and replaces the
   URL with the same path and search, so the token never enters the router's location or history, a query key or
-  storage. The page takes it once with `takeEmailLinkToken(page)`, and calls `verifyEmailToken` or `resetPassword`
-  directly, never as a query. A reload finds no token and shows the page's no-token state. Better Auth's
+  storage. The page takes it once with `takeEmailLinkToken(page)`, and calls `resetPassword` directly, never as a
+  query. A reload finds no token and shows the page's no-token state. Better Auth's
   `/api/auth/reset-password/<token>` GET endpoint stays mounted, but no email links to it.
 - The client's home page lists the signed-in account's machines (`src/lib/accountMachines.ts`, `machinesQuery`:
   `accountQuery` on `serverRoutes.machines.list`, so its key is `accountKey(userId, ...)`), in the server's order,
@@ -410,12 +415,9 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   `BETTER_AUTH_URL`, and rate limits by client IP in memory (per process, reset on restart). The IP comes from the
   `x-orch-client-ip` header the auth routes set from the server's own client IP reader, replacing any value a client
   sent, so a spoofed `X-Forwarded-For` counts only when `SERVER_TRUST_PROXY` is on.
-- Account enumeration: with `requireEmailVerification` on, Better Auth 1.7.14 answers a sign-up for an already
-  registered email exactly like a new one (the same status, a synthetic user of the same shape, no cookie, no
-  `USER_ALREADY_EXISTS`) and creates nothing (`sign-up.mjs`, `shouldReturnGenericDuplicateResponse`). The accepted
-  risk is timing: a new sign-up waits for the verification email to send and a duplicate sends nothing, so response
-  times can still differ. If the mailer fails during sign-up, Better Auth logs the failure and still answers 200; the
-  user exists unverified and recovers through a later "resend" page. Asking for a sign-up code
+- Account enumeration: `sign-up/email` is closed (`emailAndPassword.disableSignUp`), so it answers every address
+  with the same 400 before looking anything up, and no path creates an unverified account; the email verification
+  link endpoints are in `disabledPaths`. Asking for a sign-up code
   (`email-otp/send-verification-otp`) answers `{ success: true }` for every address and never waits for the email,
   which is sent in the background (a failure is logged by the mailer and dropped). With `type: 'sign-in'`, the only
   type the client sends, each address gets exactly one email: `signUpCode` with the code to an address with no

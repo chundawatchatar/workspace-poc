@@ -39,17 +39,12 @@ function SignIn() {
       title="Sign in"
       description="Reach your machines and their workspaces from this browser."
       footer={
-        <>
-          <p>
-            New here?{' '}
-            <Link to="/auth/sign-up" search={target ? { redirect: target } : {}} className={linkClass}>
-              Create an account
-            </Link>
-          </p>
-          <Link to="/auth/verify-email" className={`self-start ${linkClass}`}>
-            Didn't get the verification email?
+        <p>
+          New here?{' '}
+          <Link to="/auth/sign-up" search={target ? { redirect: target } : {}} className={linkClass}>
+            Create an account
           </Link>
-        </>
+        </p>
       }
     >
       <form

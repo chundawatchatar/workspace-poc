@@ -14,6 +14,8 @@ import {
   shownError,
   signInFormOptions,
   signInSchema,
+  signUpCodeFormOptions,
+  signUpCodeSchema,
   signUpFormOptions,
   signUpSchema,
   submitOnce,
@@ -46,6 +48,14 @@ describe('the auth schemas', () => {
     expect(signUpSchema.safeParse({ name: 'Ada', email: 'a@example.com', password: 'x'.repeat(128) }).success).toBe(
       true,
     )
+
+    for (const code of ['', '12345', '1234567', '12 345', 'abcdef']) {
+      expect(signUpCodeSchema.safeParse({ code }).success).toBe(false)
+    }
+    expect(problems(signUpCodeSchema.safeParse({ code: '12345' }))).toEqual({
+      code: 'Enter the 6-digit code from the email.',
+    })
+    expect(signUpCodeSchema.parse({ code: ' 012345 ' }).code).toBe('012345')
 
     expect(problems(emailSchema.safeParse({ email: ' ' }))).toEqual({ email: 'Enter your email address.' })
     expect(emailSchema.parse({ email: ' a@example.com ' }).email).toBe('a@example.com')
@@ -148,31 +158,66 @@ describe('the sign-in and sign-up forms', () => {
     expect(requests).toHaveLength(1)
   })
 
-  test('sign-up clears the last refusal as it submits, and empties the form once the email is sent', async () => {
+  test('the details screen sends only the address, keeps the values on a refusal, and hands the details on', async () => {
+    const bodies: unknown[] = []
     server.use(
-      http.post('*/api/auth/sign-up/email', async ({ request }) => {
+      http.post('*/api/auth/email-otp/send-verification-otp', async ({ request }) => {
         problemDuringRequest = problem
-        const { email, name } = (await request.json()) as { email: string; name: string }
-        if (email === 'busy@example.com') return rateLimited()
-        return HttpResponse.json({ token: null, user: authUser({ id: 'u1', email, name }) })
+        const body = (await request.json()) as { email: string }
+        bodies.push(body)
+        if (body.email === 'busy@example.com') return rateLimited()
+        return HttpResponse.json({ success: true })
       }),
     )
-    let sentTo: string | null = null
-    const form = new FormApi(signUpFormOptions({ setProblem, onSent: (email) => (sentTo = email) }))
+    const handed: unknown[] = []
+    const form = new FormApi(
+      signUpFormOptions({ name: 'Ada', email: 'busy@example.com' }, { setProblem, onCodeSent: (d) => handed.push(d) }),
+    )
     form.mount()
-    form.setFieldValue('name', 'Ada')
-    form.setFieldValue('email', 'busy@example.com')
+    expect(form.state.values).toEqual({ name: 'Ada', email: 'busy@example.com', password: '' })
     form.setFieldValue('password', 'long enough')
     await submitAndWait(form)
     expect(problem as string | null).toBe('Too many attempts. Wait a minute and try again.')
     expect(form.state.values.password).toBe('long enough')
+    expect(handed).toEqual([])
 
-    form.setFieldValue('email', 'ada@example.com')
+    form.setFieldValue('email', ' ada@example.com ')
     await submitAndWait(form)
     expect(problemDuringRequest).toBeNull()
     expect(problem as string | null).toBeNull()
-    expect(sentTo as string | null).toBe('ada@example.com')
-    expect(form.state.values).toEqual({ name: '', email: '', password: '' })
+    expect(bodies).toEqual([
+      { email: 'busy@example.com', type: 'sign-in' },
+      { email: 'ada@example.com', type: 'sign-in' },
+    ])
+    expect(handed).toEqual([{ name: 'Ada', email: 'ada@example.com', password: 'long enough' }])
+  })
+
+  test('the code screen keeps the code on a refusal, and empties the form once the account exists', async () => {
+    server.use(
+      http.post('*/api/auth/sign-up/email-code', async ({ request }) => {
+        const { code, email, name } = (await request.json()) as { code: string; email: string; name: string }
+        if (code !== '123456') return authError(400, 'INVALID_OR_EXPIRED_CODE', 'Invalid or expired code')
+        return HttpResponse.json({ token: 't1', user: authUser({ id: 'u1', email, name }) })
+      }),
+      http.get('*/api/auth/get-session', () => HttpResponse.json(null)),
+    )
+    let signedUp = 0
+    const details = { name: 'Ada', email: 'ada@example.com', password: 'long enough' }
+    const form = new FormApi(
+      signUpCodeFormOptions(new QueryClient(), details, { setProblem, onSignedUp: async () => signedUp++ }),
+    )
+    form.mount()
+    form.setFieldValue('code', '000000')
+    await submitAndWait(form)
+    expect(problem as string | null).toBe('That code is wrong or has expired. Check it, or send a new code.')
+    expect(form.state.values.code).toBe('000000')
+    expect(signedUp).toBe(0)
+
+    form.setFieldValue('code', '123456')
+    await submitAndWait(form)
+    expect(problem as string | null).toBeNull()
+    expect(form.state.values.code).toBe('')
+    expect(signedUp).toBe(1)
   })
 
   test('a forgot-password submit empties the form and reports the address, or keeps it on a rate limit', async () => {

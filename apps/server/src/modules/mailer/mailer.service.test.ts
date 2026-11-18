@@ -33,8 +33,8 @@ describe('createMailer', () => {
   test('sends each template once, with from, to, a subject and the link in both parts', async () => {
     const { mailer, sent, lastTo } = setup()
     captureConsole()
-    await mailer.send(to, 'verifyEmail', { url })
-    await mailer.send('b@example.com', 'resetPassword', { url })
+    await mailer.send(to, 'resetPassword', { url })
+    await mailer.send('b@example.com', 'accountExists', { signInUrl: url, forgotPasswordUrl: url })
 
     expect(sent).toHaveLength(2)
     for (const message of sent) {
@@ -55,7 +55,7 @@ describe('createMailer', () => {
       // @ts-expect-error an unknown template name
       mailer.send(to, 'welcome', { url })
       // @ts-expect-error data without `url`
-      mailer.send(to, 'verifyEmail', {})
+      mailer.send(to, 'resetPassword', {})
     }
     expect(_typeChecks).toBeFunction()
   })
@@ -64,7 +64,7 @@ describe('createMailer', () => {
     const { mailer, sent } = setup()
     captureConsole()
     const hostile = 'https://x.test/v?token="><script>alert(1)</script>'
-    await mailer.send(to, 'verifyEmail', { url: hostile })
+    await mailer.send(to, 'resetPassword', { url: hostile })
 
     const [message] = sent
     expect(message?.html).not.toContain('<script>')

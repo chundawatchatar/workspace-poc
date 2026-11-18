@@ -1,10 +1,9 @@
 import '../src/env'
 import { loadServerConfig, ServerConfigError } from '../src/lib/config'
-import { emailLinkUrl } from '../src/modules/auth/auth.service'
 import { createMailer, MailSendError } from '../src/modules/mailer/mailer.service'
 import { createSmtpTransport } from '../src/modules/mailer/mailer.transport'
 
-// Sends one `verifyEmail` message with a dummy link through `SMTP_URL` from the root `.env`, to check the mailer
+// Sends one `signUpCode` message with a dummy code through `SMTP_URL` from the root `.env`, to check the mailer
 // against Mailpit (`bun run db:up`, then http://127.0.0.1:8025). Usage: `bun apps/server/scripts/send-test-mail.ts <to>`.
 
 const to = process.argv[2]
@@ -31,9 +30,7 @@ const mailer = createMailer({
   from: config.accounts.mailFrom,
 })
 try {
-  await mailer.send(to, 'verifyEmail', {
-    url: emailLinkUrl(config.accounts.betterAuthUrl, 'verify-email', 'test-only'),
-  })
+  await mailer.send(to, 'signUpCode', { code: '000000' })
 } catch (error) {
   if (!(error instanceof MailSendError)) throw error
   process.exit(1)

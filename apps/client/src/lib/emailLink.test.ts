@@ -20,18 +20,13 @@ function fakeWindow(url: string) {
 }
 
 describe('emailed link tokens', () => {
-  test('a link page drops the fragment, keeps path, search and state, and hands the token to that page once', () => {
-    for (const page of ['verify-email', 'reset-password'] as const) {
-      const { win, current, calls, state } = fakeWindow(`https://app.test/auth/${page}?x=1#token=abc`)
-      acceptEmailLinkToken(win)
-      expect(calls).toEqual([{ data: state, url: `/auth/${page}?x=1` }])
-      expect(current.href).toBe(`https://app.test/auth/${page}?x=1`)
-
-      const other = page === 'verify-email' ? 'reset-password' : 'verify-email'
-      expect(takeEmailLinkToken(other)).toBeNull()
-      expect(takeEmailLinkToken(page)).toBe('abc')
-      expect(takeEmailLinkToken(page)).toBeNull()
-    }
+  test('the reset page drops the fragment, keeps path, search and state, and hands the token over once', () => {
+    const { win, current, calls, state } = fakeWindow('https://app.test/auth/reset-password?x=1#token=abc')
+    acceptEmailLinkToken(win)
+    expect(calls).toEqual([{ data: state, url: '/auth/reset-password?x=1' }])
+    expect(current.href).toBe('https://app.test/auth/reset-password?x=1')
+    expect(takeEmailLinkToken('reset-password')).toBe('abc')
+    expect(takeEmailLinkToken('reset-password')).toBeNull()
     expect([localStorage.length, sessionStorage.length]).toEqual([0, 0])
   })
 
@@ -39,9 +34,11 @@ describe('emailed link tokens', () => {
     const untouched = [
       'https://app.test/auth/sign-in#token=abc',
       'https://app.test/m/x#token=abc',
-      'https://app.test/auth/verify-email#other=1',
-      'https://app.test/auth/verify-email',
-      'https://app.test/auth/verify-email#machine=m1&key=k1',
+      // The removed email verification link is no longer a link page.
+      'https://app.test/auth/verify-email#token=t',
+      'https://app.test/auth/reset-password#other=1',
+      'https://app.test/auth/reset-password',
+      'https://app.test/auth/reset-password#machine=m1&key=k1',
     ]
     for (const url of untouched) {
       const { win, current, calls } = fakeWindow(url)
@@ -49,7 +46,6 @@ describe('emailed link tokens', () => {
       expect(calls).toEqual([])
       expect(current.href).toBe(url)
     }
-    expect(takeEmailLinkToken('verify-email')).toBeNull()
     expect(takeEmailLinkToken('reset-password')).toBeNull()
   })
 })
