@@ -5,8 +5,8 @@ import { fromBase64url, machineIdFromPublicKey } from './tunnel'
 // A browser checks a machine's key itself rather than taking the server's word
 // for it. The machine id is the SHA-256 of the machine's Ed25519 public key, so
 // a key the machine serves proves itself against the id, and the id is vouched
-// for out of band: by the `fp` of a connect link the host printed, or by the
-// owner comparing `machineFingerprint` with the one the machine shows locally.
+// for out of band, by the owner comparing `machineFingerprint` with the one the
+// machine shows on its own screen.
 
 /** A machine's raw Ed25519 public key, as unpadded base64url (43 characters). */
 export const machinePublicKey = z.string().regex(/^[A-Za-z0-9_-]{43}$/)

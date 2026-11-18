@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
 import { PRODUCT_NAME, PRODUCT_TAGLINE } from '@orch/brand'
-import { type E2eSocketOpen, formatConnectFragment, machineSealedSocketPath, routes, serverRoutes } from '@orch/shared'
+import { type E2eSocketOpen, machineSealedSocketPath, routes, serverRoutes } from '@orch/shared'
 import { QueryClientProvider, useQueryClient } from '@tanstack/react-query'
 import { createMemoryHistory, RouterProvider } from '@tanstack/react-router'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
@@ -223,7 +223,7 @@ describe('client routes', () => {
     saveOldKey(account.id, 'k1')
     localStorage.setItem('orch-theme', 'dark')
     const entry = { key: 'entry-1', __TSR_key: 'entry-1', __TSR_index: 0 }
-    const link = formatConnectFragment({ machineId: account.id, key: 'k1', fingerprint: account.fingerprint })
+    const link = `#machine=${account.id}&key=k1&fp=${account.fingerprint}`
     window.history.replaceState(entry, '', `/anything?q=1${link}`)
 
     browserRouter = withTestShell(getRouter())
