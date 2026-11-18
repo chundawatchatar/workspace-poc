@@ -56,7 +56,7 @@ function probeModule() {
   return { module, peek, write }
 }
 
-/** An app with accounts on over `domain`, as `index.ts` builds it, and the errors its routers report. */
+/** An app over `domain`, as `index.ts` builds it, and the errors its routers report. */
 function setup(domain: TestDomain, ipPrefix: string) {
   const mail = createCaptureTransport()
   const auth = createAuth({
