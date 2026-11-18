@@ -7,16 +7,7 @@ import {
   type SurfaceKind,
   type Workspace,
 } from '@orch/shared'
-import {
-  ContextMenu,
-  ContextMenuPopup,
-  ContextMenuTrigger,
-  Menu,
-  MenuItem,
-  MenuPopup,
-  MenuTrigger,
-  TerminalInterrupted,
-} from '@orch/ui'
+import { ContextMenu, ContextMenuPopup, ContextMenuTrigger, MenuItem, TerminalInterrupted } from '@orch/ui'
 import {
   Columns2,
   Copy,
@@ -159,6 +150,12 @@ function PaneView({ workspace, pane }: { workspace: Workspace; pane: PaneNode })
     return index
   }
 
+  // Keeps the active tab in view when the tabs don't all fit.
+  useEffect(() => {
+    const tab = tabBar.current?.querySelector(`[data-tab-id="${CSS.escape(pane.activeSurfaceId)}"]`)
+    tab?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+  }, [pane.activeSurfaceId])
+
   // A drag can end anywhere, including outside the window; clear the markers when it does.
   useEffect(() => {
     const clear = () => {
@@ -220,9 +217,9 @@ function PaneView({ workspace, pane }: { workspace: Workspace; pane: PaneNode })
       }}
     >
       <div className="flex h-8 shrink-0 items-stretch border-b border-line bg-sidebar">
+        {/* The tabs, then New terminal, then empty space. When the tabs don't fit they scroll and New terminal stays put. */}
         <div
-          ref={tabBar}
-          className="flex min-w-0 flex-1 items-stretch overflow-x-auto"
+          className="flex min-w-0 flex-1 items-stretch"
           onDoubleClick={(event) => event.target === event.currentTarget && toggleZoom(workspace, pane.id)}
           onDragOver={(event) => {
             if (!event.dataTransfer.types.includes(DRAG_TYPE)) return
@@ -243,28 +240,46 @@ function PaneView({ workspace, pane }: { workspace: Workspace; pane: PaneNode })
             if (surfaceId) moveSurface(workspace, surfaceId, pane.id, index)
           }}
         >
-          {pane.surfaces.map((surface, i) => (
-            <Tab
-              marker={
-                markerIndex === i
-                  ? 'before'
-                  : markerIndex === pane.surfaces.length && i === pane.surfaces.length - 1
-                    ? 'after'
-                    : undefined
-              }
-              key={surface.id}
-              workspace={workspace}
-              pane={pane}
-              surface={surface}
-              paneFocused={focused}
-              title={
-                surface.kind === 'terminal' ? tidyTitle(sessions[surface.id]?.title ?? surface.title) : surface.title
-              }
-              attention={Boolean(sessions[surface.id]?.attention)}
-              status={agentStatus(sessions[surface.id])}
-              tracking={sessions[surface.id]?.agentTracking}
-            />
-          ))}
+          <div
+            ref={tabBar}
+            className="tab-strip flex min-w-0 items-stretch overflow-x-auto"
+            onWheel={(event) => {
+              // The scrollbar is hidden, so a plain mouse wheel scrolls the tabs sideways.
+              if (event.deltaX === 0) event.currentTarget.scrollLeft += event.deltaY
+            }}
+          >
+            {pane.surfaces.map((surface, i) => (
+              <Tab
+                marker={
+                  markerIndex === i
+                    ? 'before'
+                    : markerIndex === pane.surfaces.length && i === pane.surfaces.length - 1
+                      ? 'after'
+                      : undefined
+                }
+                key={surface.id}
+                workspace={workspace}
+                pane={pane}
+                surface={surface}
+                paneFocused={focused}
+                title={
+                  surface.kind === 'terminal' ? tidyTitle(sessions[surface.id]?.title ?? surface.title) : surface.title
+                }
+                attention={Boolean(sessions[surface.id]?.attention)}
+                status={agentStatus(sessions[surface.id])}
+                tracking={sessions[surface.id]?.agentTracking}
+              />
+            ))}
+          </div>
+          <button
+            type="button"
+            title="New terminal"
+            aria-label="New terminal"
+            className="mx-1 shrink-0 self-center rounded p-1 text-dim hover:bg-raised hover:text-ink"
+            onClick={() => addSurface(workspace, pane.id, 'terminal')}
+          >
+            <Plus size={14} />
+          </button>
         </div>
         <div className="flex shrink-0 items-center gap-0.5 px-1.5 text-dim">
           {zoomed && (
@@ -272,7 +287,6 @@ function PaneView({ workspace, pane }: { workspace: Workspace; pane: PaneNode })
               Full screen
             </span>
           )}
-          <AddMenu onAdd={(kind) => addSurface(workspace, pane.id, kind)} />
           {!zoomed && (
             <>
               <IconButton label="Split right" onClick={() => splitPane(workspace, pane.id, 'row')}>
@@ -443,33 +457,5 @@ function IconButton(props: { label: string; onClick: () => void; children: React
     >
       {props.children}
     </button>
-  )
-}
-
-function AddMenu({ onAdd }: { onAdd: (kind: SurfaceKind) => void }) {
-  const items: { kind: SurfaceKind; label: string }[] = [
-    { kind: 'terminal', label: 'Terminal' },
-    // Disabled for now while the app focuses on the terminal.
-    // { kind: 'pulls', label: 'Pull requests' },
-    // { kind: 'issues', label: 'Issues' },
-  ]
-
-  return (
-    <Menu>
-      <MenuTrigger
-        title="New tab"
-        aria-label="New tab"
-        className="rounded p-1 hover:bg-raised hover:text-ink data-popup-open:bg-raised data-popup-open:text-ink"
-      >
-        <Plus size={14} />
-      </MenuTrigger>
-      <MenuPopup aria-label="New tab" className="w-44">
-        {items.map((item) => (
-          <MenuItem key={item.kind} icon={KIND_ICON[item.kind]} onClick={() => onAdd(item.kind)}>
-            {item.label}
-          </MenuItem>
-        ))}
-      </MenuPopup>
-    </Menu>
   )
 }

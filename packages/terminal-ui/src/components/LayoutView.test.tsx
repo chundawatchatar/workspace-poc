@@ -89,13 +89,12 @@ function StoreLayout() {
 const surfaces = () => listPanes(getSnapshot().state?.workspaces[0].root ?? makePane()).flatMap((p) => p.surfaces)
 
 describe('LayoutView tab bar', () => {
-  test('"New tab" adds a terminal to the pane', async () => {
+  test('"New terminal" adds a terminal to the pane in one click', async () => {
     const user = userEvent.setup()
     setup()
     expect(screen.queryAllByRole('button', { name: 'Close Terminal' })).toHaveLength(0)
 
-    await user.click(screen.getByRole('button', { name: 'New tab' }))
-    await user.click(await screen.findByRole('menuitem', { name: 'Terminal' }))
+    await user.click(screen.getByRole('button', { name: 'New terminal' }))
 
     expect(screen.getAllByRole('button', { name: 'Close Terminal' })).toHaveLength(1)
     expect(surfaces().map((s) => s.kind)).toEqual(['terminal', 'pulls', 'terminal'])

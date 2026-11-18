@@ -18,6 +18,14 @@
   transition: none;
 }
 
+/* A pane's tabs scroll sideways without a scrollbar, which wouldn't fit in the tab bar's height. */
+.tab-strip {
+  scrollbar-width: none;
+}
+.tab-strip::-webkit-scrollbar {
+  display: none;
+}
+
 /* Layout changes: panes glide to their new place (see lib/transition.ts). */
 [data-pane-id] {
   view-transition-class: pane;
