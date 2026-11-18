@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test'
 import { PRODUCT_NAME, PRODUCT_TAGLINE } from '@orch/brand'
 import { type E2eSocketOpen, machineSealedSocketPath, routes, serverRoutes } from '@orch/shared'
 import { QueryClientProvider, useQueryClient } from '@tanstack/react-query'
 import { createMemoryHistory, RouterProvider } from '@tanstack/react-router'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { HttpResponse, http, ws } from 'msw'
 import type { ReactNode } from 'react'
 import { CheckInbox } from './components/auth/CheckInbox'
@@ -11,6 +12,7 @@ import { signInWithEmail, signOut } from './lib/auth'
 import { deviceKeyStores, indexedDbKeyStore, loadDeviceKey } from './lib/deviceKey'
 import { acceptEmailLinkToken, type EmailLinkPage, takeEmailLinkToken } from './lib/emailLink'
 import { indexedDbMachineKeyStore, machineKeyStores } from './lib/machineKeys'
+import { Route as homeRoute } from './routes/index'
 import { authSession, authUser } from './test/betterAuth'
 import { memoryKeyStore } from './test/deviceKeyStore'
 import { testMachine } from './test/machineKey'
@@ -20,6 +22,8 @@ import { server } from './test/msw'
 // Vite turns `?url` imports into the asset's URL; Bun would hand the root route the stylesheet's module instead.
 mock.module('./styles.css?url', () => ({ default: '/styles.css' }))
 const { getRouter } = await import('./router')
+/** The home page, which a test may swap for a probe; the route tree is shared by every router. */
+const homeComponent = homeRoute.options.component
 
 const user = { id: 'u1', email: 'u1@example.com', name: 'U' }
 /** The machine the account lists, whose key this browser already confirmed. */
@@ -47,6 +51,8 @@ let signedIn = true
 
 // Every test here reads the session, and most read the machine list, so these answer by default.
 afterEach(() => {
+  mock.restore()
+  homeRoute.options.component = homeComponent
   deviceKeyStores.default = indexedDbKeyStore
   machineKeyStores.default = indexedDbMachineKeyStore
   browserRouter?.history.destroy()
@@ -320,6 +326,56 @@ describe('session guard', () => {
       'href',
       '/auth/sign-up?redirect=%2Fm%2Fx',
     )
+  })
+
+  test('a session that fails to read shows the error page, and Retry opens the page once it reads', async () => {
+    // The boundary that catches the failure warns, and React logs the error it caught.
+    spyOn(console, 'warn').mockImplementation(() => {})
+    spyOn(console, 'error').mockImplementation(() => {})
+    let status = 404
+    let reads = 0
+    let answer: Promise<void> | undefined
+    server.use(
+      http.get('*/api/auth/get-session', async () => {
+        reads++
+        if (status !== 200) return HttpResponse.json({ message: 'Not here' }, { status })
+        await answer
+        return HttpResponse.json({ user: authUser(user), session: authSession('s1', user.id) })
+      }),
+    )
+    const failed = async (path: string) => {
+      const router = appRouter(path)
+      router.options.context.queryClient.setDefaultOptions({ queries: { retry: false } })
+      await show(path, router)
+      expect(await screen.findByText('Something went wrong.')).toBeInTheDocument()
+      expect(screen.getByText("This page couldn't load. Try again in a moment.")).toBeInTheDocument()
+      expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual(['Retry'])
+      expect(document.body.textContent).not.toMatch(/Something went wrong!|Show Error|Reading the session|404|500/)
+      return router
+    }
+    await failed('/settings/security')
+    cleanup()
+
+    status = 500
+    const router = await failed('/')
+    const click = userEvent.setup()
+    // A retry that fails again reads the session anew, then leaves the page as it was, ready to try again.
+    const before = reads
+    await click.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled())
+    expect(reads).toBe(before + 1)
+    expect(screen.getByText('Something went wrong.')).toBeInTheDocument()
+
+    status = 200
+    let release = () => {}
+    answer = new Promise<void>((resolve) => (release = resolve))
+    await click.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(screen.getByRole('button', { name: 'Retry' })).toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeDisabled()
+    release()
+    expect(await screen.findByRole('heading', { name: 'Your machines' })).toBeInTheDocument()
+    expect(screen.queryByText('Something went wrong.')).not.toBeInTheDocument()
+    expect(router.state.location.pathname).toBe('/')
   })
 
   test('signing out from the home page lands on sign-in', async () => {
