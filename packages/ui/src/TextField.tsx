@@ -1,4 +1,4 @@
-import { type ReactNode, type Ref, useId } from 'react'
+import { type HTMLAttributes, type ReactNode, type Ref, useId } from 'react'
 import { cn } from './lib/utils'
 
 /** What a text field takes: plain values and callbacks, so any form library can drive it. */
@@ -8,6 +8,8 @@ export interface TextFieldProps {
   name: string
   type?: 'text' | 'email' | 'password' | 'search' | 'tel' | 'url'
   autoComplete?: string
+  /** The on-screen keyboard to offer, such as `numeric` for a code typed as digits. */
+  inputMode?: HTMLAttributes<HTMLInputElement>['inputMode']
   value: string
   /** Called with the new text on every keystroke. */
   onChange: (value: string) => void
@@ -34,6 +36,7 @@ export function TextField({
   name,
   type = 'text',
   autoComplete,
+  inputMode,
   value,
   onChange,
   onBlur,
@@ -70,6 +73,7 @@ export function TextField({
           name={name}
           type={type}
           autoComplete={autoComplete}
+          inputMode={inputMode}
           value={value}
           onChange={(event) => onChange(event.target.value)}
           onBlur={onBlur}
