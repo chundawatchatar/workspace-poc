@@ -41,14 +41,14 @@ function signedIn(machines = [machine('A', 'Desktop'), machine('B', 'Laptop')], 
 afterEach(() => localStorage.clear())
 
 describe('MachineList', () => {
-  test('every listed machine has an Open link, though this browser holds no key', async () => {
+  test('every listed machine name links to it, though this browser holds no key', async () => {
     signedIn()
     await renderWithProviders(<MachineList />)
     for (const [name, id] of [
       ['Desktop', 'A'],
       ['Laptop', 'B'],
     ] as const) {
-      expect(await screen.findByRole('link', { name: `Open ${name}` })).toHaveAttribute('href', `/m/${id.repeat(43)}`)
+      expect(await screen.findByRole('link', { name })).toHaveAttribute('href', `/m/${id.repeat(43)}`)
     }
     expect(screen.queryByText(/connect link/i)).not.toBeInTheDocument()
   })
@@ -84,7 +84,7 @@ describe('MachineList', () => {
 
     await user.click(within(row).getByRole('button', { name: 'Accept Build box' }))
     expect(await screen.findByRole('status')).toHaveTextContent('Build box is connected')
-    expect(await screen.findByRole('link', { name: 'Open Build box' })).toBeInTheDocument()
+    expect(await screen.findByRole('link', { name: 'Build box' })).toBeInTheDocument()
     expect(screen.queryByRole('region', { name: 'Waiting to connect' })).not.toBeInTheDocument()
   })
 })

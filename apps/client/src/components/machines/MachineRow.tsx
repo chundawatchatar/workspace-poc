@@ -12,9 +12,8 @@ import { focusClass, linkClass } from '../Centered'
 const smallButtonClass = `px-1.5 py-0.5 text-xs text-dim hover:bg-raised hover:text-ink active:bg-line ${focusClass}`
 
 /**
- * One of the account's machines: its name, whether it is online, offline or has remote access turned off, an Open
- * link, and rename and unlink. The account opens
- * it from any browser, so every row can be opened.
+ * One of the account's machines: its name, a link that opens it, whether it is online, offline or has remote access
+ * turned off, and rename and unlink. The account opens it from any browser, so every row can be opened.
  */
 export function MachineRow({ machine, userId }: { machine: ServerMachine; userId: string }) {
   const queryClient = useQueryClient()
@@ -29,21 +28,20 @@ export function MachineRow({ machine, userId }: { machine: ServerMachine; userId
       ) : (
         <div className="flex items-center gap-3">
           <Monitor size={15} className="shrink-0 text-faint" />
-          <span className="min-w-0 flex-1 truncate" title={machineId}>
-            {name}
+          <span className="flex min-w-0 flex-1">
+            <Link
+              to="/m/$machineId"
+              params={{ machineId }}
+              title={machineId}
+              className={`min-w-0 truncate ${linkClass}`}
+            >
+              {name}
+            </Link>
           </span>
           <span className={`flex items-center gap-1.5 text-xs ${online ? 'text-good' : 'text-faint'}`}>
             <span aria-hidden className={`size-1.5 rounded-full ${online ? 'bg-good' : 'bg-faint'}`} />
             {remoteOff ? 'Remote access off' : online ? 'Online' : 'Offline'}
           </span>
-          <Link
-            to="/m/$machineId"
-            params={{ machineId }}
-            aria-label={`Open ${name}`}
-            className={`text-xs ${linkClass}`}
-          >
-            Open
-          </Link>
           <button
             type="button"
             aria-label={`Rename ${name}`}

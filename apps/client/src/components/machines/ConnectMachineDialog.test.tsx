@@ -168,7 +168,7 @@ describe('ConnectMachineDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Done' }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     // The machine list was read again, so Laptop is listed at once.
-    expect(screen.getByRole('link', { name: 'Open Laptop' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Laptop' })).toBeInTheDocument()
 
     const held = JSON.stringify([
       document.body.innerHTML,
