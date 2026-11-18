@@ -4,13 +4,13 @@ How to work on accounts: the database, Better Auth, sessions, emails and the acc
 developers changing `apps/server`, `packages/domain` or the accounts side of `apps/client`. The rules behind it are in
 [architecture](architecture.md#1-dependencies-point-one-way); this guide is the "how to work with it" view and links
 there rather than repeating it. Everything here is the development setup on one computer. What a real deploy adds is
-in [remote access, section 7](remote-access.md#7-what-changes-for-a-real-deploy).
+in [remote access, section 6](remote-access.md#6-what-changes-for-a-real-deploy).
 
 ## 1. Database and email setup
 
 Accounts need Postgres and an SMTP server. `compose.yaml` runs both locally: Postgres 17 and Mailpit, which keeps
 every email in a web inbox instead of delivering it. The addresses and ports are in the table in
-[remote access, section 6](remote-access.md#6-database-and-email).
+[remote access, section 5](remote-access.md#5-database-and-email).
 
 1. Copy the settings once: `cp .env.example .env`. `.env` is gitignored.
 2. `bun run db:up` starts Postgres and Mailpit and returns once Postgres is healthy. It needs Docker with Compose v2.
@@ -18,11 +18,12 @@ every email in a web inbox instead of delivering it. The addresses and ports are
 4. `bun run dev:client` starts the server and the client. Read emails at http://127.0.0.1:8025.
 5. `bun run db:down` stops the services and keeps the data.
 
-`apps/server` turns accounts on only when `DATABASE_URL` is set. It then also needs these variables, which
-`.env.example` fills with dev values:
+`apps/server` always runs with accounts, so it always needs these variables, which `.env.example` fills with dev
+values:
 
 | Variable | What it is |
 | --- | --- |
+| `DATABASE_URL` | The Postgres connection string. Never log it. |
 | `BETTER_AUTH_SECRET` | At least 32 bytes. Generate a real one with `openssl rand -base64 32`. Never log it. |
 | `BETTER_AUTH_URL` | The app's URL, `http://127.0.0.1:3220` with `bun run dev:client`. Email links point to it. |
 | `SMTP_URL` | An `smtp://` or `smtps://` URL, Mailpit's `smtp://127.0.0.1:1025` in development. |
@@ -33,8 +34,6 @@ every email in a web inbox instead of delivering it. The addresses and ports are
 
 The server reads them with `loadServerConfig` (`apps/server/src/lib/config.ts`) and exits at start-up with a message
 naming the problem when one is missing or invalid, when the database is unreachable, or when a migration is pending.
-Without `DATABASE_URL` the server runs as a relay alone: no `/api/auth/*`, no `/api/me`, no `/api/machines`. The
-client needs accounts, so with the relay alone it sends you to a sign-in that can't work.
 
 ## 2. Migrations
 
@@ -215,20 +214,17 @@ bun apps/server/scripts/send-test-mail.ts you@example.com
 
 It sends one `verifyEmail` with a dummy link through `SMTP_URL` from `.env`.
 
-## 7. Accounts and machine access keys
+## 7. Accounts and machine access
 
-A machine opens either with its access key from a connect link, or as the account it linked with an enrollment key,
-through a relay ticket, and either way only with a proof from a browser approved on the machine. The host decides
-both on every request and socket; the server only signs tickets.
+A machine opens from another browser only as the account it linked with an enrollment key, through a relay ticket,
+and only with a proof from a browser approved on the machine. The host decides on every request and socket; the
+server only signs tickets.
 
 - The accounts API (`serverRoutes.machines`, `apps/server/src/modules/machines/`) stores and returns only machine
-  ids and names. It never receives or stores an access key: every input is strict, so a body carrying a `key` field
-  gets 400, and the module never reads request headers.
-- Keys stay in the browser's `localStorage` (`orch-machines`), saved when a connect link is opened. Opening a connect
-  link adds nothing to the account: it sends no request to the server, so the machine opens in that browser only and
-  joins the account's list once the owner accepts its request with an enrollment key. The home page lists the account's machines, each
-  with an Open link. A machine page uses a saved key when this browser holds one;
-  otherwise it opens a machine the account lists with relay tickets (`createRemoteTransport` with `relayTicket`).
+  ids and names. Every input is strict, so a body carrying a `key` field gets 400, and the module never reads request
+  headers.
+- The home page lists the account's machines, each with an Open link. A machine page opens a machine the account
+  lists with relay tickets (`createRemoteTransport` with `relayTicket`), and only that way.
 - Relay tickets: `serverRoutes.machines.relayTicket` (`POST /api/machines/:machineId/relay-ticket`, `auth: 'user'`)
   signs one only when the machine is in the caller's scoped list, and answers `not_found` otherwise. A ticket is a
   compact JWS (`alg: EdDSA`, `typ: orch-relay`, `kid`) over `{ sub: userId, aud: machineId, exp: now + 60 s, jti }`,
@@ -242,15 +238,11 @@ both on every request and socket; the server only signs tickets.
   `linked-account.json`. It accepts a ticket only when it verifies under a saved key for its `kid`, `aud` is its own
   machine id, `sub` is the linked account, `exp` is in the future (30 seconds of skew), and the account was linked
   through the server address in use. A socket spends its ticket's `jti`, so a replay opens nothing; HTTP requests may
-  reuse one. A request with an access key is judged by the key, never rescued by a ticket, and still needs a device
-  proof: the key is checked first, so a wrong one is refused (with `auth.failed`) before its proof is read. A key
-  socket spends no ticket, so it isn't single-use; its proof's nonce bounds replay.
-- Device approval: a ticket or a key is accepted through the tunnel only with a fresh device proof from a browser
-  the machine approved. The client keeps one non-exportable ECDSA P-256 key pair per browser profile
-  (`src/lib/deviceKey.ts`, IndexedDB `orch-device`) and passes it to `createRemoteTransport` as `device`, in both
-  modes, which signs a proof for every request (`x-orch-device-proof`) and socket (`device` in
-  `{ type: 'auth', account: true, device }` or `{ type: 'auth', key, device }`). A machine saved from a connect link
-  waits for that key too, so a browser never approved there stops at the same hint as account access. An unknown device gets a 403
+  reuse one.
+- Device approval: a ticket is accepted through the tunnel only with a fresh device proof from a browser the machine
+  approved. The client keeps one non-exportable ECDSA P-256 key pair per browser profile (`src/lib/deviceKey.ts`,
+  IndexedDB `orch-device`) and passes it to `createRemoteTransport` as `device`, which signs a proof for every request
+  (`x-orch-device-proof`) and socket (`device` in `{ type: 'auth', account: true, device }`). An unknown device gets a 403
   `device_not_approved` or a 4403 close and waits on the machine; the page shows the `unapprovedHint` with the
   browser's fingerprint and keeps retrying, so it opens once the owner approves that fingerprint in the machine's
   Remote access setting. See `docs/architecture.md` ("Device approval") for the format and the risks that remain.
@@ -259,14 +251,15 @@ both on every request and socket; the server only signs tickets.
   again.
 - Accepted risks: the server still says who is signed in, so it decides who owns an enrollment key and who gets
   relay tickets, but a leaked `RELAY_SIGNING_KEY` or a compromised server can't open a machine without a browser
-  approved on it, nor with a captured access key alone, which still passes through it. It could push its own key
+  approved on it. It could push its own key
   into a machine's pending list and hope the owner approves it. Sessions are sealed end to end (REM-2) and the host
   refuses unsealed traffic through the tunnel, so it can't read or inject into one, but it could serve its own page
   (see `docs/architecture.md`, "Unsealed traffic", for the risks that remain). A revoked session or a machine removed on the server gets no new ticket, but an issued one works for up
   to a minute. A session that ends on the server closes the account's sockets on its online machines through a
   `session.ended` frame (section 5), except one ended by the operator script or by expiry; disconnecting on the host
   closes them too. A refused ticket sends
-  `auth.failed` and counts against the browser's bad-key limit; a device waiting for approval sends none. Each
+  `auth.failed` and counts against the browser's IP limit for refused requests; a device waiting for approval sends
+  none. Each
   socket costs one ticket request.
 - The home page's Connect a machine button (`apps/client/src/components/machines/ConnectMachineDialog.tsx`) creates
   an enrollment key with `serverRoutes.machines.createEnrollment`, which answers the key with the server's
@@ -285,8 +278,7 @@ both on every request and socket; the server only signs tickets.
   stopped waiting (`not_waiting`) says so in a toast, and nothing was linked. The home page shows every waiting
   request above the machine list with the same row, read every 10 seconds. A machine connected this way opens from
   any browser signed in to the account.
-- An access key still crosses the relay in clear only in the handshake and the key bootstrap, the two requests the
-  host serves unsealed; every other request and socket carries it sealed. The relay never checks or stores it.
+- The relay passes tickets and device proofs through unread and never stores them.
 - A machine's online state comes from the server's in-memory `MachineRegistry`, the same one the relay uses. A host
   whose owner disconnects it while it runs sends `remote.off` before closing its tunnel, and the list shows it as
   Remote access off instead of Offline, until it is removed; a host that exits or crashes stays Offline. The registry keeps that mark
