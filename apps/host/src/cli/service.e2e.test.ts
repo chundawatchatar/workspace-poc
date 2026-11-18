@@ -56,10 +56,14 @@ const pgrep = (...args: string[]) =>
     .filter(Boolean)
     .map(Number)
 
-async function until(check: () => boolean | Promise<boolean>, what: string, timeoutMs = 30_000) {
+/**
+ * Polls `check` until it holds. `what` names the wait in the timeout error; a
+ * function can report the last values seen.
+ */
+async function until(check: () => boolean | Promise<boolean>, what: string | (() => string), timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs
   while (!(await check())) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`)
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${typeof what === 'string' ? what : what()}`)
     await Bun.sleep(100)
   }
 }
@@ -128,14 +132,26 @@ describe.skipIf(why !== null)('corch service with the real manager', () => {
     const socket = join(daemonRuntimeDir(dataDir, uid), 'host.sock')
     await until(() => pgrep('-f', socket).length > 0, 'the terminal daemon')
     const [daemon] = pgrep('-f', socket) as [number]
-    await until(() => pgrep('-P', String(daemon)).length > 0, 'the shells')
-    const shells = pgrep('-P', String(daemon))
     const liveTerminals = async () => {
       const run = readRunFile(dataDir)?.record
       const answer = run ? await createHostCaller(run.url)(routes.system.daemon, {}).catch(() => null) : null
       return answer?.ok ? answer.data.liveTerminals : null
     }
-    const live = await liveTerminals()
+    // A shell can be running before the host counts it live, which waits for the daemon's first status for that
+    // terminal, so the baseline is read only once every terminal of the seeded layout (`seed` in
+    // `layout.repository.ts`, one per workspace) has a shell and is live.
+    const seededTerminals = 2
+    const read = async () => ({ shells: pgrep('-P', String(daemon)), live: await liveTerminals() })
+    let baseline = await read()
+    await until(
+      async () => {
+        baseline = await read()
+        return baseline.live === baseline.shells.length && baseline.live === seededTerminals
+      },
+      () =>
+        `${seededTerminals} live terminals, but the host has ${baseline.live} and the daemon ${baseline.shells.length}`,
+    )
+    const { shells, live } = baseline
     expect(live).toBeGreaterThan(0)
     const survived = async () => {
       expect([daemon, ...shells].filter((pid) => !pidAlive(pid))).toEqual([])
