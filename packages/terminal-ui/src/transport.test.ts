@@ -143,11 +143,15 @@ describe('the page transport', () => {
       transport.request('/api/git/status?cwd=%2Ftmp', { headers: { 'content-type': 'application/json' } }),
       transport.request('/api/system/health', { method: 'post', body: '{"a":1}' }),
     ])
-    expect(seen[0].url).toBe(`${base}/m/mac%2F1%20a/api/git/status?cwd=%2Ftmp`)
-    expect(seen[0].headers['content-type']).toBe('application/json')
+    // Each request signs its proof before it sends, so the two can reach the server in either order.
+    const arrived = (path: string) => seen.find((s) => new URL(s.url).pathname.endsWith(path))
+    const getSeen = arrived('/api/git/status')
+    const postSeen = arrived('/api/system/health')
+    expect(getSeen?.url).toBe(`${base}/m/mac%2F1%20a/api/git/status?cwd=%2Ftmp`)
+    expect(getSeen?.headers['content-type']).toBe('application/json')
     expect(seen.map((s) => s.headers[RELAY_TICKET_HEADER])).toEqual(['t1', 't1'])
-    expect(seen[0].headers.cookie).toBeUndefined()
-    const proofs = seen.map((s) => s.headers[DEVICE_PROOF_HEADER] ?? '')
+    expect(getSeen?.headers.cookie).toBeUndefined()
+    const proofs = [getSeen, postSeen].map((s) => s?.headers[DEVICE_PROOF_HEADER] ?? '')
     expect(await Promise.all(proofs.map((proof) => signedBy(proof, device)))).toEqual([true, true])
     const [get, post] = proofs.map(payloadOf)
     expect(get).toMatchObject({ aud: machineId, method: 'GET', path: '/api/git/status?cwd=%2Ftmp' })
@@ -161,8 +165,9 @@ describe('the page transport', () => {
     socket.onopen = () => socket.send('from the page')
     await received
     socket.close()
-    expect(seen[2].headers['sec-websocket-protocol']).toBe(relaySocketProtocols('t2').join(', '))
-    expect(seen[2].url).not.toContain('t2')
+    const upgrade = arrived('/ws/events')
+    expect(upgrade?.headers['sec-websocket-protocol']).toBe(relaySocketProtocols('t2').join(', '))
+    expect(upgrade?.url).not.toContain('t2')
     const [auth, fromPage] = messages
     const { device: proof, ...rest } = JSON.parse(auth ?? '')
     expect(rest).toEqual({ type: 'auth', account: true })
