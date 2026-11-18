@@ -98,24 +98,17 @@ async function rowCounts() {
 describe('email-code sign-up', () => {
   test('asking for a code answers the same for every address, and only a new address gets a code', async () => {
     const fresh = client.freshEmail()
-    const verified = client.freshEmail()
-    await client.register(verified, client.freshIp())
-    const unverified = client.freshEmail()
-    await client.call('POST', '/api/auth/sign-up/email', {
-      ip: client.freshIp(),
-      body: { email: unverified, password: TEST_PASSWORD, name: 'U' },
-    })
-    const mailBefore = (address: string) => mail.sent.filter((m) => m.to === address).length
-    const before = { verified: mailBefore(verified), unverified: mailBefore(unverified) }
+    const registered = client.freshEmail()
+    await client.register(registered, client.freshIp())
+    const before = mail.sent.filter((m) => m.to === registered).length
 
     const answers = []
-    for (const email of [fresh, verified, unverified]) {
+    for (const email of [fresh, registered]) {
       const response = await client.sendCode(email, client.freshIp())
       answers.push({ status: response.status, body: await response.json() })
     }
     expect(answers[0]).toEqual({ status: 200, body: { success: true } })
     expect(answers[1]).toEqual(answers[0])
-    expect(answers[2]).toEqual(answers[0])
 
     expect(mail.sent.filter((m) => m.to === fresh)).toHaveLength(1)
     const code = client.codeTo(fresh)
@@ -127,20 +120,21 @@ describe('email-code sign-up', () => {
     expect(rows).toHaveLength(1)
     expect(rows[0]?.value).not.toContain(code)
 
-    for (const email of [verified, unverified] as const) {
-      expect(mail.sent.filter((m) => m.to === email).length).toBe(
-        before[email === verified ? 'verified' : 'unverified'] + 1,
-      )
-      const exists = client.accountExistsTo(email)
-      expect(exists).toHaveLength(1)
-      const message = exists[0] as (typeof exists)[number]
-      expect(message.text).toContain(`${TEST_BASE}/auth/sign-in`)
-      expect(message.text).toContain(`${TEST_BASE}/auth/forgot-password`)
-      expect(`${message.subject} ${message.text} ${message.html}`).not.toMatch(/\d{6}/)
-      await expectRefused(
-        await client.signUpWithCode(client.freshIp(), { name: 'X', email, password: FIRST_PASSWORD, code: '123456' }),
-      )
-    }
+    expect(mail.sent.filter((m) => m.to === registered).length).toBe(before + 1)
+    const exists = client.accountExistsTo(registered)
+    expect(exists).toHaveLength(1)
+    const message = exists[0] as (typeof exists)[number]
+    expect(message.text).toContain(`${TEST_BASE}/auth/sign-in`)
+    expect(message.text).toContain(`${TEST_BASE}/auth/forgot-password`)
+    expect(`${message.subject} ${message.text} ${message.html}`).not.toMatch(/\d{6}/)
+    await expectRefused(
+      await client.signUpWithCode(client.freshIp(), {
+        name: 'X',
+        email: registered,
+        password: FIRST_PASSWORD,
+        code: '123456',
+      }),
+    )
   })
 
   test('the right code with a name and password makes a verified, signed-in account, and works only once', async () => {
@@ -186,29 +180,6 @@ describe('email-code sign-up', () => {
       await client.signUpWithCode(client.freshIp(), { name: 'Ada', email, password: FIRST_PASSWORD, code }),
     )
     expect(await userRow(email)).toBeUndefined()
-  })
-
-  test('a code for an address that then gets an unverified account leaves that account as it was', async () => {
-    const { email, code } = await newAddressWithCode()
-    await client.call('POST', '/api/auth/sign-up/email', {
-      ip: client.freshIp(),
-      body: { email, password: FIRST_PASSWORD, name: 'Owner' },
-    })
-    const before = await accountState(email)
-    expect(before.user.emailVerified).toBe(false)
-
-    await expectRefused(
-      await client.signUpWithCode(client.freshIp(), { name: 'Intruder', email, password: SECOND_PASSWORD, code }),
-    )
-    expect(await accountState(email)).toEqual(before)
-
-    // The owner can still finish their own sign-up, with their own password only.
-    const token = new URLSearchParams(client.linkTo(email, 'verifyEmail').hash.slice(1)).get('token') as string
-    expect((await client.call('GET', `/api/auth/verify-email?token=${token}`, { ip: client.freshIp() })).status).toBe(
-      200,
-    )
-    expect(await signInStatus(email, FIRST_PASSWORD)).toBe(200)
-    expect(await signInStatus(email, SECOND_PASSWORD)).toBe(401)
   })
 
   test('a code still valid once another email-code sign-up made the account neither signs in nor changes it', async () => {

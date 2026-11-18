@@ -40,6 +40,8 @@ interface Device {
 async function userWithSessions(count: number): Promise<{ userId: string; devices: Device[] }> {
   const email = ctx.client.freshEmail()
   await ctx.client.register(email, ctx.client.freshIp())
+  // Registering signs out of the sign-up's own session, which this callback was told about.
+  ended = []
   const devices: Device[] = []
   while (devices.length < count) {
     const ip = ctx.client.freshIp()
