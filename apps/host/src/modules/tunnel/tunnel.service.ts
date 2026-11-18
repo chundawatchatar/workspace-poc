@@ -355,7 +355,7 @@ export class TunnelClient {
     const expected = this.options.expectedMachineId
     if (expected !== undefined && expected !== machineId) {
       console.warn(
-        'warning: the server gave this machine another id than its machine key implies, so its connect link will not reach it',
+        "warning: the server gave this machine another id than its machine key implies, so the account's relay will not reach it",
       )
     }
     conn.timers = [
