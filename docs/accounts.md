@@ -119,8 +119,10 @@ A second sign-up flow sits next to the email-and-password one, for the global ap
    `storeOTP: 'hashed'` and its defaults: 6 digits, 300 seconds, 3 attempts, 3 requests a minute per IP). It always
    answers `{ success: true }`. An address with no account gets a `signUpCode` email with the code. An address with
    any account, verified or not, gets an `accountExists` email with no code, linking to `/auth/sign-in` and
-   `/auth/forgot-password` on the origin of `BETTER_AUTH_URL`, whatever the `type`. Nothing else is sent. A new send
-   replaces the earlier code (`resendStrategy: 'rotate'`), and the `verification` row holds only the code's hash.
+   `/auth/forgot-password` on the origin of `BETTER_AUTH_URL`, whatever the `type`. Nothing else is sent. The answer
+   never waits for the email: the send finishes in the background, and a failure is logged by the mailer
+   (`mail <template>: failed (<code>)`) and dropped, so the person asks again. A new send replaces the earlier code
+   (`resendStrategy: 'rotate'`), and the `verification` row holds only the code's hash.
 2. `POST /api/auth/sign-up/email-code` with `{ name, email, password, code }` (`signUpByEmailCode` in
    `auth.sign-up-code.ts`, a Better Auth plugin endpoint, so the origin check, the `/sign-up*` rate limit of 3 per
    10 seconds and the session cookie apply). It checks the password against `minPasswordLength` and
@@ -132,12 +134,13 @@ A second sign-up flow sits next to the email-and-password one, for the global ap
 The step runs in a copy of the request's context in which no user is ever found by email, so it always takes its
 create branch, and the email's unique constraint decides a race. It never signs in to, promotes or revokes the
 sessions of an account that exists: an existing address, a wrong, used-up, locked or expired code all get the same
-400 `INVALID_OR_EXPIRED_CODE` and no cookie. If the password write fails, the user the request created is deleted
-with its session, and the code stays used up. The other `emailOTP` paths (`/sign-in/email-otp`,
-`/email-otp/check-verification-otp`, `/email-otp/verify-email`, `/email-otp/request-password-reset`,
-`/forget-password/email-otp`, `/email-otp/reset-password`, `/email-otp/request-email-change`,
-`/email-otp/change-email`) are in `disabledPaths` and answer 404. Better Auth checks `disabledPaths` only in its HTTP
-router, so the server-side step still runs.
+400 `INVALID_OR_EXPIRED_CODE` and no cookie. If anything fails after the step created the user (starting its
+session inside the step, or the password write after it), that user is deleted with its sessions and accounts, the
+answer is the same refusal, and the code stays used up, so no unfinished account is left behind. The other `emailOTP`
+paths (`/sign-in/email-otp`, `/email-otp/check-verification-otp`, `/email-otp/verify-email`,
+`/email-otp/request-password-reset`, `/forget-password/email-otp`, `/email-otp/reset-password`,
+`/email-otp/request-email-change`, `/email-otp/change-email`) are in `disabledPaths` and answer 404. Better Auth checks
+`disabledPaths` only in its HTTP router, so the server-side step still runs.
 
 ### What it owns
 
@@ -153,11 +156,13 @@ same status, a user of the same shape, no cookie and no `USER_ALREADY_EXISTS`, a
 risk is timing: a new sign-up waits for the verification email to send and a duplicate sends nothing, so response
 times can still differ.
 
-Asking for a sign-up code answers `{ success: true }` for every address, and each address gets exactly one email:
-the code when it has no account, `accountExists` when it has one. The email-code sign-up gives an existing address
-the same refusal as a wrong code. The accepted risk is again timing: both branches look the user up and send one
-email, but the two templates differ. See [architecture](architecture.md#1-dependencies-point-one-way) for the
-details.
+Asking for a sign-up code answers `{ success: true }` for every address, and never waits for the email. With
+`type: 'sign-in'`, the only type the client sends, each address gets exactly one email: the code when it has no
+account, `accountExists` when it has one. With another `type`, an address with an account still gets
+`accountExists` and one without gets nothing. The email-code sign-up gives an existing address the same refusal as a
+wrong code. The accepted risk is a small timing difference: for a `type` other than `sign-in`, an address with an
+account costs a second user lookup and the start of a send, where one without costs only the deletion of its code row.
+See [architecture](architecture.md#1-dependencies-point-one-way) for the details.
 
 ## 5. Sessions and signing out everywhere
 
