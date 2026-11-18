@@ -1,7 +1,10 @@
 import { type AnyPgDatabase, type Domain, schema } from '@orch/domain'
 import { betterAuth } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
+import { emailOTP } from 'better-auth/plugins/email-otp'
 import type { Mailer } from '../mailer/mailer.service'
+import { SIGN_UP_CODE_MINUTES } from '../mailer/templates/sign-up-code'
+import { signUpByEmailCode } from './auth.sign-up-code'
 
 /** The header the routes set to the client IP the server trusts, replacing any value the client sent. */
 export const CLIENT_IP_HEADER = 'x-orch-client-ip'
@@ -24,21 +27,81 @@ export interface AuthDeps {
    * sign-out never waits for it or fails because of it.
    */
   onSessionEnded?: (userId: string) => unknown
+  /**
+   * Test-only: runs inside the email-code sign-up just before it saves the
+   * password, and a throw makes that write fail. Never set from env.
+   */
+  beforeSignUpCredentialWrite?: () => unknown
 }
 
 /**
- * Builds the Better Auth instance behind `/api/auth/*`: email and password
- * with required verification, sessions in the database and never cached in a
- * cookie, and a session cookie on `Path=/api`, so browsers never send it to
- * the relayed machines under `/m/*`.
+ * The `emailOTP` paths the client never calls, closed over HTTP. The email-code
+ * sign-up still runs the `sign-in/email-otp` step server-side, since Better
+ * Auth checks `disabledPaths` only in its HTTP router.
  */
-export function createAuth({ domain, mailer, secret, baseUrl, trustedOrigins, onSessionEnded }: AuthDeps) {
+export const DISABLED_EMAIL_OTP_PATHS = [
+  '/sign-in/email-otp',
+  '/email-otp/check-verification-otp',
+  '/email-otp/verify-email',
+  '/email-otp/request-password-reset',
+  '/forget-password/email-otp',
+  '/email-otp/reset-password',
+  '/email-otp/request-email-change',
+  '/email-otp/change-email',
+]
+
+/**
+ * Builds the Better Auth instance behind `/api/auth/*`: email and password
+ * with required verification, sign-up by an emailed code
+ * (`email-otp/send-verification-otp`, then `sign-up/email-code`), sessions in
+ * the database and never cached in a cookie, and a session cookie on
+ * `Path=/api`, so browsers never send it to the relayed machines under `/m/*`.
+ */
+export function createAuth({
+  domain,
+  mailer,
+  secret,
+  baseUrl,
+  trustedOrigins,
+  onSessionEnded,
+  beforeSignUpCredentialWrite,
+}: AuthDeps) {
+  const otp = emailOTP({
+    storeOTP: 'hashed',
+    // The plugin's default of 300 seconds, set here so the email's "expires in" can't drift from it.
+    expiresIn: SIGN_UP_CODE_MINUTES * 60,
+    // Length 6, 3 attempts and the rate limits stay the plugin's defaults. An address with an account gets
+    // `accountExists` and never a code, whatever the type; a new address gets its code only for `sign-in`. The
+    // plugin answers `{ success: true }` either way, and the answer never waits for the email.
+    sendVerificationOTP: async ({ email, otp, type }, ctx) => {
+      if (!ctx) throw new Error('auth: a sign-up code was asked for outside a request')
+      if (await ctx.context.internalAdapter.findUserByEmail(email)) {
+        const origin = new URL(baseUrl).origin
+        sendInBackground(
+          mailer.send(email, 'accountExists', {
+            signInUrl: `${origin}/auth/sign-in`,
+            forgotPasswordUrl: `${origin}/auth/forgot-password`,
+          }),
+        )
+      } else if (type === 'sign-in') {
+        sendInBackground(mailer.send(email, 'signUpCode', { code: otp }))
+      }
+    },
+  })
   return betterAuth({
     secret,
     baseURL: baseUrl,
     basePath: '/api/auth',
     trustedOrigins: [...trustedOrigins],
-    database: drizzleAdapter(domain.forAuthLibrary(), { provider: 'pg', schema }),
+    database: drizzleAdapter(domain.forAuthLibrary(), { provider: 'pg', schema, transaction: true }),
+    plugins: [
+      otp,
+      signUpByEmailCode({
+        redeemCode: otp.endpoints.signInEmailOTP,
+        beforeCredentialWrite: beforeSignUpCredentialWrite,
+      }),
+    ],
+    disabledPaths: [...DISABLED_EMAIL_OTP_PATHS],
     emailAndPassword: {
       enabled: true,
       requireEmailVerification: true,
@@ -82,6 +145,16 @@ export function createAuth({ domain, mailer, secret, baseUrl, trustedOrigins, on
  */
 export function emailLinkUrl(baseUrl: string, page: 'verify-email' | 'reset-password', token: string): string {
   return `${new URL(baseUrl).origin}/auth/${page}#token=${encodeURIComponent(token)}`
+}
+
+/**
+ * Lets an email send finish after the response, so how long the answer takes
+ * says nothing about the email. The mailer has already logged a failure with
+ * its template name and code, so the rejection is dropped here; the person
+ * asks again.
+ */
+function sendInBackground(send: Promise<void>) {
+  send.catch(() => {})
 }
 
 /** Calls `onSessionEnded` without waiting for it, logging a fixed line, never the user id, if it fails. */

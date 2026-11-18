@@ -112,6 +112,32 @@ export function authTestClient({
     return new URL(url)
   }
 
+  /** Asks for a sign-up code for `email` from `ip`, as the client's first sign-up step does. */
+  async function sendCode(email: string, ip: string): Promise<Response> {
+    return call('POST', '/api/auth/email-otp/send-verification-otp', { ip, body: { email, type: 'sign-in' } })
+  }
+
+  /** The code in the last `signUpCode` email sent to `address`. */
+  function codeTo(address: string): string {
+    const message = mail.sent.filter((m) => m.to === address && m.subject === 'Your sign-up code').at(-1)
+    const code = message?.text.match(/\b\d{6}\b/)?.[0]
+    if (!code) throw new Error('no sign-up code for the address')
+    return code
+  }
+
+  /** Every `accountExists` email sent to `address`, oldest first. */
+  function accountExistsTo(address: string) {
+    return mail.sent.filter((m) => m.to === address && m.subject === 'You already have an account')
+  }
+
+  /** Finishes an email-code sign-up from `ip`. */
+  async function signUpWithCode(
+    ip: string,
+    body: { name: string; email: string; password: string; code: string },
+  ): Promise<Response> {
+    return call('POST', '/api/auth/sign-up/email-code', { ip, body })
+  }
+
   /** Signs up and verifies with the link's token as the client page does, leaving a verified user with no session. */
   async function register(email: string, ip: string, name = 'Test'): Promise<void> {
     await call('POST', '/api/auth/sign-up/email', { ip, body: { email, password: TEST_PASSWORD, name } })
@@ -146,6 +172,10 @@ export function authTestClient({
   return {
     call,
     linkTo,
+    sendCode,
+    codeTo,
+    accountExistsTo,
+    signUpWithCode,
     register,
     verifiedUser,
     signIn,
@@ -160,6 +190,8 @@ export interface AccountsTestOptions {
   now?: () => Date
   /** Passed to `createAuth`, told the user id of each session Better Auth ends. */
   onSessionEnded?: (userId: string) => unknown
+  /** Passed to `createAuth`, run just before the email-code sign-up saves the password. */
+  beforeSignUpCredentialWrite?: () => unknown
 }
 
 /**
@@ -191,7 +223,7 @@ export function testEnrollment(
 export function accountsTestDeps(
   domain: TestDomain,
   registry: MachineRegistry,
-  { now, onSessionEnded }: AccountsTestOptions = {},
+  { now, onSessionEnded, beforeSignUpCredentialWrite }: AccountsTestOptions = {},
 ) {
   const mail = createCaptureTransport()
   const auth = createAuth({
@@ -201,6 +233,7 @@ export function accountsTestDeps(
     baseUrl: TEST_BASE,
     trustedOrigins: [TEST_TRUSTED_ORIGIN],
     onSessionEnded,
+    beforeSignUpCredentialWrite,
   })
   const forUser = (principal: Principal) => domain.forUser(principal)
   const relayTickets = new RelayTickets({ signingKey: TEST_RELAY_SIGNING_KEY, now })

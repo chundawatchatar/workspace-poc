@@ -1,9 +1,11 @@
+import { accountExists } from './account-exists'
 import { resetPassword } from './reset-password'
+import { signUpCode } from './sign-up-code'
 import type { RenderedMail } from './template'
 import { verifyEmail } from './verify-email'
 
 /** Every email the server can send. Add a template file, then add it here. */
-const templateList = [verifyEmail, resetPassword] as const
+const templateList = [verifyEmail, resetPassword, signUpCode, accountExists] as const
 
 type Template = (typeof templateList)[number]
 

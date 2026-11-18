@@ -415,7 +415,19 @@ apps/host ─► packages/terminal, packages/connectors (future) ─► packages
   `USER_ALREADY_EXISTS`) and creates nothing (`sign-up.mjs`, `shouldReturnGenericDuplicateResponse`). The accepted
   risk is timing: a new sign-up waits for the verification email to send and a duplicate sends nothing, so response
   times can still differ. If the mailer fails during sign-up, Better Auth logs the failure and still answers 200; the
-  user exists unverified and recovers through a later "resend" page.
+  user exists unverified and recovers through a later "resend" page. Asking for a sign-up code
+  (`email-otp/send-verification-otp`) answers `{ success: true }` for every address and never waits for the email,
+  which is sent in the background (a failure is logged by the mailer and dropped). With `type: 'sign-in'`, the only
+  type the client sends, each address gets exactly one email: `signUpCode` with the code to an address with no
+  account, `accountExists` with no code to one that has an account, verified or not. With another `type`, an address
+  with an account gets `accountExists` and one without gets nothing. The email-code sign-up (`sign-up/email-code`)
+  refuses an existing address with the same 400 as a wrong code. The remaining risks: timing, since for a `type`
+  other than `sign-in` an address with an account costs a second user lookup and the start of a send, where one
+  without costs only the deletion of its code row (for `sign-in` both branches look the user up and start one send,
+  and only the templates differ); a failed send is invisible to the person, who simply asks again; anyone can make
+  an address receive `accountExists` or a code, limited to 3 sends a minute per IP (in memory, per process); and a
+  new send replaces the earlier code, so someone who knows an address can spoil a pending sign-up's code, though
+  never use it.
 - The server sends email only through the mailer (`apps/server/src/modules/mailer/`), one template file per email,
   as plain text plus HTML over SMTP (Mailpit in development). Tests read emails from the capturing transport in
   `mailer.testing.ts` instead of a network. Emails carry single-use links, so the link, tokens, the recipient, the
