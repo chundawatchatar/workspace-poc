@@ -1,6 +1,6 @@
 import { chmodSync, existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
-import { HOOK_PROGRAM } from './agent-shim-base'
+import { HOOK_PROGRAM } from '@orch/agents/runtime'
 import { AGENTS, type AgentAdapter } from './agents'
 
 const ZSH_FILES = ['.zshenv', '.zprofile', '.zshrc', '.zlogin']

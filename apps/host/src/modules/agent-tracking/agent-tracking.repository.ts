@@ -13,7 +13,7 @@ const savedAnswers = z.object(
 
 /** The answers when nothing was asked yet. */
 export function unanswered(): AgentTrackingStatus {
-  return { claude: null, codex: null }
+  return Object.fromEntries(trackedAgent.options.map((kind) => [kind, null])) as AgentTrackingStatus
 }
 
 /** Where the trust answers are kept. */

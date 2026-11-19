@@ -1,5 +1,5 @@
-import { HOOK_PROGRAM, shimStart } from './agent-shim-base'
-import type { AgentTracker } from './agent-tracker'
+import { HOOK_PROGRAM, shimStart } from '../runtime/shim'
+import type { AgentTracker } from '../runtime-types'
 
 /**
  * The most the Codex shim reads, in bytes across all config files and per line.

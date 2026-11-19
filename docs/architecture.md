@@ -81,8 +81,9 @@ moves into the package.
 
 | Package | Holds | Depends on |
 | --- | --- | --- |
-| `packages/ui` | Presentational building blocks and themes: `TerminalView` (xterm), modals, toasts, icons. Data and callbacks come in as props. | `shared` |
-| `packages/terminal-ui` | The whole workspace page, connected to a host. | `ui`, `shared` |
+| `packages/agents` | Agent definitions, artwork, title rules and runtime adapters, with separate browser and runtime entry points. | None |
+| `packages/ui` | Presentational building blocks and themes: `TerminalView` (xterm), modals, toasts, icons. Data and callbacks come in as props. | `agents`, `shared` |
+| `packages/terminal-ui` | The whole workspace page, connected to a host. | `agents`, `ui`, `shared` |
 
 The differences between the two apps come in as props on the page's root component:
 
@@ -119,6 +120,8 @@ difference appears, it becomes another prop, never an `if (isClient)` check insi
 apps/web, apps/client ─► packages/terminal-ui ─► packages/ui ─► packages/shared
 apps/server ─► packages/domain ─► packages/shared
 apps/host ─► packages/terminal, packages/connectors (future) ─► packages/shared
+packages/shared, packages/ui, packages/terminal-ui ─► packages/agents (browser-safe)
+packages/terminal ─► packages/agents/runtime
 ```
 
 - `packages/*` never import from `apps/*`, and `apps/web` and `apps/client` never import from each other.

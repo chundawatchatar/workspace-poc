@@ -1,19 +1,24 @@
+import { HOOK_AGENT_KINDS, type HookAgentKind } from '@orch/agents'
 import { z } from 'zod'
 import { defineContract } from './contract'
 
-/** The agents whose hooks the product can attach. The host checks this list against the tracked kinds. */
-export const trackedAgent = z.enum(['claude', 'codex'])
+/** The registered agents whose per-session hooks the product can attach. */
+export const trackedAgent = z.enum(HOOK_AGENT_KINDS)
 export type TrackedAgent = z.infer<typeof trackedAgent>
 
 /** The user's answer to "Track this agent's status with hooks?": `on` for Track, `off` for Not now. */
 export const agentTrackingAnswer = z.enum(['on', 'off'])
 export type AgentTrackingAnswer = z.infer<typeof agentTrackingAnswer>
 
+const nullableAnswer = agentTrackingAnswer.nullable()
+
 /** The answer per agent kind. Null means the user was not asked yet, which behaves as off. */
-export const agentTrackingStatus = z.strictObject({
-  claude: agentTrackingAnswer.nullable(),
-  codex: agentTrackingAnswer.nullable(),
-})
+export const agentTrackingStatus = z.strictObject(
+  Object.fromEntries(HOOK_AGENT_KINDS.map((kind) => [kind, nullableAnswer])) as Record<
+    HookAgentKind,
+    typeof nullableAnswer
+  >,
+)
 export type AgentTrackingStatus = z.infer<typeof agentTrackingStatus>
 
 export const updateAgentTrackingBody = z.strictObject({ agent: trackedAgent, answer: agentTrackingAnswer })

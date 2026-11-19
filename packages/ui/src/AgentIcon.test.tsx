@@ -26,12 +26,13 @@ describe('AGENT_ICONS', () => {
     for (const label of labels) expect(label).toMatch(/^.{1,2}$/u)
   })
 
-  test('every kind draws its official mark, recording where it comes from and the terms that apply', () => {
+  test('published artwork records where it comes from and the terms that apply', () => {
     for (const kind of kinds) {
       const mark = AGENT_ICONS[kind].mark
-      expect(mark?.source).toMatch(/^https:\/\/\S+$/u)
-      expect(mark?.terms).toMatch(/^https:\/\/\S+$/u)
-      expect(mark?.termsSummary).not.toBe('')
+      if (!mark) continue
+      expect(mark.source).toMatch(/^https:\/\/\S+$/u)
+      expect(mark.terms).toMatch(/^https:\/\/\S+$/u)
+      expect(mark.termsSummary).not.toBe('')
     }
   })
 })

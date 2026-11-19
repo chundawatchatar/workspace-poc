@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { dirname, join } from 'node:path'
+import { AGENT_HOOK_REASONS, AGENT_HOOK_STATES } from '@orch/agents/runtime'
 import { AGENT_LABELS } from '@orch/shared'
 import { z } from 'zod'
 import type { AgentHook } from './agent-state'
@@ -9,8 +10,8 @@ import { AGENTS, type AgentAdapter, type TrackedAgentKind, trackedKinds } from '
 export function agentEventFor(agents: readonly AgentAdapter[]) {
   return z.strictObject({
     agent: z.enum(trackedKinds(agents)),
-    state: z.enum(['working', 'waiting', 'idle']),
-    reason: z.enum(['started', 'prompt', 'tool', 'permission', 'question', 'finished', 'exited']),
+    state: z.enum(AGENT_HOOK_STATES),
+    reason: z.enum(AGENT_HOOK_REASONS),
   })
 }
 export const agentEvent = agentEventFor(AGENTS)
@@ -122,8 +123,8 @@ async function readBody(request: Request): Promise<Buffer | null> {
  * identity, so no request can name a session, and it exists only in the
  * session's shell and here. See "Local reporting channel" in `docs/agents.md`.
  *
- * It is plain logic behind `handle`, because the daemon's `main.ts` runs at
- * import and `daemonBuild` hashes only that one file of the daemon.
+ * It is separate from the daemon entry point so tests can exercise `handle`
+ * without starting a daemon.
  */
 export class AgentChannel {
   private readonly sessions = new Map<string, SessionState>()

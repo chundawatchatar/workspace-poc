@@ -80,7 +80,10 @@ function tabItems(workspace: Workspace, sessions: Record<string, SessionInfo>, g
       id: `tab:${surface.id}`,
       group: 'Tab',
       icon: TAB_ICON[surface.kind],
-      label: surface.kind === 'terminal' ? tidyTitle(sessions[surface.id]?.title ?? surface.title) : surface.title,
+      label:
+        surface.kind === 'terminal'
+          ? tidyTitle(sessions[surface.id]?.title ?? surface.title, sessions[surface.id]?.agent?.kind)
+          : surface.title,
       hint: sessions[surface.id]?.attention ? `${workspace.name} · needs attention` : workspace.name,
       run: () => {
         const target = revealSurface(surface.id)

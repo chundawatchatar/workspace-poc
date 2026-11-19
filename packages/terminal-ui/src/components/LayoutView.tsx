@@ -1,3 +1,4 @@
+import { stripAgentGlyphs } from '@orch/agents'
 import {
   AGENT_LABELS,
   type AgentKind,
@@ -26,7 +27,6 @@ import {
 } from '@orch/ui/icons'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { type AgentStatus, agentStatus, withStatus } from '../lib/agentStatus'
-import { stripAgentGlyphs } from '../lib/agentTitle'
 import { SWITCH_HINT } from '../lib/agentTracking'
 import {
   addSurface,
@@ -128,8 +128,8 @@ function SplitView({ workspace, split }: { workspace: Workspace; split: SplitNod
  * `Terminal`. Shells title a tab `user@host:/long/path`; the last folder is what
  * identifies it.
  */
-export function tidyTitle(raw: string) {
-  const title = stripAgentGlyphs(raw)
+export function tidyTitle(raw: string, kind?: AgentKind) {
+  const title = stripAgentGlyphs(raw, kind)
   if (!title) return 'Terminal'
   const match = /^[^@\s]+@[^:\s]+:\s*(.+)$/.exec(title)
   if (!match) return title
@@ -306,7 +306,9 @@ function PaneView({ workspace, pane, split }: { workspace: Workspace; pane: Pane
                 surface={surface}
                 paneFocused={focused}
                 title={
-                  surface.kind === 'terminal' ? tidyTitle(sessions[surface.id]?.title ?? surface.title) : surface.title
+                  surface.kind === 'terminal'
+                    ? tidyTitle(sessions[surface.id]?.title ?? surface.title, sessions[surface.id]?.agent?.kind)
+                    : surface.title
                 }
                 attention={Boolean(sessions[surface.id]?.attention)}
                 agent={sessions[surface.id]?.agent?.kind ?? null}

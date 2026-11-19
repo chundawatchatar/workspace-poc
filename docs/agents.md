@@ -57,19 +57,14 @@ mid-turn: the product only knows the agent is there. So the UI shows the `idle` 
 A baseline `idle` shows no agent mark: the tab and sidebar row fall back to their progress and other signals, except
 `progress` `error`, which still shows failed. `working` and `waiting` show from either source.
 
-A tab or sidebar row whose terminal has an agent (`SessionInfo.agent` set) shows which agent it is with the agent's
-identity icon where the terminal icon would be (`AgentIcon` and `AGENT_ICONS` in `packages/ui`), and the state mark
-after it, at the end of the tab or row. Every agent draws its vendor's official mark, copied unchanged from the vendor's
-own file: Cursor's cube, pi's badge, the OpenAI mark for Codex and the OpenCode logo in the text colour, the Claude
-spark in its own clay colour, and Command Code's logomark in its fixed black and white. Cursor, pi and Command Code
-permit this use on their brand pages; Claude Code, Codex and OpenCode show theirs by the product owner's decision.
-`AGENT_ICONS` records each mark's source and terms, and keeps a monogram (`CC`, `CX`, …) as the fallback for a kind
-without one. The state mark is the same for every agent; only the icon differs. The `working` mark is a spinner drawn in
-the theme's orange `busy` colour, apart from the `waiting` hand's `warn`, and the `idle` mark is a quiet hollow circle
-in the theme's `faint` colour, drawn at the same size as the other marks. The mark's slot keeps its width when there is
-no state, so a change of state moves nothing. In a sidebar row the attention dot sits just before that slot, and with no
-state the slot holds the row's running, exited or shell dot. A terminal with no agent, including an interrupted one,
-keeps its terminal icon and shows its mark or dot in front, as before.
+A terminal with a detected agent shows its identity icon at the start of its tab or sidebar row and a separate
+status mark at the end. `@orch/agents` supplies each agent's artwork and fallback initials; `AgentIcon` in
+`packages/ui` renders them. Each agent's `icon.ts` records the artwork's source and applicable terms.
+
+The status mark is shared by every agent: an orange `busy` spinner for working, a `warn` hand for waiting, and a
+faint hollow circle for idle. Its slot keeps its width with no state, so changes move nothing. The sidebar's attention
+dot sits just before that slot; with no agent state the slot holds the running, exited or shell dot. A terminal with
+no detected agent, including an interrupted one, keeps its terminal icon and its leading mark or dot.
 
 ### Precise: the agent's own hooks
 
@@ -124,8 +119,8 @@ product starts get a command shim that adds hooks for that one invocation only.
   `<runtime>/agent/bin/` holds `claude`, `codex` and `orch-agent-hook`, all small POSIX `sh` scripts,
   `<runtime>/agent/claude-settings.json` holds the generated hook settings, and `<runtime>/agent/zsh/` holds the
   startup wrapper. The folders are `0700`, so they are readable only by the user. Their contents are fixed by
-  `packages/terminal/src/agent-shim.ts` (the frame), `agent-shim-base.ts` (what shims share) and each agent's own
-  `agent-shim-claude.ts` or `agent-shim-codex.ts`: no token, no path from the user's projects. A failed write means no
+  `packages/terminal/src/agent-shim.ts` (the frame) and `packages/agents/src/` (shared shim support and each agent's
+  own `tracking.ts`): no token, no path from the user's projects. A failed write means no
   `PATH` change: shells still start and still get a token.
 - `shellEnv` (in `core.ts`) puts `<runtime>/agent/bin` first on `PATH` and adds the token variables (see the
   [channel](#local-reporting-channel)), for terminals the product starts only (TERM-7), and only for a shell that got
@@ -251,7 +246,7 @@ last answer. `-c notify=...` replaces the configured value, so a plain flag woul
 - Codex gets no hook `working` or `waiting`, and sends no OSC 9;4, so `agentState` never says `working` during a
   Codex turn: a later turn keeps the `idle`/`finished` of the one before, since `notify` has no turn-start event.
   Codex's `working` comes only from the spinner at the start of its terminal title, which the page reads
-  (`titleSpins` in `packages/terminal-ui/src/lib/agentTitle.ts`, used by `agentStatus` and `agentCounts`). A spinning
+  (`titleSpins` in `packages/agents/src/titles.ts`, used by `agentStatus` and `agentCounts`). A spinning
   title outranks a stale hook `idle`, but never a `waiting` or a `failed`, and the tab's tooltip then reads `Codex
   working (title)`, without the reason or source of the state it overrode. It counts only for an identified agent,
   with tracking on, in a live session that wasn't interrupted, so a shell left with an exited agent's last title never
@@ -277,18 +272,13 @@ running one shows `working` from progress and `waiting` from attention when the 
 
 #### Adding an agent
 
-Tracking lives in one definition, an `AgentTracker` (`packages/terminal/src/agent-tracker.ts`), so a new agent takes one
-file and one field:
-
-1. Add `packages/terminal/src/agent-shim-<kind>.ts`, directly in `src`, since `daemonBuild` reads only the top level.
-   It exports the definition: `program` (the name on `PATH`), `shim` (starting with `shimStart(program, kind)`),
-   `hookBranch` (the `case` arm of `orch-agent-hook`, which sends only literals, see SEC-3), and `files` or
-   `turnEndOnly` when they apply. Import `AgentEvent` from `agent-channel.ts` as a type only: `agents.ts` imports this
-   file, and `agent-channel.ts` reads `AGENTS` while it loads.
-2. Set `tracking` on the agent's adapter in `agents.ts`.
+Each agent owns its definition, artwork, title rules and runtime adapter in `packages/agents/src/<kind>/`.
+Hook-capable agents also supply `tracking.ts`, implementing `AgentTracker`. The browser-safe registry and runtime
+entry point stay separate; see [Agent integrations](../packages/agents/README.md) for the short adding guide.
 
 `writeAgentShim`, `agentEvent`, `agentTracking`, `GET /v1/session`, the daemon's `tracking` request, `agentHook.agent` and
-the host's default all derive from that, and a test can pass its own list (`agent-tracking.test.ts` does). `agentTracking`
+the host's default all derive from the adapters' `tracking` fields through `trackedKinds()`. A test can pass its own
+adapter list (`agent-tracking.test.ts` does). `agentTracking`
 keeps every key required, so a new daemon refuses a `hello` from a host that predates the agent. A host is normally the
 same age or newer, but the job adding the agent has to decide this. Any change here alters `daemonBuild`, so running
 daemons need `bun run terminals:stop`, which ends their shells.
@@ -560,7 +550,7 @@ Where the code lives:
 | Side | Files |
 | --- | --- |
 | Shared | `packages/shared/src/protocol.ts` (`SessionInfo`, `AgentState`, `attention.from`), `packages/shared/src/contracts/events.ts` (`agentTracking`) |
-| Terminal package | `packages/terminal/src/daemon-protocol.ts` (`daemonStatus.agentHook`, `attention.from`), `packages/terminal/src/core.ts` (`shellEnv`, `TerminalCore.notify`), `packages/terminal/src/attention.ts` (the attention merge), `packages/terminal/src/agent-state.ts`, and `packages/terminal/src/agent-channel.ts` (tokens, requests, rate limit, hook state), which lives here because `daemonBuild` hashes this folder and only `main.ts` of the daemon |
+| Terminal package | `packages/terminal/src/daemon-protocol.ts` (`daemonStatus.agentHook`, `attention.from`), `packages/terminal/src/core.ts` (`shellEnv`, `TerminalCore.notify`), `packages/terminal/src/attention.ts` (the attention merge), `packages/terminal/src/agent-state.ts`, and `packages/terminal/src/agent-channel.ts` (tokens, requests, rate limit, hook state), with native agent integrations in `packages/agents`; `daemonBuild` hashes both packages and the daemon recursively |
 | Daemon | `apps/ptyd-bun/src/main.ts` (request schema, `agent.sock`, the shim folder, `onNotify` to the session's core) |
 | Host | `apps/host/src/modules/terminals/daemon-session.service.ts`, `daemon.repository.ts` (the switch in each record), `apps/host/src/modules/events/events.ws.ts` (`agentTracking`) |
 | Web | `packages/terminal-ui` (tab state, sidebar counts, trust notice, switch) |

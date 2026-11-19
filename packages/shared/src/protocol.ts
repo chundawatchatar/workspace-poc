@@ -1,3 +1,4 @@
+import type { AgentKind } from '@orch/agents'
 import type { z } from 'zod'
 import type { eventsSocket } from './contracts/events'
 import type { termColors, terminalSocket } from './contracts/terminals'
@@ -21,17 +22,7 @@ export interface ProcessInfo {
   startedAt: number
 }
 
-/** The coding agents whose conversations can be found and resumed. */
-export type AgentKind = 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi' | 'commandcode'
-
-export const AGENT_LABELS: Record<AgentKind, string> = {
-  claude: 'Claude Code',
-  codex: 'Codex',
-  opencode: 'OpenCode',
-  cursor: 'Cursor Agent',
-  pi: 'pi',
-  commandcode: 'Command Code',
-}
+export { AGENT_LABELS, type AgentKind } from '@orch/agents'
 
 /** An agent conversation running in a terminal, as far as it could be identified. */
 export interface AgentRef {

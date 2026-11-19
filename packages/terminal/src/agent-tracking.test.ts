@@ -11,9 +11,9 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { join } from 'node:path'
+import { shimStart } from '@orch/agents/runtime'
 import { AgentChannel, type AgentTracking, agentEvent } from './agent-channel'
 import { writeAgentShim } from './agent-shim'
-import { shimStart } from './agent-shim-base'
 import { deriveAgentState } from './agent-state'
 import { AGENTS, type AgentAdapter } from './agents'
 

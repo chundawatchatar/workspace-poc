@@ -95,7 +95,10 @@ export function SidebarTerminals({ workspace, active }: { workspace: Workspace; 
           <li key={id}>
             <button
               type="button"
-              title={withStatus(running?.command ?? tidyTitle(session?.title ?? 'Terminal'), status)}
+              title={withStatus(
+                running?.command ?? tidyTitle(session?.title ?? 'Terminal', session?.agent?.kind),
+                status,
+              )}
               className={`flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left text-[11px] ${
                 active ? 'hover:bg-on-accent/15' : 'hover:bg-line'
               }`}

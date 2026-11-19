@@ -1,3 +1,4 @@
+import { titleSpins } from '@orch/agents'
 import {
   AGENT_LABELS,
   type AgentReason,
@@ -7,7 +8,6 @@ import {
   type SessionInfo,
   type Workspace,
 } from '@orch/shared'
-import { titleSpins } from './agentTitle'
 
 export type AgentStatusKind = 'working' | 'waiting' | 'idle' | 'failed'
 
@@ -61,7 +61,7 @@ const SOURCE_WORDS: Record<AgentState['source'], string> = {
  */
 function titleWorking(session: AgentStatusSource) {
   if (!session.agent || session.agentTracking === false || !session.alive || session.interrupted) return false
-  return titleSpins(session.title)
+  return titleSpins(session.title, session.agent.kind)
 }
 
 /** The kind a session shows. `title` is `working` decided by a spinning title alone. */

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { AGENT_HOOK_STATES, agentSourceDirectory, STORED_AGENT_HOOK_REASONS } from '@orch/agents/runtime'
 import { z } from 'zod'
 import { trackedKinds } from './agents'
 
@@ -47,8 +48,8 @@ export const daemonStatus = z.object({
   agentHook: z
     .object({
       agent: z.enum(trackedKinds()),
-      state: z.enum(['working', 'waiting', 'idle']),
-      reason: z.enum(['started', 'prompt', 'tool', 'permission', 'question', 'finished']),
+      state: z.enum(AGENT_HOOK_STATES),
+      reason: z.enum(STORED_AGENT_HOOK_REASONS),
       at: z.number(),
     })
     .nullable()
@@ -68,22 +69,29 @@ export function embeddedBuildId(): string | null {
 
 /**
  * Names the code a daemon runs. An executable uses the id compiled into it, so its host and the daemons it starts
- * agree without reading any file. From source it is a hash of every non-test `.ts` file in `sourceDir` and in this
- * package, so a daemon still running code from before an edit or a branch switch is noticed.
+ * agree without reading any file. From source it hashes the daemon, terminal and agent sources recursively, so a
+ * daemon still running code from before an edit or a branch switch is noticed.
  */
 export function daemonBuild(sourceDir: string): string {
   return buildId(embeddedBuildId(), sourceDir)
 }
 
 /** `embedded` when there is one, else the 16-hex sha256 of the sources `daemonBuild` describes. */
-export function buildId(embedded: string | null, sourceDir: string): string {
+export function buildId(
+  embedded: string | null,
+  sourceDir: string,
+  agentSourceDirs: readonly string[] = [agentSourceDirectory],
+): string {
   if (embedded !== null) return embedded
   const hash = createHash('sha256')
-  for (const dir of [sourceDir, import.meta.dir]) {
-    const files = readdirSync(dir)
+  for (const dir of [sourceDir, import.meta.dir, ...agentSourceDirs]) {
+    const files = readdirSync(dir, { recursive: true, encoding: 'utf8' })
       .filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'))
       .sort()
-    for (const name of files) hash.update(readFileSync(join(dir, name)))
+    for (const name of files) {
+      hash.update(name).update('\0')
+      hash.update(readFileSync(join(dir, name))).update('\0')
+    }
   }
   return hash.digest('hex').slice(0, 16)
 }

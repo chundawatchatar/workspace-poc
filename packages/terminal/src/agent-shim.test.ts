@@ -11,9 +11,9 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { delimiter, join } from 'node:path'
+import { claudeSettings } from '@orch/agents/runtime'
 import { agentEvent } from './agent-channel'
 import { writeAgentShim } from './agent-shim'
-import { claudeSettings } from './agent-shim-claude'
 import { shellEnv } from './core'
 
 // The scripts run with `/bin/sh` against fake binaries and a fake socket server, never a real Claude Code or network.

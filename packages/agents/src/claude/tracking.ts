@@ -1,6 +1,6 @@
-import type { AgentEvent } from './agent-channel'
-import { HOOK_PROGRAM, shimStart } from './agent-shim-base'
-import type { AgentTracker } from './agent-tracker'
+import { AGENT_HOOK_REASONS, AGENT_HOOK_STATES, type AgentHookEvent as AgentEvent } from '../runtime/events'
+import { HOOK_PROGRAM, shimStart } from '../runtime/shim'
+import type { AgentTracker } from '../runtime-types'
 
 const CLAUDE_SETTINGS = 'claude-settings.json'
 /** How long Claude Code lets a hook run, in seconds. The hook itself gives up after one. */
@@ -56,8 +56,8 @@ exec "$real" --settings "$settings" "$@"
 
 /** The hook's form takes a state and a reason, each checked against the values Claude Code's settings can send. */
 const HOOK_BRANCH = `  claude)
-    case \${2:-} in working|waiting|idle) ;; *) exit 0 ;; esac
-    case \${3:-} in started|prompt|tool|permission|question|finished|exited) ;; *) exit 0 ;; esac
+    case \${2:-} in ${AGENT_HOOK_STATES.join('|')}) ;; *) exit 0 ;; esac
+    case \${3:-} in ${AGENT_HOOK_REASONS.join('|')}) ;; *) exit 0 ;; esac
     agent=claude state=$2 reason=$3
     shift $#
     ;;

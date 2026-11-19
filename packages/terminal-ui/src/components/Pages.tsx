@@ -188,7 +188,7 @@ function Notifications() {
             >
               <div className="truncate text-xs font-medium text-ink">{session.attention?.message}</div>
               <div className="truncate text-[11px] text-dim">
-                {workspace.name} · {tidyTitle(session.title)}
+                {workspace.name} · {tidyTitle(session.title, session.agent?.kind)}
               </div>
             </button>
           ))}

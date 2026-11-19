@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@base-ui/react": "1.9.0",
+    "@orch/agents": "workspace:*",
     "@orch/brand": "workspace:*",
     "@orch/shared": "workspace:*",
     "@tanstack/react-table": "^9.3.1",

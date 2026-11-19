@@ -15,6 +15,7 @@
     "test:coverage": "bun test --coverage"
   },
   "dependencies": {
+    "@orch/agents": "workspace:*",
     "@orch/shared": "workspace:*",
     "@orch/ui": "workspace:*",
     "@tanstack/react-query": "^5.104.4"

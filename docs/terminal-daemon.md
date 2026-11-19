@@ -48,7 +48,7 @@ The daemon never reloads, so the host compares the build it runs with its own:
   the executable, `<version>+<commit>` (with `.dirty` for a build from a
   working tree with changes).
 - From source, the build is a hash of every non-test `.ts` file in
-  `apps/ptyd-bun/src` and `packages/terminal/src`, so a daemon still running
+  `apps/ptyd-bun/src`, `packages/terminal/src` and `packages/agents/src`, recursively, so a daemon still running
   code from before an edit or a branch switch is noticed.
 
 The host reports the daemon as one of these states, in `corch status`, in the
@@ -104,8 +104,8 @@ folder:
   saved as soon as they are identified and cleared when the shell is back at
   its prompt.
 
-Agents are recognised by program name in `packages/terminal/src/agents.ts`,
-which also knows where each one keeps its conversations (how their working, waiting and idle
+Agents are recognised by `packages/terminal/src/agents.ts`, using each agent's
+adapter in `packages/agents/src/<kind>/`, which knows where it keeps its conversations (how their working, waiting and idle
 states are tracked on top of this is in [agents.md](agents.md)):
 
 | Agent | Program | Conversation id from | Resume |
@@ -151,7 +151,7 @@ always there while an agent runs. The whole design is in
 - **The shim folder.** At start the daemon writes `<runtime>/agent/`: the
   `claude` and `codex` shims and `orch-agent-hook` in `bin/`, the generated
   Claude Code settings and the zsh startup wrapper, all from fixed contents in
-  `packages/terminal/src/agent-shim*.ts`. If the write fails, shells start
+  `packages/terminal/src/agent-shim.ts` and `packages/agents/src/`. If the write fails, shells start
   without the `PATH` change.
 - **Per-session tokens.** When a session tracks any agent, each shell it starts
   gets a fresh random token in `ORCH_AGENT_TOKEN`, with `ORCH_AGENT_SOCKET`.
@@ -169,9 +169,9 @@ always there while an agent runs. The whole design is in
 - **Hook state lives in memory.** It survives a host restart, but a daemon
   restart loses it with the sessions, and a resumed agent starts from terminal
   signals with a new token.
-- **Editing tracking code changes `daemonBuild`.** The channel and shims live in
-  `packages/terminal/src`, whose top-level sources the build hash covers along
-  with the daemon's `main.ts`. A running daemon keeps the old code, and the
+- **Editing tracking code changes `daemonBuild`.** The build hash covers the channel,
+  shims and agent adapters in `packages/terminal/src` and `packages/agents/src`,
+  along with the daemon sources, including nested folders. A running daemon keeps the old code, and the
   host reports it as `outdated`, until `bun run terminals:stop`, which ends its
   shells.
 

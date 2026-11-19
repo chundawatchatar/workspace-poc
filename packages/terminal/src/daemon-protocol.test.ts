@@ -1,7 +1,9 @@
 import { afterEach, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { AGENT_HOOK_REASONS, AGENT_HOOK_STATES } from '@orch/agents/runtime'
+import { agentEvent } from './agent-channel'
 import {
   buildId,
   DaemonDecoder,
@@ -12,6 +14,19 @@ import {
 } from './daemon-protocol'
 
 const dirs: string[] = []
+const status = {
+  protocol: 1,
+  id: 'tab',
+  instance: 'a'.repeat(32),
+  daemonPid: 10,
+  pid: 11,
+  alive: true,
+  title: 'zsh',
+  attention: null,
+  progress: null,
+  cols: 80,
+  rows: 24,
+}
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
@@ -38,25 +53,22 @@ test('rejects unbounded or empty daemon frames before buffering their payload', 
 })
 
 test('a daemon status may carry its start time, and one from an older daemon without it still parses', () => {
-  const status = {
-    protocol: 1,
-    id: 'tab',
-    instance: 'a'.repeat(32),
-    daemonPid: 10,
-    pid: 11,
-    alive: true,
-    title: 'zsh',
-    attention: null,
-    progress: null,
-    cols: 80,
-    rows: 24,
-  }
   expect(daemonStatus.parse({ ...status, startedAt: 1_700_000_000_000 }).startedAt).toBe(1_700_000_000_000)
   expect(daemonStatus.parse(status).startedAt).toBeUndefined()
   expect(daemonStatus.parse(status).agentHook).toBeUndefined()
   const agentHook = { agent: 'claude', state: 'working', reason: 'tool', at: 5 }
   expect(daemonStatus.parse({ ...status, agentHook }).agentHook).toEqual(agentHook as never)
   expect(daemonStatus.parse({ ...status, agentHook: null }).agentHook).toBeNull()
+})
+
+test('every hook event the channel accepts can be stored, except exited', () => {
+  for (const state of AGENT_HOOK_STATES) {
+    for (const reason of AGENT_HOOK_REASONS) {
+      const event = { agent: 'claude', state, reason }
+      expect(agentEvent.safeParse(event).success).toBe(true)
+      expect(daemonStatus.safeParse({ ...status, agentHook: { ...event, at: 5 } }).success).toBe(reason !== 'exited')
+    }
+  }
 })
 
 test('an embedded build id reads no file; from source the id hashes the non-test sources', () => {
@@ -75,4 +87,14 @@ test('an embedded build id reads no file; from source the id hashes the non-test
   expect(buildId(null, dir)).toBe(first)
   writeFileSync(join(dir, 'main.ts'), 'run(again)')
   expect(buildId(null, dir)).not.toBe(first)
+
+  const agents = mkdtempSync(join(tmpdir(), 'orch-agent-build-'))
+  dirs.push(agents)
+  mkdirSync(join(agents, 'codex'), { recursive: true })
+  writeFileSync(join(agents, 'codex', 'tracking.ts'), 'track()')
+  const nested = buildId(null, dir, [agents])
+  writeFileSync(join(agents, 'codex', 'tracking.test.ts'), 'test()')
+  expect(buildId(null, dir, [agents])).toBe(nested)
+  writeFileSync(join(agents, 'codex', 'tracking.ts'), 'track(again)')
+  expect(buildId(null, dir, [agents])).not.toBe(nested)
 })
