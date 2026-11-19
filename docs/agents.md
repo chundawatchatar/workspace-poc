@@ -234,9 +234,14 @@ last answer. `-c notify=...` replaces the configured value, so a plain flag woul
   If a later Codex applies `-c` on the server, tracking stops and the rule is to add `--no-daemon`, guarded by
   `supports_flag`. The token never goes on a command line or in a file to get round it. A run passing `--remote` passes
   through, because its `notify` runs elsewhere.
-- Codex gets no hook `working` or `waiting`. Those come from the baseline only, and Codex sends no OSC 9;4, so a turn
-  shows no `working` here. A later turn shows `idle`/`finished` until the next signal: `combine` trusts the baseline
-  during a turn, and Codex has no turn-start event in `notify`.
+- Codex gets no hook `working` or `waiting`, and sends no OSC 9;4, so `agentState` never says `working` during a
+  Codex turn: a later turn keeps the `idle`/`finished` of the one before, since `notify` has no turn-start event.
+  Codex's `working` comes only from the spinner at the start of its terminal title, which the page reads
+  (`titleSpins` in `packages/terminal-ui/src/lib/agentTitle.ts`, used by `agentStatus` and `agentCounts`). A spinning
+  title outranks a stale hook `idle`, but never a `waiting` or a `failed`, and the tab's tooltip then reads `Codex
+  working (title)`, without the reason or source of the state it overrode. It counts only for an identified agent,
+  with tracking on, in a live session that wasn't interrupted, so a shell left with an exited agent's last title never
+  shows `working`. Its `waiting` comes from the approval bell, as above.
 - **An early `finished`.** The title Codex generates for a new session is a turn of its own, which fires `notify` too,
   so the first prompt reports `finished` twice and the first of them can come while the real turn is still running.
   The hook can't tell them apart without reading the JSON, which it never does. A bell still wins (`combine` prefers a
@@ -533,7 +538,8 @@ host warns about the running daemon as usual.
   `packages/terminal/src/agent-state.ts`, with tests for the precedence rules. The host keeps the previous result to
   keep `since` stable while the state doesn't change, and `ProgressWatch`
   (`apps/host/src/modules/terminals/agent-interrupt.service.ts`) runs the timer for the interrupt rule.
-- **The web** only renders `agentState`; it derives nothing except the sidebar counts.
+- **The web** renders `agentState`, and derives only the sidebar counts and a `working` from an agent's spinning
+  title (see [Codex](#codex)).
 
 Where the code lives:
 
@@ -584,7 +590,9 @@ tab mark, and they don't spin. The words are in the accessible text and the tool
   terminal surface in every pane of the workspace, including tabs that are not active, counted once each.
 - A session counts in the bucket of its `agentState.state`. Sessions are excluded when `agentState` is null: no agent
   in the foreground, tracking off, interrupted, or the shell not alive. A hook `idle` whose program reports an error
-  counts as idle, though its row shows failed: there is no failed bucket.
+  counts as idle, though its row shows failed: there is no failed bucket. A terminal whose agent's spinner leads its
+  title counts as working unless its state is `waiting` or its program reports an error, with the same conditions as
+  the tab (see [Codex](#codex)).
 - Zero counts are hidden, and the icons appear in the order waiting, working, idle, since waiting needs the user. The
   accessible text reads working, waiting, idle. The waiting count uses the same accent as attention. A workspace with no counted agents shows nothing new.
 - `working` and `waiting` count the same way from both sources, but `idle` counts only from hooks. Terminal signals
@@ -695,9 +703,9 @@ This merge lives in `AttentionSlot` (`packages/terminal/src/attention.ts`), whic
   only in a shell started after that answer, since a running shell gets no token (see [Trust](#trust-ag-4)).
 - **No idle without hooks.** Terminal signals derive `idle` even mid-turn, so without hooks there is no idle mark and
   no idle count, and no new notification beyond the bell and OSC 9 attention.
-- **Codex reports only finished turns.** Its `notify` has no turn start and Codex sends no OSC 9;4, so a Codex tab shows
-  no `working`, and its `waiting` comes from the approval bell (see [Codex](#codex)). An approval bell within 2 seconds
-  of a "Codex finished" notification is dropped.
+- **Codex reports only finished turns.** Its `notify` has no turn start and Codex sends no OSC 9;4, so a Codex tab's
+  `working` comes only from the spinner in its terminal title, and its `waiting` from the approval bell (see
+  [Codex](#codex)). An approval bell within 2 seconds of a "Codex finished" notification is dropped.
 - **The first finished turn of a Codex run raises no notification,** because it can be the title turn's early report.
   For a resumed run that has no title turn, the real first turn goes unannounced.
 - **The shim can be missed:** an absolute path, an alias or function, `npx`/`bunx`, a startup file that reorders `PATH`
