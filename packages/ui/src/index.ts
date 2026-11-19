@@ -1,3 +1,4 @@
+export * from './AgentIcon'
 export * from './BrandMark'
 export * from './Button'
 export * from './DataTable'

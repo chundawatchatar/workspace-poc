@@ -1,5 +1,6 @@
 import {
   AGENT_LABELS,
+  type AgentKind,
   type LayoutNode,
   listPanes,
   type PaneNode,
@@ -8,7 +9,7 @@ import {
   type SurfaceKind,
   type Workspace,
 } from '@orch/shared'
-import { ContextMenu, ContextMenuPopup, ContextMenuTrigger, MenuItem, TerminalInterrupted } from '@orch/ui'
+import { AgentIcon, ContextMenu, ContextMenuPopup, ContextMenuTrigger, MenuItem, TerminalInterrupted } from '@orch/ui'
 import {
   Columns2,
   Copy,
@@ -141,9 +142,19 @@ const KIND_ICON: Record<SurfaceKind, ReactNode> = {
   issues: <KanbanSquare size={13} />,
 }
 
-/** A tab's icon: the status of its agent or program, or else its kind. */
-export function SurfaceIcon({ kind, status }: { kind: SurfaceKind; status: AgentStatus | null }) {
-  return status ? <AgentStateMark status={status} size={13} /> : KIND_ICON[kind]
+/**
+ * A tab's icon: which agent runs in it, or else the status of its program, or
+ * else its kind. An agent's status draws after the title instead, so the icon
+ * stays the same through every state.
+ */
+export function SurfaceIcon(props: { kind: SurfaceKind; agent: AgentKind | null; status: AgentStatus | null }) {
+  if (props.agent) return <AgentIcon kind={props.agent} size={13} />
+  return props.status ? <AgentStateMark status={props.status} size={13} /> : KIND_ICON[props.kind]
+}
+
+/** The tooltip of a tab: its title, then its status, or the agent's name when the agent has no known state. */
+function tabTooltip(title: string, agent: AgentKind | null, status: AgentStatus | null) {
+  return agent && !status ? `${title}\n${AGENT_LABELS[agent]}` : withStatus(title, status)
 }
 
 /**
@@ -298,6 +309,7 @@ function PaneView({ workspace, pane, split }: { workspace: Workspace; pane: Pane
                   surface.kind === 'terminal' ? tidyTitle(sessions[surface.id]?.title ?? surface.title) : surface.title
                 }
                 attention={Boolean(sessions[surface.id]?.attention)}
+                agent={sessions[surface.id]?.agent?.kind ?? null}
                 status={agentStatus(sessions[surface.id])}
                 tracking={sessions[surface.id]?.agentTracking}
               />
@@ -407,13 +419,15 @@ function Tab(props: {
   title: string
   paneFocused: boolean
   attention: boolean
+  /** The agent running in the terminal; null when none is identified. */
+  agent: AgentKind | null
   status: AgentStatus | null
   /** The terminal's per-session switch; undefined until the host reports the session. */
   tracking: boolean | undefined
   /** Shows where a dragged tab would be inserted relative to this one. */
   marker?: 'before' | 'after'
 }) {
-  const { workspace, pane, surface, title, paneFocused, attention, status, tracking, marker } = props
+  const { workspace, pane, surface, title, paneFocused, attention, agent, status, tracking, marker } = props
   const active = pane.activeSurfaceId === surface.id
   return (
     // Only terminals have a menu; other tabs keep the browser's.
@@ -432,7 +446,7 @@ function Tab(props: {
               dragSource = null
             }}
             onClick={() => selectSurface(workspace, pane.id, surface.id)}
-            title={withStatus(title, status)}
+            title={tabTooltip(title, agent, status)}
             className={`anim-fade group flex max-w-52 min-w-24 cursor-default items-center gap-1.5 border-r border-line px-2.5 text-xs select-none ${
               active ? `bg-panel ${paneFocused ? 'text-ink' : 'text-dim'}` : 'text-faint hover:text-dim'
             } ${
@@ -446,10 +460,16 @@ function Tab(props: {
         }
       >
         <span className={active && paneFocused ? 'text-accent' : ''}>
-          <SurfaceIcon kind={surface.kind} status={status} />
+          <SurfaceIcon kind={surface.kind} agent={agent} status={status} />
         </span>
         <span className="min-w-0 flex-1 truncate">{title}</span>
         {attention && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />}
+        {/* Kept at the mark's width with no state too, so a change of state never moves the title or Close. */}
+        {agent && (
+          <span data-slot="status" className="flex w-[13px] shrink-0 justify-center">
+            {status && <AgentStateMark status={status} size={13} />}
+          </span>
+        )}
         <button
           type="button"
           aria-label={`Close ${title}`}

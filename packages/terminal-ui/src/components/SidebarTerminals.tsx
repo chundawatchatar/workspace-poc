@@ -1,6 +1,7 @@
-import { AGENT_LABELS, listPanes, type SessionInfo, type Workspace } from '@orch/shared'
+import { AGENT_LABELS, type AgentKind, listPanes, type SessionInfo, type Workspace } from '@orch/shared'
+import { AgentIcon } from '@orch/ui'
 import { useEffect, useState } from 'react'
-import { agentStatus, sidebarSignal, withStatus } from '../lib/agentStatus'
+import { type AgentStatus, agentStatus, type SidebarSignal, sidebarSignal, withStatus } from '../lib/agentStatus'
 import { revealSurface } from '../lib/commands'
 import { shortPath } from '../lib/paths'
 import { useApp } from '../lib/store'
@@ -82,6 +83,9 @@ export function SidebarTerminals({ workspace, active }: { workspace: Workspace; 
     <ul className={`mt-1.5 space-y-px border-l pl-1.5 ${active ? 'border-on-accent/30' : 'border-line'}`}>
       {ids.map((id) => {
         const session = sessions[id] as SessionInfo | undefined
+        const agent = session?.agent?.kind
+        const status = agentStatus(session)
+        const marks = { signal: sidebarSignal(session, status), status, active }
         const running = session?.process
         const interrupted = session?.interrupted
         const name = interrupted
@@ -91,16 +95,17 @@ export function SidebarTerminals({ workspace, active }: { workspace: Workspace; 
           <li key={id}>
             <button
               type="button"
-              title={withStatus(running?.command ?? tidyTitle(session?.title ?? 'Terminal'), agentStatus(session))}
+              title={withStatus(running?.command ?? tidyTitle(session?.title ?? 'Terminal'), status)}
               className={`flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left text-[11px] ${
                 active ? 'hover:bg-on-accent/15' : 'hover:bg-line'
               }`}
               onClick={(event) => open(event, id)}
             >
-              <span className="flex w-3 shrink-0 justify-center">
-                <StatusMark session={session} active={active} />
-              </span>
-              <span className={`shrink-0 font-medium ${running ? '' : active ? 'text-on-accent/60' : 'text-dim'}`}>
+              <RowStart agent={agent} {...marks} />
+              {/* The path gives way first, then the name truncates, so the marks at the end stay in the row. */}
+              <span
+                className={`min-w-0 truncate font-medium ${running ? '' : active ? 'text-on-accent/60' : 'text-dim'}`}
+              >
                 {name}
               </span>
               <span className={`min-w-0 flex-1 truncate ${active ? 'text-on-accent/60' : 'text-faint'}`}>
@@ -111,6 +116,7 @@ export function SidebarTerminals({ workspace, active }: { workspace: Workspace; 
                   {formatElapsed(now - running.startedAt)}
                 </span>
               )}
+              {agent && <AgentRowEnd {...marks} />}
             </button>
           </li>
         )
@@ -119,16 +125,61 @@ export function SidebarTerminals({ workspace, active }: { workspace: Workspace; 
   )
 }
 
-function StatusMark({ session, active }: { session: SessionInfo | undefined; active: boolean }) {
-  const status = agentStatus(session)
-  const signal = sidebarSignal(session, status)
+/** What a row's marks are drawn from. `active` is true on the selected workspace's tile. */
+interface SignalProps {
+  signal: SidebarSignal
+  status: AgentStatus | null
+  active: boolean
+}
+
+/** The start of a row: which agent runs in it, or else the signal `sidebarSignal` chose. */
+function RowStart(props: { agent: AgentKind | undefined } & SignalProps) {
+  const { agent, ...marks } = props
+  return (
+    <span className="flex w-3 shrink-0 justify-center">
+      {agent ? <AgentIcon kind={agent} size={10} /> : <SignalMark {...marks} />}
+    </span>
+  )
+}
+
+/**
+ * The end of an agent's row: the attention dot when `sidebarSignal` chose it,
+ * then the status slot, which keeps its width when empty so a change of state
+ * never moves the row. Attention outranks only an idle mark, which still shows.
+ */
+function AgentRowEnd(props: SignalProps) {
+  const { signal, status, active } = props
+  const attention = signal === 'attention'
+  return (
+    <>
+      {attention && <SignalMark signal="attention" status={null} active={active} />}
+      <span data-slot="status" className="flex w-3 shrink-0 justify-center">
+        {attention ? (
+          status && <AgentStateMark status={status} size={10} onAccent={active} />
+        ) : (
+          <SignalMark signal={signal} status={status} active={active} />
+        )}
+      </span>
+    </>
+  )
+}
+
+/**
+ * Draws the signal `sidebarSignal` chose for a row. A row with no agent shows
+ * it in its leading slot, and an agent's row at its end.
+ */
+function SignalMark(props: SignalProps) {
+  const { signal, status, active } = props
   if (status && signal === 'status') return <AgentStateMark status={status} size={10} onAccent={active} />
-  const dot = 'h-1.5 w-1.5 rounded-full'
-  if (signal === 'attention') return <span className={`${dot} ${active ? 'bg-on-accent' : 'bg-accent'}`} />
+  const dot = 'h-1.5 w-1.5 shrink-0 rounded-full'
+  if (signal === 'attention')
+    return <span data-signal="attention" className={`${dot} ${active ? 'bg-on-accent' : 'bg-accent'}`} />
   // On the selected tile's accent background, an outline keeps the green and red dots visible.
   const outline = active ? 'ring-1 ring-on-accent' : ''
-  if (signal === 'interrupted') return <span className={`${dot} bg-warn ${outline}`} title="Interrupted" />
-  if (signal === 'running') return <span className={`${dot} bg-good ${outline}`} />
-  if (signal === 'exited') return <span className={`${dot} ${active ? 'bg-bad' : 'bg-bad/70'} ${outline}`} />
-  return <span className={`${dot} border ${active ? 'border-on-accent/60' : 'border-faint'}`} />
+  if (signal === 'interrupted')
+    return <span data-signal="interrupted" className={`${dot} bg-warn ${outline}`} title="Interrupted" />
+  if (signal === 'running') return <span data-signal="running" className={`${dot} bg-good ${outline}`} />
+  if (signal === 'exited')
+    return <span data-signal="exited" className={`${dot} ${active ? 'bg-bad' : 'bg-bad/70'} ${outline}`} />
+  return <span data-signal="shell" className={`${dot} border ${active ? 'border-on-accent/60' : 'border-faint'}`} />
 }
