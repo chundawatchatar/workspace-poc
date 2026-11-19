@@ -1,17 +1,19 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import {
   type ClientEvent,
+  type LayoutNode,
   listPanes,
   makePane,
   makeSurface,
   makeWorkspace,
+  newId,
   routes,
   type ServerEvent,
   type SessionInfo,
 } from '@orch/shared'
 import { Toaster } from '@orch/ui'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { connect, getSnapshot, useApp } from '../lib/store'
 import type { HostTransport } from '../transport'
@@ -23,12 +25,24 @@ afterEach(() => disconnect())
 
 /**
  * Connects the store through a fake transport and says `hello` with one pane holding a terminal, whose shell reports
- * a folder and agent tracking, and a `pulls` tab. Returns what the page sent on the events socket.
+ * a folder and agent tracking, and a `pulls` tab. With `split`, a second pane holding an `issues` tab sits to its
+ * right. Returns what the page sent on the events socket.
  */
-function setup() {
+function setup({ split = false } = {}) {
   const terminal = makeSurface('terminal')
   const pulls = makeSurface('pulls')
-  const workspace = makeWorkspace('main', '/home/me/repo', makePane([terminal, pulls]))
+  const first = makePane([terminal, pulls])
+  const root: LayoutNode = split
+    ? {
+        type: 'split',
+        id: newId('split'),
+        direction: 'row',
+        ratio: 0.5,
+        a: first,
+        b: makePane([makeSurface('issues')]),
+      }
+    : first
+  const workspace = makeWorkspace('main', '/home/me/repo', root)
   const session: SessionInfo = {
     id: terminal.id,
     title: 'me@box:/home/me/repo/src',
@@ -123,5 +137,47 @@ describe('LayoutView tab bar', () => {
     document.removeEventListener('contextmenu', record)
     expect(prevented).toEqual([false])
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+})
+
+/** The pane holding the tab with this title. */
+const paneOf = (tabTitle: string) => screen.getByTitle(tabTitle).closest('[data-pane-id]') as HTMLElement
+const framedPanes = () => [...document.querySelectorAll('[data-pane-id][data-focus-frame]')]
+
+describe('LayoutView focus frame', () => {
+  test('in a split workspace only the focused pane is framed, and the frame follows focus', async () => {
+    const user = userEvent.setup()
+    setup({ split: true })
+    const first = paneOf('Pull requests')
+    const second = paneOf('Issues')
+    expect(framedPanes()).toEqual([first])
+
+    await user.click(screen.getByTitle('Issues'))
+
+    expect(framedPanes()).toEqual([second])
+  })
+
+  test('a full-screen pane drops the frame, and leaving full screen puts it back', async () => {
+    const user = userEvent.setup()
+    setup({ split: true })
+    const first = paneOf('Pull requests')
+
+    await user.click(within(first).getByRole('button', { name: 'Full screen' }))
+    expect(within(first).getByRole('button', { name: 'Exit full screen' })).toBeInTheDocument()
+    expect(framedPanes()).toEqual([])
+
+    await user.click(within(first).getByRole('button', { name: 'Exit full screen' }))
+    expect(framedPanes()).toEqual([first])
+  })
+
+  test('closing the other pane leaves a lone pane with no frame', async () => {
+    const user = userEvent.setup()
+    setup({ split: true })
+
+    await user.click(screen.getByRole('button', { name: 'Close Issues' }))
+
+    expect(screen.queryByTitle('Issues')).not.toBeInTheDocument()
+    expect(paneOf('Pull requests')).toBeInTheDocument()
+    expect(framedPanes()).toEqual([])
   })
 })

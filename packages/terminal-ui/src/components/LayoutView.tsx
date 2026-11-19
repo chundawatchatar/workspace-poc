@@ -1,6 +1,7 @@
 import {
   AGENT_LABELS,
   type LayoutNode,
+  listPanes,
   type PaneNode,
   type SplitNode,
   type Surface,
@@ -59,12 +60,19 @@ const DRAG_TYPE = 'application/x-poc-surface'
 let dragSource: { surfaceId: string; paneId: string } | null = null
 
 export function LayoutView({ workspace }: { workspace: Workspace }) {
-  return <NodeView workspace={workspace} node={workspace.root} />
+  // A lone pane fills the page with no frame, since there is no other pane the typing could go to.
+  if (listPanes(workspace.root).length === 1)
+    return <NodeView workspace={workspace} node={workspace.root} split={false} />
+  return (
+    <div className="h-full w-full bg-bg p-1">
+      <NodeView workspace={workspace} node={workspace.root} split />
+    </div>
+  )
 }
 
-function NodeView({ workspace, node }: { workspace: Workspace; node: LayoutNode }) {
+function NodeView({ workspace, node, split }: { workspace: Workspace; node: LayoutNode; split: boolean }) {
   return node.type === 'pane' ? (
-    <PaneView workspace={workspace} pane={node} />
+    <PaneView workspace={workspace} pane={node} split={split} />
   ) : (
     <SplitView workspace={workspace} split={node} />
   )
@@ -85,12 +93,17 @@ function SplitView({ workspace, split }: { workspace: Workspace; split: SplitNod
   return (
     <div ref={container} className={`flex h-full w-full min-h-0 min-w-0 ${row ? 'flex-row' : 'flex-col'}`}>
       <div className="min-h-0 min-w-0" style={{ flex: `${split.ratio} 1 0%` }}>
-        <NodeView workspace={workspace} node={split.a} />
+        <NodeView workspace={workspace} node={split.a} split />
       </div>
       <div
         role="separator"
         aria-orientation={row ? 'vertical' : 'horizontal'}
-        className={`group relative z-10 shrink-0 bg-line ${row ? 'w-px cursor-col-resize' : 'h-px cursor-row-resize'}`}
+        // The pseudo-element reaches 2px into each pane, so the 4px gap is easier to grab.
+        className={`group relative z-10 shrink-0 before:absolute ${
+          row
+            ? 'w-1 cursor-col-resize before:inset-y-0 before:-inset-x-0.5'
+            : 'h-1 cursor-row-resize before:inset-x-0 before:-inset-y-0.5'
+        }`}
         onPointerDown={(event) => event.currentTarget.setPointerCapture(event.pointerId)}
         onPointerMove={onPointerMove}
         onPointerUp={(event) => {
@@ -98,14 +111,10 @@ function SplitView({ workspace, split }: { workspace: Workspace; split: SplitNod
           pushState()
         }}
       >
-        <div
-          className={`absolute bg-accent opacity-0 transition-opacity group-hover:opacity-70 ${
-            row ? '-left-[2px] top-0 h-full w-[5px]' : '-top-[2px] left-0 h-[5px] w-full'
-          }`}
-        />
+        <div className="absolute inset-0 rounded-full bg-accent opacity-0 transition-opacity group-hover:opacity-70" />
       </div>
       <div className="min-h-0 min-w-0" style={{ flex: `${1 - split.ratio} 1 0%` }}>
-        <NodeView workspace={workspace} node={split.b} />
+        <NodeView workspace={workspace} node={split.b} split />
       </div>
     </div>
   )
@@ -129,7 +138,20 @@ export function SurfaceIcon({ kind, status }: { kind: SurfaceKind; status: Agent
   return status ? <AgentStateMark status={status} size={13} /> : KIND_ICON[kind]
 }
 
-function PaneView({ workspace, pane }: { workspace: Workspace; pane: PaneNode }) {
+/**
+ * The edge of a pane in a split workspace, with the accent on the focused one. Every pane keeps the same border and
+ * only its colour follows focus, so moving focus never shifts the layout. A lone or full-screen pane has none.
+ */
+function paneFrame(framed: boolean, focused: boolean) {
+  if (!framed) return { className: '', focusFrame: false }
+  return {
+    className: `overflow-hidden rounded-md border ${focused ? 'border-accent' : 'border-line'}`,
+    focusFrame: focused,
+  }
+}
+
+/** A pane of the layout. `split` is true when the workspace has more than one pane, so each pane gets a frame. */
+function PaneView({ workspace, pane, split }: { workspace: Workspace; pane: PaneNode; split: boolean }) {
   const focused = useApp((s) => focusedPaneId(workspace, s.focus) === pane.id)
   const sessions = useApp((s) => s.sessions)
   const zoomed = useApp((s) => zoomedPaneId(workspace, s.zoom) === pane.id)
@@ -184,6 +206,7 @@ function PaneView({ workspace, pane }: { workspace: Workspace; pane: PaneNode })
       pendingAttention(w, sessions).some((session) => !pane.surfaces.some((s) => s.id === session.id)),
     )
   const activeAttention = sessions[pane.activeSurfaceId]?.attention ?? null
+  const frame = paneFrame(split && !zoomed, focused)
 
   // Looking at a terminal counts as having seen its notification.
   useEffect(() => {
@@ -199,7 +222,8 @@ function PaneView({ workspace, pane }: { workspace: Workspace; pane: PaneNode })
   return (
     <div
       data-pane-id={pane.id}
-      className={`flex h-full w-full min-h-0 min-w-0 flex-col bg-panel ${zoomed ? 'fixed inset-0 z-40' : 'relative'} ${
+      data-focus-frame={frame.focusFrame ? '' : undefined}
+      className={`flex h-full w-full min-h-0 min-w-0 flex-col bg-panel ${zoomed ? 'fixed inset-0 z-40' : 'relative'} ${frame.className} ${
         dropTarget ? 'outline outline-2 -outline-offset-2 outline-accent/60' : ''
       }`}
       onPointerDownCapture={() => setFocus(workspace.id, pane.id)}
@@ -344,7 +368,9 @@ function PaneView({ workspace, pane }: { workspace: Workspace; pane: PaneNode })
       </div>
 
       {zoomed && <div className="zoom-frame anim-fade pointer-events-none absolute inset-0 z-20" />}
-      {activeAttention && <div className="attention-ring pointer-events-none absolute inset-0 z-20" />}
+      {activeAttention && (
+        <div className="attention-ring pointer-events-none absolute inset-0 z-20 rounded-[inherit]" />
+      )}
     </div>
   )
 }
