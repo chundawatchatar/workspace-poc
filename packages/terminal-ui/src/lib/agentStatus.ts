@@ -2,10 +2,12 @@ import {
   AGENT_LABELS,
   type AgentReason,
   type AgentState,
+  type AgentStateName,
   listPanes,
   type SessionInfo,
   type Workspace,
 } from '@orch/shared'
+import { titleSpins } from './agentTitle'
 
 export type AgentStatusKind = 'working' | 'waiting' | 'idle' | 'failed'
 
@@ -19,7 +21,10 @@ export interface AgentStatus {
 }
 
 /** The session fields the status comes from. A host older than `agentState` leaves it out. */
-export type AgentStatusSource = Pick<SessionInfo, 'progress' | 'agent'> & { agentState?: AgentState | null }
+export type AgentStatusSource = Pick<
+  SessionInfo,
+  'progress' | 'agent' | 'title' | 'alive' | 'interrupted' | 'agentTracking'
+> & { agentState?: AgentState | null }
 
 const STATE_WORDS: Record<AgentStatusKind, string> = {
   working: 'working',
@@ -48,24 +53,40 @@ const SOURCE_WORDS: Record<AgentState['source'], string> = {
   signals: 'terminal signals',
 }
 
-function statusKind(session: AgentStatusSource): AgentStatusKind | null {
+/**
+ * True when the agent's own spinner leads the title, as Claude Code and Codex
+ * draw it during a turn. It counts only for an identified agent with tracking
+ * on, in a live session that wasn't interrupted, so a shell left with an exited
+ * agent's last title, or a terminal the user switched off, never shows working.
+ */
+function titleWorking(session: AgentStatusSource) {
+  if (!session.agent || session.agentTracking === false || !session.alive || session.interrupted) return false
+  return titleSpins(session.title)
+}
+
+/** The kind a session shows. `title` is `working` decided by a spinning title alone. */
+function statusKind(session: AgentStatusSource): AgentStatusKind | 'title' | null {
   const state = session.agentState?.state
   if (state === 'working' || state === 'waiting') return state
   // Hooks can replace the reason with `finished` while the program still reports the error, so this reads `progress`.
   if (session.progress === 'error') return 'failed'
-  // Terminal signals report `idle` for any agent that sends none, even mid-turn, so only hooks can show it.
+  // Codex's `notify` reports no turn start, so its spinner outranks the `idle` a hook left from the last turn.
+  if (titleWorking(session)) return 'title'
   if (state === 'idle' && session.agentState?.source === 'hooks') return 'idle'
   return session.progress === 'busy' ? 'working' : null
 }
 
 /** Decides what a terminal shows about its agent or program. Null means it shows nothing. */
 export function agentStatus(session: AgentStatusSource | undefined): AgentStatus | null {
-  const kind = session && statusKind(session)
-  if (!kind) return null
+  const decided = session && statusKind(session)
+  if (!decided) return null
+  const kind = decided === 'title' ? 'working' : decided
   const words = STATE_WORDS[kind]
   const label = session.agent
     ? `${AGENT_LABELS[session.agent.kind]} ${words}`
     : `${words[0].toUpperCase()}${words.slice(1)}`
+  // The title overrode the state, so the state's reason and source would describe something else.
+  if (decided === 'title') return { kind, label, tooltip: `${label} (title)` }
   const state = session.agentState
   if (!state) return { kind, label, tooltip: label }
   const reason = REASON_WORDS[state.reason]
@@ -99,19 +120,28 @@ export interface AgentStateCounts {
   idle: number
 }
 
+/** The state a terminal counts under, or null when it isn't counted. */
+function countedState(session: SessionInfo | undefined): AgentStateName | null {
+  if (!session) return null
+  const state = session.agentState
+  if (state?.state === 'working' || state?.state === 'waiting') return state.state
+  if (session.progress !== 'error' && titleWorking(session)) return 'working'
+  return state?.state === 'idle' && state.source === 'hooks' ? 'idle' : null
+}
+
 /**
  * Counts the agents in every terminal of a workspace, in active tabs or not.
- * It reads `agentState`, not `agentStatus`, since progress alone can come from
- * any program. An idle from terminal signals is left out, as `statusKind` does.
+ * It reads `agentState` and the agent's spinning title, ranked as `statusKind`
+ * ranks them, but not progress alone, which can come from any program. An idle
+ * from terminal signals is left out, as `statusKind` does.
  */
 export function agentCounts(workspace: Workspace, sessions: Record<string, SessionInfo>): AgentStateCounts {
   const counts: AgentStateCounts = { waiting: 0, working: 0, idle: 0 }
   const surfaces = listPanes(workspace.root).flatMap((pane) => pane.surfaces)
   for (const surface of surfaces) {
     if (surface.kind !== 'terminal') continue
-    const state = sessions[surface.id]?.agentState
-    if (!state || (state.state === 'idle' && state.source !== 'hooks')) continue
-    counts[state.state] += 1
+    const state = countedState(sessions[surface.id])
+    if (state) counts[state] += 1
   }
   return counts
 }
