@@ -5,8 +5,8 @@ import { AGENT_ICONS, AgentIcon } from './AgentIcon'
 
 const kinds = Object.keys(AGENT_LABELS) as AgentKind[]
 
-/** The one kind whose vendor forbids recolouring, with the colours of its published file. */
-const FIXED_COLOURS: Partial<Record<AgentKind, string[]>> = { commandcode: ['#000', '#fff'] }
+/** The kinds whose vendor forbids recolouring, with the colours of their published files. */
+const FIXED_COLOURS: Partial<Record<AgentKind, string[]>> = { claude: ['#D97757'], commandcode: ['#000', '#fff'] }
 
 function renderIcon(kind: AgentKind) {
   const { container, unmount } = render(<AgentIcon kind={kind} size={10} />)
@@ -26,17 +26,12 @@ describe('AGENT_ICONS', () => {
     for (const label of labels) expect(label).toMatch(/^.{1,2}$/u)
   })
 
-  test('only kinds whose vendor permits it draw an official mark, with its source and terms', () => {
-    const marked = kinds.filter((kind) => AGENT_ICONS[kind].mark)
-    expect(marked.sort()).toEqual(['commandcode', 'cursor', 'pi'])
-    for (const kind of marked) {
-      expect(AGENT_ICONS[kind].mark?.source).toMatch(/^https:\/\/\S+$/u)
-      expect(AGENT_ICONS[kind].mark?.terms).toMatch(/^https:\/\/\S+$/u)
-    }
-    for (const kind of ['claude', 'codex', 'opencode'] as const) {
-      const { svg, unmount } = renderIcon(kind)
-      expect(svg).toHaveTextContent(AGENT_ICONS[kind].label)
-      unmount()
+  test('every kind draws its official mark, recording where it comes from and the terms that apply', () => {
+    for (const kind of kinds) {
+      const mark = AGENT_ICONS[kind].mark
+      expect(mark?.source).toMatch(/^https:\/\/\S+$/u)
+      expect(mark?.terms).toMatch(/^https:\/\/\S+$/u)
+      expect(mark?.termsSummary).not.toBe('')
     }
   })
 })
