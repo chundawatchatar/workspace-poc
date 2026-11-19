@@ -57,6 +57,14 @@ mid-turn: the product only knows the agent is there. So the UI shows the `idle` 
 A baseline `idle` shows no agent mark: the tab and sidebar row fall back to their progress and other signals, except
 `progress` `error`, which still shows failed. `working` and `waiting` show from either source.
 
+A tab or sidebar row whose terminal has an agent (`SessionInfo.agent` set) shows which agent it is with the agent's
+identity icon where the terminal icon would be (`AgentIcon` and `AGENT_ICONS` in `packages/ui`, a monogram such as
+`CC` or `CX` in a rounded square), and the state mark after it, at the end of the tab or row. The mark is the same for
+every agent; only the icon differs. The mark's slot keeps its width when there is no state, so a change of state
+moves nothing. In a sidebar row the attention dot sits just before that slot, and with no state the slot holds the
+row's running, exited or shell dot. A terminal with no agent, including an interrupted one, keeps its terminal icon
+and shows its mark or dot in front, as before.
+
 ### Precise: the agent's own hooks
 
 Claude Code hooks and the Codex `notify` program (see [Attaching hooks](#attaching-hooks-per-session-ag-4)) report
