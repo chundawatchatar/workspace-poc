@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { type DevicesResponse, makePane, makeSurface, makeWorkspace, routes, type ServerEvent } from '@orch/shared'
+import {
+  type DevicesResponse,
+  makePane,
+  makeSurface,
+  makeWorkspace,
+  routes,
+  type ServerEvent,
+  type SessionInfo,
+} from '@orch/shared'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -28,11 +36,32 @@ const waiting = {
 }
 
 /**
- * Renders a workspace page whose host has one browser waiting for approval and no agent asking for attention.
- * Returns the paths it requested and a setter for the host's devices answer.
+ * Renders a workspace page whose host has one browser waiting for approval. With `attentionTitle`, a background
+ * terminal of that title asks for attention too; without it, no agent does. Returns the paths it requested and a
+ * setter for the host's devices answer.
  */
-function setup({ remoteAccessSetting }: { remoteAccessSetting: boolean }) {
-  const workspace = makeWorkspace('main', '/home/me/repo', makePane([makeSurface('pulls')]))
+function setup({ remoteAccessSetting, attentionTitle }: { remoteAccessSetting: boolean; attentionTitle?: string }) {
+  const terminal = makeSurface('terminal')
+  const surfaces = attentionTitle === undefined ? [makeSurface('pulls')] : [makeSurface('pulls'), terminal]
+  const workspace = makeWorkspace('main', '/home/me/repo', makePane(surfaces))
+  const sessions: SessionInfo[] =
+    attentionTitle === undefined
+      ? []
+      : [
+          {
+            id: terminal.id,
+            title: attentionTitle,
+            alive: true,
+            attention: { at: 1, message: 'Codex finished', from: 'agent' },
+            process: null,
+            cwd: '/home/me/repo',
+            progress: null,
+            agent: null,
+            interrupted: null,
+            agentState: null,
+            agentTracking: true,
+          },
+        ]
   let devices: DevicesResponse = { pending: [waiting], approved: [] }
   const requested: string[] = []
   const socket = { readyState: 1, send: () => {}, close: () => {} } as unknown as WebSocket
@@ -49,7 +78,7 @@ function setup({ remoteAccessSetting }: { remoteAccessSetting: boolean }) {
     type: 'hello',
     clientId: 'c1',
     state: { rev: 1, workspaces: [workspace] },
-    sessions: [],
+    sessions,
     info: { home: '/home/me', shell: '/bin/zsh', platform: 'darwin', projectRoot: '/home/me/repo' },
   }
   socket.onmessage?.({ data: JSON.stringify(hello) } as MessageEvent)
@@ -111,6 +140,15 @@ describe('Notifications', () => {
     expect(await screen.findByRole('button', { name: 'Notifications, 0 unread' })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Notifications, 0 unread' }))
     expect(screen.getByText('Nothing needs your attention.')).toBeInTheDocument()
+  })
+
+  test("an agent's notification names its terminal without the agent's title glyphs", async () => {
+    const user = userEvent.setup()
+    setup({ remoteAccessSetting: false, attentionTitle: '⠋ Fix login' })
+    await user.click(await screen.findByRole('button', { name: 'Notifications, 1 unread' }))
+    const item = screen.getByRole('button', { name: /Codex finished/ })
+    expect(item).toHaveTextContent('Codex finishedmain · Fix login')
+    expect(item).not.toHaveTextContent('⠋')
   })
 
   test('a page without the Remote access setting never asks the host for devices', async () => {

@@ -18,7 +18,7 @@ import userEvent from '@testing-library/user-event'
 import { connect, getSnapshot, useApp } from '../lib/store'
 import type { HostTransport } from '../transport'
 import { TransportProvider } from '../transportContext'
-import { LayoutView } from './LayoutView'
+import { LayoutView, tidyTitle } from './LayoutView'
 
 let disconnect = () => {}
 afterEach(() => disconnect())
@@ -179,5 +179,31 @@ describe('LayoutView focus frame', () => {
     expect(screen.queryByTitle('Issues')).not.toBeInTheDocument()
     expect(paneOf('Pull requests')).toBeInTheDocument()
     expect(framedPanes()).toEqual([])
+  })
+})
+
+describe('tidyTitle', () => {
+  test.each([
+    ['⠋ Fix login', 'Fix login'],
+    ['✳ Fix login ●', 'Fix login'],
+    ['  ◐  Fix login ⏺ ', 'Fix login'],
+    ['repo · main', 'repo · main'],
+    ['⠋', 'Terminal'],
+    ['✳ ●', 'Terminal'],
+    ['', 'Terminal'],
+    ['\u2800 notes', '\u2800 notes'],
+    ['me@box:/a/b/repo', 'repo'],
+    ['⠋ me@box:/a/b/repo', 'repo'],
+  ])('shows %j as %j', (title, shown) => {
+    expect(tidyTitle(title)).toBe(shown)
+  })
+
+  test('takes a long run of glyphs in linear time', () => {
+    const inside = `a${'●'.repeat(5000)}b`
+    const started = performance.now()
+    expect(tidyTitle(inside)).toBe(inside)
+    expect(tidyTitle('⠋●✳'.repeat(5000))).toBe('Terminal')
+    expect(tidyTitle(`${'●'.repeat(5000)}me@box:/a/b/repo${' ⠋'.repeat(5000)}`)).toBe('repo')
+    expect(performance.now() - started).toBeLessThan(100)
   })
 })

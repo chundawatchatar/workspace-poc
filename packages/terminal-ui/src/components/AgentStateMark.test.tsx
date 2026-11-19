@@ -8,7 +8,15 @@ const agent = { kind: 'claude', sessionId: null, cwd: '/w' } as const
 
 function status(state: AgentStateName, progress: SessionInfo['progress'] = null) {
   const agentState = { state, reason: 'tool', source: 'hooks', since: 1 } as const
-  return agentStatus({ agentState, progress, agent }) as AgentStatus
+  return agentStatus({
+    agentState,
+    progress,
+    agent,
+    title: 'repo',
+    alive: true,
+    interrupted: null,
+    agentTracking: true,
+  }) as AgentStatus
 }
 
 describe('AgentStateMark', () => {
