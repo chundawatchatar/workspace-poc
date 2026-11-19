@@ -11,7 +11,7 @@ import {
   type ServerEvent,
   type SessionInfo,
 } from '@orch/shared'
-import { AGENT_ICONS, Toaster } from '@orch/ui'
+import { Toaster } from '@orch/ui'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -153,6 +153,7 @@ const state = (name: 'working' | 'waiting' | 'idle') =>
 const tabOf = (title: string) => screen.getByTitle(new RegExp(`^${title}( |$)`))
 /** A tab's leading icon slot, its first child. */
 const leadingOf = (tab: HTMLElement) => tab.firstElementChild as HTMLElement
+const agentIconOf = (element: HTMLElement) => element.querySelector('[data-agent]')
 const statusSlotOf = (tab: HTMLElement) => tab.querySelector('[data-slot="status"]')
 
 /** Waits until every terminal tab's view has loaded, which updates it outside of any user action. */
@@ -179,9 +180,9 @@ describe('LayoutView agent tabs', () => {
     const claudeTab = tabOf('Fix login')
     const codexTab = tabOf('Add tests')
 
-    expect(leadingOf(claudeTab)).toHaveTextContent(AGENT_ICONS.claude.label)
-    expect(leadingOf(codexTab)).toHaveTextContent(AGENT_ICONS.codex.label)
-    expect(AGENT_ICONS.claude.label).not.toBe(AGENT_ICONS.codex.label)
+    expect(agentIconOf(leadingOf(claudeTab))).toHaveAttribute('data-agent', 'claude')
+    expect(agentIconOf(leadingOf(codexTab))).toHaveAttribute('data-agent', 'codex')
+    expect(agentIconOf(claudeTab)?.innerHTML).not.toBe(agentIconOf(codexTab)?.innerHTML)
     expect(leadingOf(claudeTab).children).toHaveLength(1)
 
     const claudeMark = within(claudeTab).getByRole('img', { name: 'Claude Code working' })

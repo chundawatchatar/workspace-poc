@@ -58,14 +58,18 @@ A baseline `idle` shows no agent mark: the tab and sidebar row fall back to thei
 `progress` `error`, which still shows failed. `working` and `waiting` show from either source.
 
 A tab or sidebar row whose terminal has an agent (`SessionInfo.agent` set) shows which agent it is with the agent's
-identity icon where the terminal icon would be (`AgentIcon` and `AGENT_ICONS` in `packages/ui`, a monogram such as
-`CC` or `CX` in a rounded square), and the state mark after it, at the end of the tab or row. The mark is the same for
-every agent; only the icon differs. The `working` mark is a spinner drawn in the theme's orange `busy` colour, apart
-from the `waiting` hand's `warn`, and the `idle` mark is a quiet hollow circle in the theme's `faint` colour, drawn
-at the same size as the other marks. The mark's slot keeps its width when there is no state, so a change of state
-moves nothing. In a sidebar row the attention dot sits just before that slot, and with no state the slot holds the
-row's running, exited or shell dot. A terminal with no agent, including an interrupted one, keeps its terminal icon
-and shows its mark or dot in front, as before.
+identity icon where the terminal icon would be (`AgentIcon` and `AGENT_ICONS` in `packages/ui`), and the state mark
+after it, at the end of the tab or row. Every agent draws its vendor's official mark, copied unchanged from the vendor's
+own file: Cursor's cube, pi's badge, the OpenAI mark for Codex and the OpenCode logo in the text colour, the Claude
+spark in its own clay colour, and Command Code's logomark in its fixed black and white. Cursor, pi and Command Code
+permit this use on their brand pages; Claude Code, Codex and OpenCode show theirs by the product owner's decision.
+`AGENT_ICONS` records each mark's source and terms, and keeps a monogram (`CC`, `CX`, …) as the fallback for a kind
+without one. The state mark is the same for every agent; only the icon differs. The `working` mark is a spinner drawn in
+the theme's orange `busy` colour, apart from the `waiting` hand's `warn`, and the `idle` mark is a quiet hollow circle
+in the theme's `faint` colour, drawn at the same size as the other marks. The mark's slot keeps its width when there is
+no state, so a change of state moves nothing. In a sidebar row the attention dot sits just before that slot, and with no
+state the slot holds the row's running, exited or shell dot. A terminal with no agent, including an interrupted one,
+keeps its terminal icon and shows its mark or dot in front, as before.
 
 ### Precise: the agent's own hooks
 

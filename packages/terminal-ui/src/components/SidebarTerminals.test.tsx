@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { makePane, makeSurface, makeWorkspace, type ServerEvent, type SessionInfo, type Workspace } from '@orch/shared'
-import { AGENT_ICONS } from '@orch/ui'
 import { render, screen, within } from '@testing-library/react'
 import { connect, useApp } from '../lib/store'
 import { NavigationProvider } from '../navigation'
@@ -59,6 +58,7 @@ function StoreTerminals({ workspace, active }: { workspace: Workspace; active: b
 
 /** A row's leading icon slot, its first child. */
 const leadingOf = (row: HTMLElement) => row.firstElementChild as HTMLElement
+const agentIconOf = (element: HTMLElement) => element.querySelector('[data-agent]')
 const statusSlotOf = (row: HTMLElement) => row.querySelector('[data-slot="status"]')
 const signalIn = (element: Element | null, signal: string) => element?.querySelector(`[data-signal="${signal}"]`)
 
@@ -83,7 +83,7 @@ describe('SidebarTerminals', () => {
     ])
     const row = screen.getByRole('button', { name: /^claude/ })
     const slot = statusSlotOf(row)
-    expect(leadingOf(row)).toHaveTextContent(AGENT_ICONS.claude.label)
+    expect(agentIconOf(leadingOf(row))).toHaveAttribute('data-agent', 'claude')
     expect(slot).toContainElement(within(row).getByRole('img', { name: 'Claude Code idle' }))
     expectInOrder(
       leadingOf(row),
@@ -96,7 +96,7 @@ describe('SidebarTerminals', () => {
     expect(signalIn(slot, 'attention')).toBeNull()
 
     const codex = screen.getByRole('button', { name: /^codex/ })
-    expect(leadingOf(codex)).toHaveTextContent(AGENT_ICONS.codex.label)
+    expect(agentIconOf(leadingOf(codex))).toHaveAttribute('data-agent', 'codex')
     expect(signalIn(statusSlotOf(codex), 'running')).toBeInTheDocument()
     expect(signalIn(leadingOf(codex), 'running')).toBeNull()
   })
