@@ -58,9 +58,12 @@ A baseline `idle` shows no agent mark: the tab and sidebar row fall back to thei
 `progress` `error`, which still shows failed. `working` and `waiting` show from either source.
 
 A tab or sidebar row whose terminal has an agent (`SessionInfo.agent` set) shows which agent it is with the agent's
-identity icon where the terminal icon would be (`AgentIcon` and `AGENT_ICONS` in `packages/ui`, a monogram such as
-`CC` or `CX` in a rounded square), and the state mark after it, at the end of the tab or row. The mark is the same for
-every agent; only the icon differs. The `working` mark is a spinner drawn in the theme's orange `busy` colour, apart
+identity icon where the terminal icon would be (`AgentIcon` and `AGENT_ICONS` in `packages/ui`), and the state mark
+after it, at the end of the tab or row. Cursor Agent, pi and Command Code draw their vendor's official mark, whose
+brand page permits this use: Cursor's cube and pi's badge in the text colour, Command Code's logomark in its own fixed
+black and white. Claude Code (`CC`), Codex (`CX`) and OpenCode (`OC`) draw a monogram in a rounded square, since
+their vendors' terms don't permit their marks here; `AGENT_ICONS` records the source and terms for each kind. The
+state mark is the same for every agent; only the icon differs. The `working` mark is a spinner drawn in the theme's orange `busy` colour, apart
 from the `waiting` hand's `warn`, and the `idle` mark is a quiet hollow circle in the theme's `faint` colour, drawn
 at the same size as the other marks. The mark's slot keeps its width when there is no state, so a change of state
 moves nothing. In a sidebar row the attention dot sits just before that slot, and with no state the slot holds the
