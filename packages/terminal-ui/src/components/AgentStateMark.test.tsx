@@ -41,6 +41,31 @@ describe('AgentStateMark', () => {
     expect(shapes.size).toBe(4)
   })
 
+  test('idle is a faint hollow circle drawn at the size it is given', () => {
+    const idle = status('idle')
+    expect(idle.label).toBe('Claude Code idle')
+    for (const size of [10, 13]) {
+      const { unmount } = render(<AgentStateMark status={idle} size={size} />)
+      const mark = screen.getByRole('img', { name: idle.label })
+      expect(mark).toHaveClass('text-faint')
+      expect(mark).not.toHaveClass('animate-spin')
+      expect(mark).toHaveAttribute('fill', 'none')
+      expect(mark).toHaveAttribute('width', String(size))
+      expect(mark).toHaveAttribute('height', String(size))
+      expect(mark.querySelectorAll('circle')).toHaveLength(1)
+      expect(mark.querySelectorAll('path, line, rect')).toHaveLength(0)
+      unmount()
+    }
+  })
+
+  test('on the selected tile the idle mark takes the on-accent colour', () => {
+    const idle = status('idle')
+    render(<AgentStateMark status={idle} size={10} onAccent />)
+    const mark = screen.getByRole('img', { name: idle.label })
+    expect(mark).toHaveClass('text-on-accent')
+    expect(mark).not.toHaveClass('text-faint')
+  })
+
   test('on the selected tile the working mark still spins, in the on-accent colour', () => {
     const working = status('working')
     render(<AgentStateMark status={working} size={10} onAccent />)

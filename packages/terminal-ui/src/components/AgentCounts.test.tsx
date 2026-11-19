@@ -41,6 +41,20 @@ describe('AgentCounts', () => {
     expect(screen.getByTitle('3 agents idle')).toHaveTextContent(/^3$/)
   })
 
+  test('draws the idle count as a hollow circle in the dim colour, or on-accent on the selected tile', () => {
+    const counts = { waiting: 0, working: 0, idle: 3 }
+    const { rerender } = render(<AgentCounts counts={counts} active={false} />)
+    const idle = () => screen.getByTitle('3 agents idle').children[0] as HTMLElement
+    expect(idle()).toHaveTextContent(/^3$/)
+    expect(idle().querySelectorAll('svg circle')).toHaveLength(1)
+    expect(idle().querySelectorAll('svg path, svg line, svg rect')).toHaveLength(0)
+    expect(idle()).toHaveClass('text-dim')
+
+    rerender(<AgentCounts counts={counts} active />)
+    expect(idle()).toHaveClass('text-on-accent/70')
+    expect(idle()).not.toHaveClass('text-dim')
+  })
+
   test('draws the working count in orange, except on the selected tile', () => {
     const counts = { waiting: 1, working: 2, idle: 0 }
     const { rerender } = render(<AgentCounts counts={counts} active={false} />)
