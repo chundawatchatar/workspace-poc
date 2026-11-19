@@ -40,4 +40,19 @@ describe('AgentCounts', () => {
     rerender(<AgentCounts counts={{ waiting: 0, working: 0, idle: 3 }} active={false} />)
     expect(screen.getByTitle('3 agents idle')).toHaveTextContent(/^3$/)
   })
+
+  test('draws the working count in orange, except on the selected tile', () => {
+    const counts = { waiting: 1, working: 2, idle: 0 }
+    const { rerender } = render(<AgentCounts counts={counts} active={false} />)
+    const working = () => screen.getByTitle('2 agents working, 1 waiting').children[1] as HTMLElement
+    const waiting = () => screen.getByTitle('2 agents working, 1 waiting').children[0] as HTMLElement
+    expect(working()).toHaveTextContent('2')
+    expect(working()).toHaveClass('text-busy')
+    expect(waiting()).toHaveTextContent('1')
+    expect(waiting()).not.toHaveClass('text-busy')
+
+    rerender(<AgentCounts counts={counts} active />)
+    expect(working()).toHaveClass('text-on-accent/70')
+    expect(working()).not.toHaveClass('text-busy')
+  })
 })
