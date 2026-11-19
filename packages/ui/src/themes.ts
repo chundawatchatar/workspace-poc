@@ -21,6 +21,8 @@ export interface UiColors {
   good: string
   warn: string
   bad: string
+  /** The colour of an agent's working mark. */
+  busy: string
   /** The frame around a pane in full screen. */
   zoom: string
 }
@@ -89,6 +91,7 @@ export const THEMES: ThemeDef[] = [
       good: '#3fb950',
       warn: '#d29922',
       bad: '#f85149',
+      busy: '#f0883e',
       zoom: '#a371f7',
     },
     terminal: terminal(
@@ -115,6 +118,7 @@ export const THEMES: ThemeDef[] = [
       good: '#50fa7b',
       warn: '#ffb86c',
       bad: '#ff5555',
+      busy: '#ff7b36',
       zoom: '#ff79c6',
     },
     terminal: terminal(
@@ -141,6 +145,7 @@ export const THEMES: ThemeDef[] = [
       good: '#a3be8c',
       warn: '#ebcb8b',
       bad: '#bf616a',
+      busy: '#d08770',
       zoom: '#b48ead',
     },
     terminal: terminal(
@@ -167,6 +172,7 @@ export const THEMES: ThemeDef[] = [
       good: '#9ece6a',
       warn: '#e0af68',
       bad: '#f7768e',
+      busy: '#ff9e64',
       zoom: '#bb9af7',
     },
     terminal: terminal(
@@ -193,6 +199,7 @@ export const THEMES: ThemeDef[] = [
       good: '#b8bb26',
       warn: '#fabd2f',
       bad: '#fb4934',
+      busy: '#f45b1c',
       zoom: '#d3869b',
     },
     terminal: terminal(
@@ -219,6 +226,7 @@ export const THEMES: ThemeDef[] = [
       good: '#1a7f37',
       warn: '#9a6700',
       bad: '#cf222e',
+      busy: '#bc4c00',
       zoom: '#8250df',
     },
     terminal: terminal(
@@ -245,6 +253,7 @@ export const THEMES: ThemeDef[] = [
       good: '#859900',
       warn: '#b58900',
       bad: '#dc322f',
+      busy: '#cb4b16',
       zoom: '#6c71c4',
     },
     terminal: terminal(
@@ -271,6 +280,7 @@ export const THEMES: ThemeDef[] = [
       good: '#40a02b',
       warn: '#df8e1d',
       bad: '#d20f39',
+      busy: '#c84f0a',
       zoom: '#8839ef',
     },
     terminal: terminal(
