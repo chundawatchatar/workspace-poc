@@ -20,14 +20,32 @@ function status(state: AgentStateName, progress: SessionInfo['progress'] = null)
 }
 
 describe('AgentStateMark', () => {
-  test('each kind is an image named by its status', () => {
+  test('each kind is an image named by its status, with its own shape, and only working spins in orange', () => {
     const statuses = [status('working'), status('waiting'), status('idle'), status('idle', 'error')]
     expect(statuses.map((s) => s.kind)).toEqual(['working', 'waiting', 'idle', 'failed'])
 
+    const shapes = new Set<string>()
     for (const s of statuses) {
       const { unmount } = render(<AgentStateMark status={s} size={10} />)
-      expect(screen.getByRole('img', { name: s.label })).toBeInTheDocument()
+      const mark = screen.getByRole('img', { name: s.label })
+      shapes.add(mark.innerHTML)
+      if (s.kind === 'working') {
+        expect(mark).toHaveClass('animate-spin', 'text-busy')
+      } else {
+        expect(mark).not.toHaveClass('animate-spin')
+        expect(mark).not.toHaveClass('text-busy')
+      }
+      if (s.kind === 'waiting') expect(mark).toHaveClass('text-warn')
       unmount()
     }
+    expect(shapes.size).toBe(4)
+  })
+
+  test('on the selected tile the working mark still spins, in the on-accent colour', () => {
+    const working = status('working')
+    render(<AgentStateMark status={working} size={10} onAccent />)
+    const mark = screen.getByRole('img', { name: working.label })
+    expect(mark).toHaveClass('animate-spin', 'text-on-accent')
+    expect(mark).not.toHaveClass('text-busy')
   })
 })

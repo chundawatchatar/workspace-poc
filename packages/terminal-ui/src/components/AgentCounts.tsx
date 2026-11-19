@@ -13,7 +13,8 @@ export function AgentCounts({ counts, active }: { counts: AgentStateCounts; acti
   if (!label) return null
   const colours = {
     waiting: active ? 'text-on-accent' : 'text-accent',
-    other: active ? 'text-on-accent/70' : 'text-dim',
+    working: active ? 'text-on-accent/70' : 'text-busy',
+    idle: active ? 'text-on-accent/70' : 'text-dim',
   }
   return (
     <>
@@ -22,10 +23,7 @@ export function AgentCounts({ counts, active }: { counts: AgentStateCounts; acti
         {ORDER.filter((state) => counts[state] > 0).map((state) => {
           const { Icon } = AGENT_MARKS[state]
           return (
-            <span
-              key={state}
-              className={`flex items-center gap-0.5 ${state === 'waiting' ? colours.waiting : colours.other}`}
-            >
+            <span key={state} className={`flex items-center gap-0.5 ${colours[state]}`}>
               <Icon size={10} />
               {counts[state]}
             </span>

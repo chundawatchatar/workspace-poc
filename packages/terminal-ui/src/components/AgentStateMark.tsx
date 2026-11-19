@@ -3,7 +3,7 @@ import type { AgentStatus, AgentStatusKind } from '../lib/agentStatus'
 
 /** The shape and status colour of each kind. */
 export const AGENT_MARKS: Record<AgentStatusKind, { Icon: LucideIcon; colour: string }> = {
-  working: { Icon: LoaderCircle, colour: '' },
+  working: { Icon: LoaderCircle, colour: 'text-busy' },
   waiting: { Icon: Hand, colour: 'text-warn' },
   idle: { Icon: Pause, colour: 'text-faint' },
   failed: { Icon: CircleAlert, colour: 'text-bad' },
