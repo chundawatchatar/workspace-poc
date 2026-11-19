@@ -60,7 +60,8 @@ A baseline `idle` shows no agent mark: the tab and sidebar row fall back to thei
 A tab or sidebar row whose terminal has an agent (`SessionInfo.agent` set) shows which agent it is with the agent's
 identity icon where the terminal icon would be (`AgentIcon` and `AGENT_ICONS` in `packages/ui`, a monogram such as
 `CC` or `CX` in a rounded square), and the state mark after it, at the end of the tab or row. The mark is the same for
-every agent; only the icon differs. The mark's slot keeps its width when there is no state, so a change of state
+every agent; only the icon differs. The `working` mark is a spinner drawn in the theme's orange `busy` colour, apart
+from the `waiting` hand's `warn`. The mark's slot keeps its width when there is no state, so a change of state
 moves nothing. In a sidebar row the attention dot sits just before that slot, and with no state the slot holds the
 row's running, exited or shell dot. A terminal with no agent, including an interrupted one, keeps its terminal icon
 and shows its mark or dot in front, as before.
@@ -602,7 +603,8 @@ tab mark, and they don't spin. The words are in the accessible text and the tool
   title counts as working unless its state is `waiting` or its program reports an error, with the same conditions as
   the tab (see [Codex](#codex)).
 - Zero counts are hidden, and the icons appear in the order waiting, working, idle, since waiting needs the user. The
-  accessible text reads working, waiting, idle. The waiting count uses the same accent as attention. A workspace with no counted agents shows nothing new.
+  accessible text reads working, waiting, idle. The waiting count uses the same accent as attention, and the working
+  count the theme's orange `busy` colour. A workspace with no counted agents shows nothing new.
 - `working` and `waiting` count the same way from both sources, but `idle` counts only from hooks. Terminal signals
   report `idle` even mid-turn, and such a terminal shows no mark, so an agent seen only through signals shows no count
   while idle. "No agents" here means no agents the UI can state.
