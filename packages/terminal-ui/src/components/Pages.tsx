@@ -11,7 +11,7 @@ import { useGoToWorkspace, useNavigation } from '../navigation'
 import { usePageOptions } from '../pageOptions'
 import { useTransport } from '../transportContext'
 import { HostStatus } from './HostStatus'
-import { LayoutView } from './LayoutView'
+import { LayoutView, tidyTitle } from './LayoutView'
 import { pendingAttention } from './Sidebar'
 
 /** Replaces the current URL once after rendering, like a redirect. */
@@ -188,7 +188,7 @@ function Notifications() {
             >
               <div className="truncate text-xs font-medium text-ink">{session.attention?.message}</div>
               <div className="truncate text-[11px] text-dim">
-                {workspace.name} · {session.title}
+                {workspace.name} · {tidyTitle(session.title)}
               </div>
             </button>
           ))}

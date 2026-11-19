@@ -25,6 +25,7 @@ import {
 } from '@orch/ui/icons'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { type AgentStatus, agentStatus, withStatus } from '../lib/agentStatus'
+import { stripAgentGlyphs } from '../lib/agentTitle'
 import { SWITCH_HINT } from '../lib/agentTracking'
 import {
   addSurface,
@@ -120,8 +121,15 @@ function SplitView({ workspace, split }: { workspace: Workspace; split: SplitNod
   )
 }
 
-/** Shells title a tab `user@host:/long/path`; the last folder is what identifies it. */
-export function tidyTitle(title: string) {
+/**
+ * The title a tab shows. Agents' own spinner and status glyphs come off both
+ * ends, since the tab draws its own mark, and a title left empty reads
+ * `Terminal`. Shells title a tab `user@host:/long/path`; the last folder is what
+ * identifies it.
+ */
+export function tidyTitle(raw: string) {
+  const title = stripAgentGlyphs(raw)
+  if (!title) return 'Terminal'
   const match = /^[^@\s]+@[^:\s]+:\s*(.+)$/.exec(title)
   if (!match) return title
   return match[1].split('/').filter(Boolean).pop() ?? '/'
