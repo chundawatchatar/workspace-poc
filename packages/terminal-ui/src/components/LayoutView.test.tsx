@@ -11,9 +11,9 @@ import {
   type ServerEvent,
   type SessionInfo,
 } from '@orch/shared'
-import { Toaster } from '@orch/ui'
+import { AGENT_ICONS, Toaster } from '@orch/ui'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { connect, getSnapshot, useApp } from '../lib/store'
 import type { HostTransport } from '../transport'
@@ -25,13 +25,15 @@ afterEach(() => disconnect())
 
 /**
  * Connects the store through a fake transport and says `hello` with one pane holding a terminal, whose shell reports
- * a folder and agent tracking, and a `pulls` tab. With `split`, a second pane holding an `issues` tab sits to its
- * right. Returns what the page sent on the events socket.
+ * a folder and agent tracking, and a `pulls` tab. Each entry of `sessions` adds another terminal tab before `pulls`,
+ * with those fields over the first one's. With `split`, a second pane holding an `issues` tab sits to its right.
+ * Returns what the page sent on the events socket, and `update` to report a session again.
  */
-function setup({ split = false } = {}) {
+function setup({ split = false, sessions = [] as Partial<SessionInfo>[] } = {}) {
   const terminal = makeSurface('terminal')
+  const others = sessions.map(() => makeSurface('terminal'))
   const pulls = makeSurface('pulls')
-  const first = makePane([terminal, pulls])
+  const first = makePane([terminal, ...others, pulls])
   const root: LayoutNode = split
     ? {
         type: 'split',
@@ -78,7 +80,7 @@ function setup({ split = false } = {}) {
     type: 'hello',
     clientId: 'c1',
     state: { rev: 1, workspaces: [workspace] },
-    sessions: [session],
+    sessions: [session, ...sessions.map((fields, i) => ({ ...session, ...fields, id: others[i].id }))],
     info: { home: '/home/me', shell: 'zsh', platform: 'darwin', projectRoot: '/home/me/repo' },
   }
   events?.onmessage?.({ data: JSON.stringify(hello) } as MessageEvent)
@@ -91,7 +93,9 @@ function setup({ split = false } = {}) {
       <Toaster />
     </QueryClientProvider>,
   )
-  return { sent, terminal }
+  const update = (session: SessionInfo) =>
+    act(() => events?.onmessage?.({ data: JSON.stringify({ type: 'session', session }) } as MessageEvent))
+  return { sent, terminal, session, update }
 }
 
 /** The layout of the store's first workspace, as a page shows it. */
@@ -137,6 +141,98 @@ describe('LayoutView tab bar', () => {
     document.removeEventListener('contextmenu', record)
     expect(prevented).toEqual([false])
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+})
+
+const claude = { kind: 'claude', sessionId: null, cwd: '/home/me/repo' } as const
+const codex = { ...claude, kind: 'codex' } as const
+const state = (name: 'working' | 'waiting' | 'idle') =>
+  ({ state: name, reason: 'tool', source: 'hooks', since: 1 }) as const
+
+/** The tab whose tooltip starts with this title. */
+const tabOf = (title: string) => screen.getByTitle(new RegExp(`^${title}( |$)`))
+/** A tab's leading icon slot, its first child. */
+const leadingOf = (tab: HTMLElement) => tab.firstElementChild as HTMLElement
+const statusSlotOf = (tab: HTMLElement) => tab.querySelector('[data-slot="status"]')
+
+/** Waits until every terminal tab's view has loaded, which updates it outside of any user action. */
+const terminalsLoaded = (count: number) =>
+  waitFor(() => expect(screen.getAllByRole('textbox', { name: 'Terminal input' })).toHaveLength(count))
+
+/** Fails unless each element comes after the one before it in the page. */
+function expectInOrder(...elements: (Element | null)[]) {
+  for (let i = 1; i < elements.length; i++) {
+    const before = elements[i - 1] as Element
+    expect(before.compareDocumentPosition(elements[i] as Element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  }
+}
+
+describe('LayoutView agent tabs', () => {
+  test("two agents' tabs show different identity icons and the same working mark, after the title", async () => {
+    setup({
+      sessions: [
+        { title: 'Fix login', agent: claude, agentState: state('working') },
+        { title: 'Add tests', agent: codex, agentState: state('working') },
+      ],
+    })
+    await terminalsLoaded(3)
+    const claudeTab = tabOf('Fix login')
+    const codexTab = tabOf('Add tests')
+
+    expect(leadingOf(claudeTab)).toHaveTextContent(AGENT_ICONS.claude.label)
+    expect(leadingOf(codexTab)).toHaveTextContent(AGENT_ICONS.codex.label)
+    expect(AGENT_ICONS.claude.label).not.toBe(AGENT_ICONS.codex.label)
+    expect(leadingOf(claudeTab).children).toHaveLength(1)
+
+    const claudeMark = within(claudeTab).getByRole('img', { name: 'Claude Code working' })
+    const codexMark = within(codexTab).getByRole('img', { name: 'Codex working' })
+    expect(claudeMark.innerHTML).toBe(codexMark.innerHTML)
+    expect(claudeMark).toHaveClass('animate-spin')
+    expect(codexMark).toHaveClass('animate-spin')
+    expect(statusSlotOf(claudeTab)).toContainElement(claudeMark)
+    expect(leadingOf(claudeTab)).not.toContainElement(claudeMark)
+    expectInOrder(
+      within(claudeTab).getByText('Fix login'),
+      claudeMark,
+      within(claudeTab).getByRole('button', { name: 'Close Fix login' }),
+    )
+  })
+
+  test('an agent tab keeps its icon and its status slot through every state, and names the agent with none', async () => {
+    const { session, update } = setup({ sessions: [{ title: 'Fix login', agent: claude }] })
+    await terminalsLoaded(2)
+    const tab = tabOf('Fix login')
+    expect(tab).toHaveAttribute('title', 'Fix login\nClaude Code')
+    const icon = leadingOf(tab).firstElementChild
+    const slot = statusSlotOf(tab)
+    expect(slot).toBeEmptyDOMElement()
+    expect(slot).toHaveClass('w-[13px]', 'shrink-0')
+    expect(within(tab).getByText('Fix login')).toHaveClass('min-w-0', 'flex-1', 'truncate')
+
+    const id = (tab.closest('[data-tab-id]') as HTMLElement).dataset.tabId as string
+    for (const [name, label] of [
+      ['working', 'Claude Code working'],
+      ['waiting', 'Claude Code waiting for you'],
+      ['idle', 'Claude Code idle'],
+    ] as const) {
+      update({ ...session, id, title: 'Fix login', agent: claude, agentState: state(name) })
+      expect(statusSlotOf(tab)).toBe(slot)
+      expect(slot).toHaveClass('w-[13px]', 'shrink-0')
+      expect(slot).toContainElement(within(tab).getByRole('img', { name: label }))
+      expect(leadingOf(tab).firstElementChild).toBe(icon)
+    }
+  })
+
+  test("a plain terminal's tab shows the terminal icon, or its state there, and no status slot", async () => {
+    const { session, update } = setup()
+    await terminalsLoaded(1)
+    const tab = tabOf('src')
+    expect(leadingOf(tab).firstElementChild).toHaveClass('lucide-square-terminal')
+    expect(statusSlotOf(tab)).toBeNull()
+
+    update({ ...session, progress: 'busy' })
+    expect(leadingOf(tab)).toContainElement(within(tab).getByRole('img', { name: 'Working' }))
+    expect(statusSlotOf(tab)).toBeNull()
   })
 })
 
