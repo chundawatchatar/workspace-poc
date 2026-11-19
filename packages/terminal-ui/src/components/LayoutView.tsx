@@ -98,7 +98,12 @@ function SplitView({ workspace, split }: { workspace: Workspace; split: SplitNod
       <div
         role="separator"
         aria-orientation={row ? 'vertical' : 'horizontal'}
-        className={`group relative z-10 shrink-0 ${row ? 'w-1 cursor-col-resize' : 'h-1 cursor-row-resize'}`}
+        // The pseudo-element reaches 2px into each pane, so the 4px gap is easier to grab.
+        className={`group relative z-10 shrink-0 before:absolute ${
+          row
+            ? 'w-1 cursor-col-resize before:inset-y-0 before:-inset-x-0.5'
+            : 'h-1 cursor-row-resize before:inset-x-0 before:-inset-y-0.5'
+        }`}
         onPointerDown={(event) => event.currentTarget.setPointerCapture(event.pointerId)}
         onPointerMove={onPointerMove}
         onPointerUp={(event) => {
