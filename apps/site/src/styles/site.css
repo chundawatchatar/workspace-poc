@@ -13,6 +13,16 @@ html[data-area='docs'] {
   scroll-padding-top: 56px;
 }
 
+/* The home page's top bar (SiteNav.astro): two rows and a border below 1280px, one row from there. */
+html[data-area='home'] {
+  scroll-padding-top: 97px;
+}
+@media (min-width: 1280px) {
+  html[data-area='home'] {
+    scroll-padding-top: 57px;
+  }
+}
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -90,9 +100,9 @@ body {
   }
 }
 
-/* While the leader key waits for its second key, the sidebar footer says so, as in the app. */
+/* While the leader key waits for its second key, the sidebar footer or the home page's nav says so, as in the app. */
 .leader-chip,
-[data-leader] .footer-buttons {
+[data-leader] .leader-hides {
   display: none;
 }
 [data-leader] .leader-chip {
@@ -112,6 +122,13 @@ body {
 }
 .section-link[aria-current='true'] .row-sub {
   color: color-mix(in srgb, var(--color-on-accent) 75%, transparent);
+}
+
+/* The home page's nav link of the section the reader is on (scroll spy). */
+.nav-link[aria-current='true'] {
+  background: var(--color-raised);
+  color: var(--color-ink);
+  box-shadow: inset 0 -2px 0 var(--color-accent);
 }
 
 /* Docs prose, in the app's colours. */

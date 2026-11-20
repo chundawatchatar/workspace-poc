@@ -6,6 +6,7 @@ import { BookOpen, CreditCard, House, Keyboard, Moon, Palette, PanelLeft, Search
 import DocsSidebar from '../components/astro/DocsSidebar.astro'
 import GithubMark from '../components/astro/GithubMark.astro'
 import Logo from '../components/astro/Logo.astro'
+import SiteNav from '../components/astro/SiteNav.astro'
 import SiteSidebar from '../components/astro/SiteSidebar.astro'
 import { SiteChrome } from '../components/SiteChrome'
 import { sortedDocs } from '../lib/docs'
@@ -26,6 +27,8 @@ const { title, description = SITE.description, tab, doc, path } = Astro.props
 const pageTitle = title ? `${title} · ${SITE.name}` : `${SITE.name}: ${SITE.tagline}`
 const docs = await sortedDocs()
 const inDocs = tab === 'docs'
+// The home page is a marketing page with a top bar; pricing and the docs are drawn as the app, with its sidebar.
+const home = tab === 'overview'
 
 const tabs = [
   { id: 'overview', label: 'Overview', href: '/', icon: House },
@@ -54,14 +57,16 @@ const items: PaletteItem[] = [
   { id: 'cmd-themes', label: 'Choose theme…', kind: 'command', keys: '⌃B T', action: 'themes' },
   { id: 'cmd-help', label: 'Keyboard shortcuts', kind: 'command', keys: '⌃B ?', action: 'help' },
   { id: 'cmd-copy', label: 'Copy install command', kind: 'command', action: 'copy-install' },
-  { id: 'cmd-sidebar', label: 'Toggle sidebar', kind: 'command', keys: '⌘B', action: 'sidebar' },
+  ...(home
+    ? []
+    : [{ id: 'cmd-sidebar', label: 'Toggle sidebar', kind: 'command', keys: '⌘B', action: 'sidebar' } as const]),
   { id: 'cmd-github', label: 'Open GitHub repository', kind: 'command', href: SITE.githubUrl },
 ]
 const iconButton = 'rounded p-1 hover:bg-raised hover:text-ink'
 ---
 
 <!doctype html>
-<html lang="en" data-theme="dark" data-area={inDocs ? 'docs' : 'site'}>
+<html lang="en" data-theme="dark" data-area={home ? 'home' : inDocs ? 'docs' : 'site'}>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -74,118 +79,131 @@ const iconButton = 'rounded p-1 hover:bg-raised hover:text-ink'
     <script is:inline>document.documentElement.classList.add('js')</script>
   </head>
   <body>
-    <aside
-      id="sidebar"
-      aria-label={inDocs ? 'Docs' : 'Site'}
-      class="fixed inset-y-0 left-0 z-40 flex w-64 -translate-x-full flex-col border-r border-line bg-sidebar lg:translate-x-0"
-    >
-      <div class="flex h-10 shrink-0 items-center gap-2.5 border-b border-line px-3.5">
-        <a href="/" title="Home" class="flex min-w-0 items-center gap-2.5 text-ink">
-          <Logo size={20} />
-          <span class="truncate text-[14px] font-semibold tracking-tight">{SITE.name}</span>
-        </a>
-        {
-          inDocs && (
-            <a
-              href="/docs/getting-started"
-              title="Docs home"
-              class="rounded bg-raised px-1.5 py-0.5 font-mono text-[10px] text-dim hover:bg-accent hover:text-on-accent"
-            >
-              docs
-            </a>
-          )
-        }
-        <span class="flex-1"></span>
-        <button type="button" data-action="sidebar" aria-label="Close menu" class={`text-dim lg:hidden ${iconButton}`}>
-          <X size={16} />
-        </button>
-      </div>
-
-      <nav class="min-h-0 flex-1 overflow-y-auto px-2 py-2 text-[13px]">
-        {inDocs ? <DocsSidebar current={doc} /> : <SiteSidebar current={tab === 'pricing' ? 'pricing' : undefined} />}
-      </nav>
-
-      <div class="flex h-9 shrink-0 items-center justify-between border-t border-line px-3 text-xs text-dim">
-        <span class="flex items-center gap-1.5">
-          <span class="h-1.5 w-1.5 rounded-full bg-good"></span>
-          Local · 127.0.0.1
-        </span>
-        <span class="leader-chip rounded bg-accent px-1.5 py-0.5 text-[11px] font-medium text-on-accent">Ctrl+B …</span>
-        <span class="footer-buttons flex items-center">
-          <button type="button" data-action="toggle-theme" title="Toggle light / dark" aria-label="Toggle light and dark" class={iconButton}>
-            <Moon size={14} className="when-dark" />
-            <Sun size={14} className="when-light" />
-          </button>
-          <button type="button" data-open="themes" title="Choose theme" aria-label="Choose theme" class={iconButton}>
-            <Palette size={14} />
-          </button>
-          <button type="button" data-open="help" title="Keyboard shortcuts" aria-label="Keyboard shortcuts" class={iconButton}>
-            <Keyboard size={14} />
-          </button>
-        </span>
-      </div>
-    </aside>
-
-    <div data-action="sidebar" class="fixed inset-0 z-30 hidden bg-black/50 [.drawer-open_&]:block lg:[.drawer-open_&]:hidden"></div>
-
-    <div id="main" class="min-w-0 lg:pl-64">
-      <!-- Two bars, as in the app: the workspace header, then the pane's tab bar. Docs need only the header. -->
-      <div class="sticky top-0 z-20">
-        <header class="flex h-10 items-center gap-2 border-b border-line bg-sidebar px-2">
-          <button type="button" data-action="sidebar" title="Toggle sidebar" aria-label="Toggle sidebar" class={`p-1.5 text-dim ${iconButton}`}>
-            <PanelLeft size={15} />
-          </button>
-          <span class="truncate text-[13px] font-semibold">{inDocs ? 'docs' : 'orchestrator'}</span>
-          <span class="hidden min-w-0 truncate font-mono text-xs text-faint sm:inline">{path}</span>
-          <div class="ml-auto flex shrink-0 items-center gap-1.5">
-            <button
-              type="button"
-              data-open="palette"
-              aria-label="Search"
-              class="flex h-7 items-center gap-2 rounded-md border border-line bg-bg/60 px-2 text-xs text-faint hover:border-dim/50 hover:text-dim md:w-52"
-            >
-              <Search size={13} />
-              <span class="hidden md:inline">{inDocs ? 'Search docs…' : 'Search…'}</span>
-              <kbd class="ml-auto hidden md:inline">⌘P</kbd>
-            </button>
-            <a
-              href="/docs/getting-started"
-              aria-current={inDocs ? 'page' : undefined}
-              class={`flex h-7 items-center gap-1.5 rounded-md px-2 text-xs hover:bg-raised hover:text-ink ${
-                inDocs ? 'text-ink' : 'text-dim'
-              }`}
-            >
-              <BookOpen size={14} className={inDocs ? 'text-accent' : ''} />
-              Docs
-            </a>
-            <a href={SITE.githubUrl} class="hidden h-7 items-center gap-1.5 rounded-md px-2 text-xs text-dim hover:bg-raised hover:text-ink sm:flex">
-              <GithubMark size={14} />
-              GitHub
-            </a>
-            <a href="/docs/getting-started" class="flex h-7 items-center rounded-md bg-accent px-3 text-xs font-medium text-on-accent hover:opacity-90">
-              Install
-            </a>
-          </div>
-        </header>
-        {
-          !inDocs && (
-            <nav class="flex h-8 items-stretch overflow-x-auto border-b border-line bg-sidebar" aria-label="Pages">
-            {tabs.map((t) => (
-              <a
-                href={t.href}
-                aria-current={t.id === tab ? 'page' : undefined}
-                class={`flex max-w-52 min-w-24 shrink-0 items-center gap-1.5 border-r border-line px-2.5 text-xs select-none ${
-                  t.id === tab ? 'bg-bg text-ink' : 'text-faint hover:text-dim'
-                }`}
-              >
-                <t.icon size={13} className={t.id === tab ? 'text-accent' : ''} />
-                <span class="truncate">{t.label}</span>
+    {
+      !home && (
+        <>
+          <aside
+            id="sidebar"
+            aria-label={inDocs ? 'Docs' : 'Site'}
+            class="fixed inset-y-0 left-0 z-40 flex w-64 -translate-x-full flex-col border-r border-line bg-sidebar lg:translate-x-0"
+          >
+            <div class="flex h-10 shrink-0 items-center gap-2.5 border-b border-line px-3.5">
+              <a href="/" title="Home" class="flex min-w-0 items-center gap-2.5 text-ink">
+                <Logo size={20} />
+                <span class="truncate text-[14px] font-semibold tracking-tight">{SITE.name}</span>
               </a>
-            ))}
+              {
+                inDocs && (
+                  <a
+                    href="/docs/getting-started"
+                    title="Docs home"
+                    class="rounded bg-raised px-1.5 py-0.5 font-mono text-[10px] text-dim hover:bg-accent hover:text-on-accent"
+                  >
+                    docs
+                  </a>
+                )
+              }
+              <span class="flex-1"></span>
+              <button type="button" data-action="sidebar" aria-label="Close menu" class={`text-dim lg:hidden ${iconButton}`}>
+                <X size={16} />
+              </button>
+            </div>
+
+            <nav class="min-h-0 flex-1 overflow-y-auto px-2 py-2 text-[13px]">
+              {inDocs ? <DocsSidebar current={doc} /> : <SiteSidebar current={tab === 'pricing' ? 'pricing' : undefined} />}
             </nav>
-          )
-        }
-      </div>
+
+            <div class="flex h-9 shrink-0 items-center justify-between border-t border-line px-3 text-xs text-dim">
+              <span class="flex items-center gap-1.5">
+                <span class="h-1.5 w-1.5 rounded-full bg-good"></span>
+                Local · 127.0.0.1
+              </span>
+              <span class="leader-chip rounded bg-accent px-1.5 py-0.5 text-[11px] font-medium text-on-accent">Ctrl+B …</span>
+              <span class="leader-hides flex items-center">
+                <button type="button" data-action="toggle-theme" title="Toggle light / dark" aria-label="Toggle light and dark" class={iconButton}>
+                  <Moon size={14} className="when-dark" />
+                  <Sun size={14} className="when-light" />
+                </button>
+                <button type="button" data-open="themes" title="Choose theme" aria-label="Choose theme" class={iconButton}>
+                  <Palette size={14} />
+                </button>
+                <button type="button" data-open="help" title="Keyboard shortcuts" aria-label="Keyboard shortcuts" class={iconButton}>
+                  <Keyboard size={14} />
+                </button>
+              </span>
+            </div>
+          </aside>
+
+          <div data-action="sidebar" class="fixed inset-0 z-30 hidden bg-black/50 [.drawer-open_&]:block lg:[.drawer-open_&]:hidden"></div>
+        </>
+      )
+    }
+
+    <div id="main" class:list={['min-w-0', !home && 'lg:pl-64']}>
+      <!-- The home page has its top bar. The others have two bars, as in the app: the workspace header, then the pane's
+           tab bar. Docs need only the header. -->
+      {
+        home ? (
+          <SiteNav />
+        ) : (
+          <div class="sticky top-0 z-20">
+            <header class="flex h-10 items-center gap-2 border-b border-line bg-sidebar px-2">
+              <button type="button" data-action="sidebar" title="Toggle sidebar" aria-label="Toggle sidebar" class={`p-1.5 text-dim ${iconButton}`}>
+                <PanelLeft size={15} />
+              </button>
+              <span class="truncate text-[13px] font-semibold">{inDocs ? 'docs' : 'orchestrator'}</span>
+              <span class="hidden min-w-0 truncate font-mono text-xs text-faint sm:inline">{path}</span>
+              <div class="ml-auto flex shrink-0 items-center gap-1.5">
+                <button
+                  type="button"
+                  data-open="palette"
+                  aria-label="Search"
+                  class="flex h-7 items-center gap-2 rounded-md border border-line bg-bg/60 px-2 text-xs text-faint hover:border-dim/50 hover:text-dim md:w-52"
+                >
+                  <Search size={13} />
+                  <span class="hidden md:inline">{inDocs ? 'Search docs…' : 'Search…'}</span>
+                  <kbd class="ml-auto hidden md:inline">⌘P</kbd>
+                </button>
+                <a
+                  href="/docs/getting-started"
+                  aria-current={inDocs ? 'page' : undefined}
+                  class={`flex h-7 items-center gap-1.5 rounded-md px-2 text-xs hover:bg-raised hover:text-ink ${
+                    inDocs ? 'text-ink' : 'text-dim'
+                  }`}
+                >
+                  <BookOpen size={14} className={inDocs ? 'text-accent' : ''} />
+                  Docs
+                </a>
+                <a href={SITE.githubUrl} class="hidden h-7 items-center gap-1.5 rounded-md px-2 text-xs text-dim hover:bg-raised hover:text-ink sm:flex">
+                  <GithubMark size={14} />
+                  GitHub
+                </a>
+                <a href="/docs/getting-started" class="flex h-7 items-center rounded-md bg-accent px-3 text-xs font-medium text-on-accent hover:opacity-90">
+                  Install
+                </a>
+              </div>
+            </header>
+            {
+              !inDocs && (
+                <nav class="flex h-8 items-stretch overflow-x-auto border-b border-line bg-sidebar" aria-label="Pages">
+                {tabs.map((t) => (
+                  <a
+                    href={t.href}
+                    aria-current={t.id === tab ? 'page' : undefined}
+                    class={`flex max-w-52 min-w-24 shrink-0 items-center gap-1.5 border-r border-line px-2.5 text-xs select-none ${
+                      t.id === tab ? 'bg-bg text-ink' : 'text-faint hover:text-dim'
+                    }`}
+                  >
+                    <t.icon size={13} className={t.id === tab ? 'text-accent' : ''} />
+                    <span class="truncate">{t.label}</span>
+                  </a>
+                ))}
+                </nav>
+              )
+            }
+          </div>
+        )
+      }
 
       <main>
         <slot />
@@ -194,7 +212,12 @@ const iconButton = 'rounded p-1 hover:bg-raised hover:text-ink'
       {
         !inDocs && (
           <footer class="border-t border-line bg-sidebar">
-            <div class="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-6 text-xs text-faint sm:flex-row sm:items-center sm:px-8">
+            <div
+              class:list={[
+                'mx-auto flex flex-col gap-3 px-4 py-6 text-xs text-faint sm:flex-row sm:items-center sm:px-8',
+                home ? 'max-w-7xl' : 'max-w-6xl',
+              ]}
+            >
               <span class="flex items-center gap-2 text-dim">
                 <Logo size={16} />
                 {SITE.name}
@@ -212,20 +235,25 @@ const iconButton = 'rounded p-1 hover:bg-raised hover:text-ink'
       }
     </div>
 
-    <SiteChrome client:load items={items} installCommand={SITE.installCommand} sections={SECTIONS.map((s) => s.id)} />
+    <SiteChrome
+      client:load
+      items={items}
+      installCommand={SITE.installCommand}
+      sections={SECTIONS.map((s) => s.id)}
+      sidebar={!home}
+    />
 
     <script>
-      // Scroll spy: the sidebar row of the section on screen is the active workspace.
-      const links = new Map(
-        [...document.querySelectorAll<HTMLElement>('[data-section-link]')].map((link) => [link.dataset.sectionLink, link]),
-      )
-      const sections = [...links.keys()].map((id) => document.getElementById(id ?? '')).filter((el) => el !== null)
-      if (sections.length) {
+      // Scroll spy: the link of the section on screen is current, in the sidebar or in the home page's nav, which
+      // draws each section twice. A section with no link, like the hero under the nav, leaves none current.
+      const links = [...document.querySelectorAll<HTMLElement>('[data-section-link]')]
+      const sections = document.querySelectorAll('main section[id]')
+      if (links.length && sections.length) {
         const spy = new IntersectionObserver(
           (entries) => {
             for (const entry of entries) {
               if (!entry.isIntersecting) continue
-              for (const [id, link] of links) link.setAttribute('aria-current', String(id === entry.target.id))
+              for (const link of links) link.setAttribute('aria-current', String(link.dataset.sectionLink === entry.target.id))
             }
           },
           { rootMargin: '-45% 0px -50% 0px' },

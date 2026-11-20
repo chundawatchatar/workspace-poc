@@ -105,7 +105,7 @@ const agents = ['claude', 'codex', 'opencode', 'cursor-agent', 'aider', 'gemini'
   <!-- Hero -->
   <!-- overflow-clip, not hidden: a hidden overflow is a scroll container, which would stall the window's scroll timeline. -->
   <section id="top" class="canvas-grid relative overflow-clip border-b border-line">
-    <div class="mx-auto max-w-6xl px-4 pt-14 pb-16 sm:px-8 sm:pt-20">
+    <div class="mx-auto max-w-7xl px-4 pt-14 pb-16 sm:px-8 sm:pt-20">
       <p class="mb-5 inline-flex items-center gap-2 rounded-full border border-line bg-panel px-3 py-1 text-xs text-dim">
         <span class="h-1.5 w-1.5 rounded-full bg-good"></span>
         {PRODUCT_FACTS}
@@ -158,7 +158,7 @@ const agents = ['claude', 'codex', 'opencode', 'cursor-agent', 'aider', 'gemini'
 
   <!-- Problem -->
   <section id="problem" class="border-b border-line">
-    <div class="mx-auto max-w-6xl px-4 py-20 sm:px-8 sm:py-24" data-reveal>
+    <div class="mx-auto max-w-7xl px-4 py-20 sm:px-8 sm:py-24" data-reveal>
       <SectionHead
         path="problem"
         title="Agents got fast. Keeping track of them didn't."
@@ -198,7 +198,7 @@ const agents = ['claude', 'codex', 'opencode', 'cursor-agent', 'aider', 'gemini'
 
   <!-- How it works -->
   <section id="how" class="border-b border-line bg-sidebar/40">
-    <div class="mx-auto max-w-6xl px-4 py-20 sm:px-8 sm:py-24" data-reveal>
+    <div class="mx-auto max-w-7xl px-4 py-20 sm:px-8 sm:py-24" data-reveal>
       <SectionHead
         path="how-it-works"
         title="One host on your machine. Any browser in front of it."
@@ -241,7 +241,7 @@ const agents = ['claude', 'codex', 'opencode', 'cursor-agent', 'aider', 'gemini'
 
   <!-- Agents -->
   <section id="agents" class="border-b border-line">
-    <div class="mx-auto grid max-w-6xl gap-12 px-4 py-20 sm:px-8 sm:py-24 lg:grid-cols-[1fr_1.1fr]" data-reveal data-follow-row>
+    <div class="mx-auto grid max-w-7xl gap-12 px-4 py-20 sm:px-8 sm:py-24 lg:grid-cols-[1fr_1.1fr]" data-reveal data-follow-row>
       <div>
         <SectionHead
           path="agents"
@@ -290,7 +290,7 @@ const agents = ['claude', 'codex', 'opencode', 'cursor-agent', 'aider', 'gemini'
 
   <!-- Remote -->
   <section id="remote" class="border-b border-line bg-sidebar/40">
-    <div class="mx-auto grid max-w-6xl gap-12 px-4 py-20 sm:px-8 sm:py-24 lg:grid-cols-2" data-reveal data-follow-row>
+    <div class="mx-auto grid max-w-7xl gap-12 px-4 py-20 sm:px-8 sm:py-24 lg:grid-cols-2" data-reveal data-follow-row>
       <div>
         <SectionHead
           path="remote"
@@ -344,7 +344,7 @@ const agents = ['claude', 'codex', 'opencode', 'cursor-agent', 'aider', 'gemini'
 
   <!-- Pricing -->
   <section id="pricing" class="border-b border-line">
-    <div class="mx-auto max-w-6xl px-4 py-20 sm:px-8 sm:py-24" data-reveal>
+    <div class="mx-auto max-w-7xl px-4 py-20 sm:px-8 sm:py-24" data-reveal>
       <SectionHead
         path="pricing"
         title="Free on your machine. Paid only for the relay."
@@ -359,9 +359,11 @@ const agents = ['claude', 'codex', 'opencode', 'cursor-agent', 'aider', 'gemini'
 
   <!-- FAQ -->
   <section id="faq">
-    <div class="mx-auto max-w-4xl px-4 py-20 sm:px-8 sm:py-24" data-reveal>
-      <SectionHead path="faq" title="Questions, answered." />
-      <Faq />
+    <div class="mx-auto max-w-7xl px-4 py-20 sm:px-8 sm:py-24" data-reveal>
+      <div class="max-w-4xl">
+        <SectionHead path="faq" title="Questions, answered." />
+        <Faq />
+      </div>
     </div>
   </section>
 

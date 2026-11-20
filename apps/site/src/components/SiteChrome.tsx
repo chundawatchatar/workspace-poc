@@ -14,6 +14,8 @@ interface Props {
   installCommand: string
   /** Section ids in sidebar order, for Ctrl+B then 1–9. */
   sections: string[]
+  /** True when the page has the sidebar. Without it, ⌘B and Ctrl+B then B are left alone. */
+  sidebar: boolean
 }
 
 function toggleSidebar() {
@@ -47,13 +49,13 @@ function isLeaderKey(event: KeyboardEvent) {
 }
 
 /** The key pressed after the leader. */
-function runLeader(event: KeyboardEvent, sections: string[], open: (overlay: Overlay) => void) {
+function runLeader(event: KeyboardEvent, sections: string[], sidebar: boolean, open: (overlay: Overlay) => void) {
   const digit = /^Digit([1-9])$/.exec(event.code)
   const section = digit ? sections[Number(digit[1]) - 1] : undefined
   if (section) goToSection(section)
   else if (event.key === '?' || event.code === 'Slash') open('help')
   else if (event.code === 'KeyT') open('themes')
-  else if (event.code === 'KeyB') toggleSidebar()
+  else if (event.code === 'KeyB' && sidebar) toggleSidebar()
 }
 
 /**
@@ -61,7 +63,7 @@ function runLeader(event: KeyboardEvent, sections: string[], open: (overlay: Ove
  * the theme picker and toasts. Static buttons open them with `data-open="palette|help|themes"` or
  * `data-action="toggle-theme|sidebar"`.
  */
-export function SiteChrome({ items, installCommand, sections }: Props) {
+export function SiteChrome({ items, installCommand, sections, sidebar }: Props) {
   const [overlay, setOverlay] = useState<Overlay>(null)
   const [theme, setTheme] = useState<ThemeState | null>(null)
   const [message, setMessage] = useState<ToastMessage | null>(null)
@@ -97,7 +99,7 @@ export function SiteChrome({ items, installCommand, sections }: Props) {
       const open = target.dataset.open as Overlay | undefined
       if (open) setOverlay(open)
       if (target.dataset.action === 'toggle-theme') toggleMode()
-      if (target.dataset.action === 'sidebar') toggleSidebar()
+      if (target.dataset.action === 'sidebar' && sidebar) toggleSidebar()
     }
 
     const onKeyDown = (event: KeyboardEvent) => {
@@ -108,7 +110,7 @@ export function SiteChrome({ items, installCommand, sections }: Props) {
         setLeader(false)
         setOverlay(null)
         document.documentElement.classList.remove('drawer-open')
-      } else if (event.metaKey && !event.ctrlKey && event.code === 'KeyB') {
+      } else if (sidebar && event.metaKey && !event.ctrlKey && event.code === 'KeyB') {
         event.preventDefault()
         toggleSidebar()
       } else if (isLeaderKey(event)) {
@@ -117,7 +119,7 @@ export function SiteChrome({ items, installCommand, sections }: Props) {
       } else if (leader.current && !isTyping(event.target) && !MODIFIERS.includes(event.key)) {
         event.preventDefault()
         setLeader(false)
-        runLeader(event, sections, setOverlay)
+        runLeader(event, sections, sidebar, setOverlay)
       }
     }
 
@@ -127,7 +129,7 @@ export function SiteChrome({ items, installCommand, sections }: Props) {
       document.removeEventListener('click', onClick)
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [sections])
+  }, [sections, sidebar])
 
   function run(item: PaletteItem) {
     setOverlay(null)
@@ -142,7 +144,7 @@ export function SiteChrome({ items, installCommand, sections }: Props) {
       themes: () => setOverlay('themes'),
       help: () => setOverlay('help'),
       'copy-install': () => copyText(installCommand, 'Install command copied'),
-      sidebar: toggleSidebar,
+      sidebar: () => sidebar && toggleSidebar(),
     }
     if (item.action) actions[item.action]()
   }
@@ -150,7 +152,9 @@ export function SiteChrome({ items, installCommand, sections }: Props) {
   return (
     <>
       {overlay === 'palette' && <CommandPalette items={items} onRun={run} onClose={() => setOverlay(null)} />}
-      {overlay === 'help' && <ShortcutSheet leaderLabel={LEADER_LABEL} onClose={() => setOverlay(null)} />}
+      {overlay === 'help' && (
+        <ShortcutSheet leaderLabel={LEADER_LABEL} sidebar={sidebar} onClose={() => setOverlay(null)} />
+      )}
       {overlay === 'themes' && theme && (
         <ThemePicker
           choice={theme.choice}
