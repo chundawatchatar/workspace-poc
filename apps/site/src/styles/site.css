@@ -3,24 +3,15 @@
 
 /* The site is drawn as an Orchestrator window: colours, fonts, motion, the attention ring and kbd come from @orch/ui. */
 
+/* Home and pricing have the top bar (SiteNav.astro): the 56px header, the 32px tab row and their two borders. */
 html {
   scroll-behavior: smooth;
-  scroll-padding-top: 88px;
+  scroll-padding-top: 90px;
 }
 
 /* Docs pages have the header only, without the tab bar. */
 html[data-area='docs'] {
   scroll-padding-top: 56px;
-}
-
-/* The home page's top bar (SiteNav.astro): two rows and a border below 1280px, one row from there. */
-html[data-area='home'] {
-  scroll-padding-top: 97px;
-}
-@media (min-width: 1280px) {
-  html[data-area='home'] {
-    scroll-padding-top: 57px;
-  }
 }
 
 body {
@@ -115,20 +106,13 @@ body {
   display: none;
 }
 
-/* The sidebar row the reader is on (scroll spy), styled like the app's active workspace. */
-.section-link[aria-current='true'] {
-  background: var(--color-accent);
-  color: var(--color-on-accent);
-}
-.section-link[aria-current='true'] .row-sub {
-  color: color-mix(in srgb, var(--color-on-accent) 75%, transparent);
-}
-
-/* The home page's nav link of the section the reader is on (scroll spy). */
-.nav-link[aria-current='true'] {
-  background: var(--color-raised);
+/* The top bar's tab of the section the reader is on (scroll spy), styled like the app's active terminal tab. */
+.nav-tab[aria-current='true'] {
+  background: var(--color-bg);
   color: var(--color-ink);
-  box-shadow: inset 0 -2px 0 var(--color-accent);
+}
+.nav-tab[aria-current='true'] svg {
+  color: var(--color-accent);
 }
 
 /* Docs prose, in the app's colours. */

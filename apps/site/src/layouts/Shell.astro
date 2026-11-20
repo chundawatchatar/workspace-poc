@@ -2,12 +2,11 @@
 import '../styles/site.css'
 import { FAVICON_HREF } from '@orch/brand'
 import { THEME_BOOT_SCRIPT } from '@orch/ui'
-import { BookOpen, CreditCard, House, Keyboard, Moon, Palette, PanelLeft, Search, Sun, X } from '@orch/ui/icons'
+import { BookOpen, Keyboard, Moon, Palette, PanelLeft, Search, Sun, X } from '@orch/ui/icons'
 import DocsSidebar from '../components/astro/DocsSidebar.astro'
 import GithubMark from '../components/astro/GithubMark.astro'
 import Logo from '../components/astro/Logo.astro'
 import SiteNav from '../components/astro/SiteNav.astro'
-import SiteSidebar from '../components/astro/SiteSidebar.astro'
 import { SiteChrome } from '../components/SiteChrome'
 import { sortedDocs } from '../lib/docs'
 import type { PaletteItem } from '../lib/palette'
@@ -27,12 +26,11 @@ const { title, description = SITE.description, tab, doc, path } = Astro.props
 const pageTitle = title ? `${title} · ${SITE.name}` : `${SITE.name}: ${SITE.tagline}`
 const docs = await sortedDocs()
 const inDocs = tab === 'docs'
-// The home page is a marketing page with a top bar; pricing and the docs are drawn as the app, with its sidebar.
-const home = tab === 'overview'
+// Home and pricing are marketing pages with a top bar; the docs are drawn as the app, with its sidebar.
 
-const tabs = [
-  { id: 'overview', label: 'Overview', href: '/', icon: House },
-  { id: 'pricing', label: 'Pricing', href: '/pricing', icon: CreditCard },
+const pages = [
+  { id: 'overview', label: 'Overview', href: '/' },
+  { id: 'pricing', label: 'Pricing', href: '/pricing' },
 ]
 
 const items: PaletteItem[] = [
@@ -44,7 +42,7 @@ const items: PaletteItem[] = [
     keys: `⌃B ${i + 1}`,
     href: `/#${section.id}`,
   })),
-  ...tabs.map((t) => ({ id: `page-${t.id}`, label: t.label, kind: 'page' as const, href: t.href })),
+  ...pages.map((p) => ({ id: `page-${p.id}`, label: p.label, kind: 'page' as const, href: p.href })),
   { id: 'page-docs', label: 'Docs', kind: 'page', href: '/docs/getting-started' },
   ...docs.map((d) => ({
     id: `doc-${d.id}`,
@@ -57,16 +55,16 @@ const items: PaletteItem[] = [
   { id: 'cmd-themes', label: 'Choose theme…', kind: 'command', keys: '⌃B T', action: 'themes' },
   { id: 'cmd-help', label: 'Keyboard shortcuts', kind: 'command', keys: '⌃B ?', action: 'help' },
   { id: 'cmd-copy', label: 'Copy install command', kind: 'command', action: 'copy-install' },
-  ...(home
-    ? []
-    : [{ id: 'cmd-sidebar', label: 'Toggle sidebar', kind: 'command', keys: '⌘B', action: 'sidebar' } as const]),
+  ...(inDocs
+    ? [{ id: 'cmd-sidebar', label: 'Toggle sidebar', kind: 'command', keys: '⌘B', action: 'sidebar' } as const]
+    : []),
   { id: 'cmd-github', label: 'Open GitHub repository', kind: 'command', href: SITE.githubUrl },
 ]
 const iconButton = 'rounded p-1 hover:bg-raised hover:text-ink'
 ---
 
 <!doctype html>
-<html lang="en" data-theme="dark" data-area={home ? 'home' : inDocs ? 'docs' : 'site'}>
+<html lang="en" data-theme="dark" data-area={inDocs ? 'docs' : 'site'}>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -80,11 +78,11 @@ const iconButton = 'rounded p-1 hover:bg-raised hover:text-ink'
   </head>
   <body>
     {
-      !home && (
+      inDocs && (
         <>
           <aside
             id="sidebar"
-            aria-label={inDocs ? 'Docs' : 'Site'}
+            aria-label="Docs"
             class="fixed inset-y-0 left-0 z-40 flex w-64 -translate-x-full flex-col border-r border-line bg-sidebar lg:translate-x-0"
           >
             <div class="flex h-10 shrink-0 items-center gap-2.5 border-b border-line px-3.5">
@@ -92,17 +90,13 @@ const iconButton = 'rounded p-1 hover:bg-raised hover:text-ink'
                 <Logo size={20} />
                 <span class="truncate text-[14px] font-semibold tracking-tight">{SITE.name}</span>
               </a>
-              {
-                inDocs && (
-                  <a
-                    href="/docs/getting-started"
-                    title="Docs home"
-                    class="rounded bg-raised px-1.5 py-0.5 font-mono text-[10px] text-dim hover:bg-accent hover:text-on-accent"
-                  >
-                    docs
-                  </a>
-                )
-              }
+              <a
+                href="/docs/getting-started"
+                title="Docs home"
+                class="rounded bg-raised px-1.5 py-0.5 font-mono text-[10px] text-dim hover:bg-accent hover:text-on-accent"
+              >
+                docs
+              </a>
               <span class="flex-1"></span>
               <button type="button" data-action="sidebar" aria-label="Close menu" class={`text-dim lg:hidden ${iconButton}`}>
                 <X size={16} />
@@ -110,7 +104,7 @@ const iconButton = 'rounded p-1 hover:bg-raised hover:text-ink'
             </div>
 
             <nav class="min-h-0 flex-1 overflow-y-auto px-2 py-2 text-[13px]">
-              {inDocs ? <DocsSidebar current={doc} /> : <SiteSidebar current={tab === 'pricing' ? 'pricing' : undefined} />}
+              <DocsSidebar current={doc} />
             </nav>
 
             <div class="flex h-9 shrink-0 items-center justify-between border-t border-line px-3 text-xs text-dim">
@@ -139,19 +133,18 @@ const iconButton = 'rounded p-1 hover:bg-raised hover:text-ink'
       )
     }
 
-    <div id="main" class:list={['min-w-0', !home && 'lg:pl-64']}>
-      <!-- The home page has its top bar. The others have two bars, as in the app: the workspace header, then the pane's
-           tab bar. Docs need only the header. -->
+    <div id="main" class:list={['min-w-0', inDocs && 'lg:pl-64']}>
+      <!-- Home and pricing have the top bar. The docs have the app's workspace header. -->
       {
-        home ? (
-          <SiteNav />
+        !inDocs ? (
+          <SiteNav current={tab} />
         ) : (
           <div class="sticky top-0 z-20">
             <header class="flex h-10 items-center gap-2 border-b border-line bg-sidebar px-2">
               <button type="button" data-action="sidebar" title="Toggle sidebar" aria-label="Toggle sidebar" class={`p-1.5 text-dim ${iconButton}`}>
                 <PanelLeft size={15} />
               </button>
-              <span class="truncate text-[13px] font-semibold">{inDocs ? 'docs' : 'orchestrator'}</span>
+              <span class="truncate text-[13px] font-semibold">docs</span>
               <span class="hidden min-w-0 truncate font-mono text-xs text-faint sm:inline">{path}</span>
               <div class="ml-auto flex shrink-0 items-center gap-1.5">
                 <button
@@ -161,17 +154,15 @@ const iconButton = 'rounded p-1 hover:bg-raised hover:text-ink'
                   class="flex h-7 items-center gap-2 rounded-md border border-line bg-bg/60 px-2 text-xs text-faint hover:border-dim/50 hover:text-dim md:w-52"
                 >
                   <Search size={13} />
-                  <span class="hidden md:inline">{inDocs ? 'Search docs…' : 'Search…'}</span>
+                  <span class="hidden md:inline">Search docs…</span>
                   <kbd class="ml-auto hidden md:inline">⌘P</kbd>
                 </button>
                 <a
                   href="/docs/getting-started"
-                  aria-current={inDocs ? 'page' : undefined}
-                  class={`flex h-7 items-center gap-1.5 rounded-md px-2 text-xs hover:bg-raised hover:text-ink ${
-                    inDocs ? 'text-ink' : 'text-dim'
-                  }`}
+                  aria-current="page"
+                  class="flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-ink hover:bg-raised"
                 >
-                  <BookOpen size={14} className={inDocs ? 'text-accent' : ''} />
+                  <BookOpen size={14} className="text-accent" />
                   Docs
                 </a>
                 <a href={SITE.githubUrl} class="hidden h-7 items-center gap-1.5 rounded-md px-2 text-xs text-dim hover:bg-raised hover:text-ink sm:flex">
@@ -183,24 +174,6 @@ const iconButton = 'rounded p-1 hover:bg-raised hover:text-ink'
                 </a>
               </div>
             </header>
-            {
-              !inDocs && (
-                <nav class="flex h-8 items-stretch overflow-x-auto border-b border-line bg-sidebar" aria-label="Pages">
-                {tabs.map((t) => (
-                  <a
-                    href={t.href}
-                    aria-current={t.id === tab ? 'page' : undefined}
-                    class={`flex max-w-52 min-w-24 shrink-0 items-center gap-1.5 border-r border-line px-2.5 text-xs select-none ${
-                      t.id === tab ? 'bg-bg text-ink' : 'text-faint hover:text-dim'
-                    }`}
-                  >
-                    <t.icon size={13} className={t.id === tab ? 'text-accent' : ''} />
-                    <span class="truncate">{t.label}</span>
-                  </a>
-                ))}
-                </nav>
-              )
-            }
           </div>
         )
       }
@@ -212,12 +185,7 @@ const iconButton = 'rounded p-1 hover:bg-raised hover:text-ink'
       {
         !inDocs && (
           <footer class="border-t border-line bg-sidebar">
-            <div
-              class:list={[
-                'mx-auto flex flex-col gap-3 px-4 py-6 text-xs text-faint sm:flex-row sm:items-center sm:px-8',
-                home ? 'max-w-7xl' : 'max-w-6xl',
-              ]}
-            >
+            <div class="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-6 text-xs text-faint sm:flex-row sm:items-center sm:px-8">
               <span class="flex items-center gap-2 text-dim">
                 <Logo size={16} />
                 {SITE.name}
@@ -240,12 +208,12 @@ const iconButton = 'rounded p-1 hover:bg-raised hover:text-ink'
       items={items}
       installCommand={SITE.installCommand}
       sections={SECTIONS.map((s) => s.id)}
-      sidebar={!home}
+      sidebar={inDocs}
     />
 
     <script>
-      // Scroll spy: the link of the section on screen is current, in the sidebar or in the home page's nav, which
-      // draws each section twice. A section with no link, like the hero under the nav, leaves none current.
+      // Scroll spy: the link of the section on screen is current, in the docs sidebar or in the top bar's tab row, which
+      // is scrolled to show it. A section with no link, like the hero under the nav, leaves none current.
       const links = [...document.querySelectorAll<HTMLElement>('[data-section-link]')]
       const sections = document.querySelectorAll('main section[id]')
       if (links.length && sections.length) {
@@ -253,7 +221,14 @@ const iconButton = 'rounded p-1 hover:bg-raised hover:text-ink'
           (entries) => {
             for (const entry of entries) {
               if (!entry.isIntersecting) continue
-              for (const link of links) link.setAttribute('aria-current', String(link.dataset.sectionLink === entry.target.id))
+              for (const link of links) {
+                const current = link.dataset.sectionLink === entry.target.id
+                link.setAttribute('aria-current', String(current))
+                const row = link.parentElement
+                if (current && link.classList.contains('nav-tab') && row && row.scrollWidth > row.clientWidth) {
+                  row.scrollTo({ left: link.offsetLeft - (row.clientWidth - link.offsetWidth) / 2, behavior: 'smooth' })
+                }
+              }
             }
           },
           { rootMargin: '-45% 0px -50% 0px' },
