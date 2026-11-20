@@ -91,7 +91,7 @@ body {
   }
 }
 
-/* While the leader key waits for its second key, the sidebar footer or the home page's nav says so, as in the app. */
+/* While the leader key waits for its second key, the docs sidebar's footer says so, as in the app. */
 .leader-chip,
 [data-leader] .leader-hides {
   display: none;

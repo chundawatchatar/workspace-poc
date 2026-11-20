@@ -26,7 +26,7 @@ const { title, description = SITE.description, tab, doc, path } = Astro.props
 const pageTitle = title ? `${title} · ${SITE.name}` : `${SITE.name}: ${SITE.tagline}`
 const docs = await sortedDocs()
 const inDocs = tab === 'docs'
-// Home and pricing are marketing pages with a top bar; the docs are drawn as the app, with its sidebar.
+// Home and pricing are marketing pages with a top bar; the docs are drawn as the app, with its sidebar and keys.
 
 const pages = [
   { id: 'overview', label: 'Overview', href: '/' },
@@ -39,7 +39,7 @@ const items: PaletteItem[] = [
     label: section.name,
     detail: `~/${section.name}`,
     kind: 'section' as const,
-    keys: `⌃B ${i + 1}`,
+    keys: inDocs ? `⌃B ${i + 1}` : undefined,
     href: `/#${section.id}`,
   })),
   ...pages.map((p) => ({ id: `page-${p.id}`, label: p.label, kind: 'page' as const, href: p.href })),
@@ -52,11 +52,14 @@ const items: PaletteItem[] = [
     href: `/docs/${d.id}`,
   })),
   { id: 'cmd-theme', label: 'Toggle light / dark', kind: 'command', action: 'toggle-theme' },
-  { id: 'cmd-themes', label: 'Choose theme…', kind: 'command', keys: '⌃B T', action: 'themes' },
-  { id: 'cmd-help', label: 'Keyboard shortcuts', kind: 'command', keys: '⌃B ?', action: 'help' },
+  { id: 'cmd-themes', label: 'Choose theme…', kind: 'command', keys: inDocs ? '⌃B T' : undefined, action: 'themes' },
   { id: 'cmd-copy', label: 'Copy install command', kind: 'command', action: 'copy-install' },
+  // Keyboard shortcuts and the sidebar are the docs' only: the marketing pages have neither.
   ...(inDocs
-    ? [{ id: 'cmd-sidebar', label: 'Toggle sidebar', kind: 'command', keys: '⌘B', action: 'sidebar' } as const]
+    ? ([
+        { id: 'cmd-help', label: 'Keyboard shortcuts', kind: 'command', keys: '⌃B ?', action: 'help' },
+        { id: 'cmd-sidebar', label: 'Toggle sidebar', kind: 'command', keys: '⌘B', action: 'sidebar' },
+      ] as const)
     : []),
   { id: 'cmd-github', label: 'Open GitHub repository', kind: 'command', href: SITE.githubUrl },
 ]
@@ -208,7 +211,7 @@ const iconButton = 'rounded p-1 hover:bg-raised hover:text-ink'
       items={items}
       installCommand={SITE.installCommand}
       sections={SECTIONS.map((s) => s.id)}
-      sidebar={inDocs}
+      docs={inDocs}
     />
 
     <script>

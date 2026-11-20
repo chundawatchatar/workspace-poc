@@ -1,24 +1,19 @@
 import { Modal } from '@orch/ui'
 
-/** `sidebar` marks a row that only applies where the page has a sidebar. */
-const SITE_ROWS: { label: string; leader: string; direct: string; sidebar?: boolean }[] = [
+const SITE_ROWS: { label: string; leader: string; direct: string }[] = [
   { label: 'Command palette', leader: '', direct: '⌘P  ·  Ctrl+Shift+P' },
   { label: 'Jump to section 1–7', leader: '1 – 7', direct: '' },
   { label: 'Choose theme', leader: 'T', direct: '' },
-  { label: 'Toggle sidebar', leader: 'B', direct: '⌘B on Mac', sidebar: true },
+  { label: 'Toggle sidebar', leader: 'B', direct: '⌘B on Mac' },
   { label: 'Show shortcuts', leader: '?', direct: '' },
 ]
 
-/**
- * The site's own shortcuts. They work like the app's: the same leader key, the same palette keys. Without `sidebar`,
- * on a page with no sidebar, the sidebar row is left out.
- */
-export function ShortcutSheet(props: { leaderLabel: string; sidebar: boolean; onClose: () => void }) {
-  const rows = SITE_ROWS.filter((row) => props.sidebar || !row.sidebar)
+/** The docs' own shortcuts. They work like the app's: the same leader key, the same palette keys. */
+export function ShortcutSheet(props: { leaderLabel: string; onClose: () => void }) {
   return (
     <Modal title="Keyboard shortcuts" width="w-[520px] max-w-[94vw]" onClose={props.onClose}>
       <p className="mb-3 text-xs leading-relaxed text-dim">
-        This site answers to the app's keys. Press <kbd>{props.leaderLabel}</kbd>, release, then the key in the first
+        The docs answer to the app's keys. Press <kbd>{props.leaderLabel}</kbd>, release, then the key in the first
         column.
       </p>
       <table className="w-full text-xs">
@@ -30,7 +25,7 @@ export function ShortcutSheet(props: { leaderLabel: string; sidebar: boolean; on
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
+          {SITE_ROWS.map((row) => (
             <tr key={row.label} className="border-t border-line/60">
               <td className="py-1.5 pr-3">{row.label}</td>
               <td className="py-1.5 pr-3">{row.leader && <kbd>{row.leader}</kbd>}</td>

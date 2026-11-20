@@ -4,9 +4,8 @@
 // tab bar in the app. The tab row scrolls sideways when it doesn't fit, and below 640px Docs and Pricing join it.
 // Shell.astro's scroll spy marks the current section's tab, and site.css's `scroll-padding-top` matches the bar's
 // height.
-import { Keyboard, Moon, Palette, Search, SquareTerminal, Sun } from '@orch/ui/icons'
+import { Moon, Palette, Search, SquareTerminal, Sun } from '@orch/ui/icons'
 import { SECTIONS, SITE } from '../../site.config'
-import GithubMark from './GithubMark.astro'
 import Logo from './Logo.astro'
 
 interface Props {
@@ -41,15 +40,10 @@ const iconButton = 'rounded-md p-1.5 text-dim hover:bg-raised hover:text-ink'
         >
           <Search size={14} />
           <span class="hidden lg:inline">Search…</span>
-          <kbd class="hidden lg:inline">⌘P</kbd>
         </button>
         <a href="/docs/getting-started" class={`hidden sm:flex ${pageLink}`}>Docs</a>
         <a href="/pricing" aria-current={onPricing ? 'page' : undefined} class={`hidden sm:flex ${pageLink}`}>Pricing</a>
-        <a href={SITE.githubUrl} class={`hidden gap-1.5 sm:flex ${pageLink}`}>
-          <GithubMark size={14} />
-          GitHub
-        </a>
-        <span class="leader-hides flex items-center">
+        <span class="flex items-center">
           <button type="button" data-action="toggle-theme" title="Toggle light / dark" aria-label="Toggle light and dark" class={iconButton}>
             <Moon size={15} className="when-dark" />
             <Sun size={15} className="when-light" />
@@ -57,14 +51,7 @@ const iconButton = 'rounded-md p-1.5 text-dim hover:bg-raised hover:text-ink'
           <button type="button" data-open="themes" title="Choose theme" aria-label="Choose theme" class={iconButton}>
             <Palette size={15} />
           </button>
-          <button type="button" data-open="help" title="Keyboard shortcuts" aria-label="Keyboard shortcuts" class={iconButton}>
-            <Keyboard size={15} />
-          </button>
         </span>
-        <span class="leader-chip rounded bg-accent px-1.5 py-0.5 text-[11px] font-medium text-on-accent">Ctrl+B …</span>
-        <a href="/docs/getting-started" class="ml-1 flex h-8 shrink-0 items-center rounded-md bg-accent px-3 text-[13px] font-medium text-on-accent hover:opacity-90">
-          Install
-        </a>
       </div>
     </div>
 
