@@ -15,8 +15,8 @@ interface Props {
   /** Section ids in sidebar order, for Ctrl+B then 1–9. */
   sections: string[]
   /**
-   * True on the docs, which are drawn as the app: a sidebar and the app's keys (the palette keys, the Ctrl+B leader
-   * key, ⌘B). The marketing pages have neither, so there only Escape is handled, to close an overlay.
+   * True on the docs, which are drawn as the app: a sidebar and the app's keys (the Ctrl+B leader key, ⌘B). The home
+   * page has neither, so there only the palette keys and Escape are handled.
    */
   docs: boolean
 }
@@ -110,11 +110,11 @@ export function SiteChrome({ items, installCommand, sections, docs }: Props) {
         setLeader(false)
         setOverlay(null)
         document.documentElement.classList.remove('drawer-open')
-      } else if (!docs) {
-        return
       } else if (isPaletteKey(event)) {
         event.preventDefault()
         setOverlay((current) => (current === 'palette' ? null : 'palette'))
+      } else if (!docs) {
+        return
       } else if (event.metaKey && !event.ctrlKey && event.code === 'KeyB') {
         event.preventDefault()
         toggleSidebar()
