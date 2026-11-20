@@ -8,13 +8,12 @@ import {
   Columns2,
   Globe,
   Keyboard,
-  Laptop,
   LockKeyhole,
   Palette,
   PanelLeft,
-  Plug,
   ShieldCheck,
   SquareTerminal,
+  Unplug,
   Workflow,
   Zap,
 } from '@orch/ui/icons'
@@ -297,14 +296,17 @@ const agents = ['claude', 'codex', 'opencode', 'cursor-agent', 'aider', 'gemini'
           path="remote"
           tone="zoom"
           title="Your machine, from any browser."
-          lead="Turn on remote access and the host opens one outbound tunnel to a relay. Open the connect link anywhere and you are in the same workspace, terminals and all. No ports to open, no VPN."
+          lead="Sign in, connect the machine with your account's email and a one-time key, and accept it in the client. Then open it from any browser signed in to your account, terminals and all, through one outbound tunnel. No ports to open, no VPN."
         />
         <ul class="space-y-3 text-[15px]">
           {
             [
-              { icon: ShieldCheck, text: 'Every request carries an access key. The host keeps only its hash.' },
-              { icon: Plug, text: 'Rotate the key in one click to cut every remote session at once.' },
-              { icon: Laptop, text: 'Self-host the relay for free, or let Orchestrator run it for you.' },
+              {
+                icon: ShieldCheck,
+                text: 'Each browser is approved on the machine itself, by typing the fingerprint the browser shows.',
+              },
+              { icon: LockKeyhole, text: "Sessions are sealed end to end, so the server relays traffic it can't read." },
+              { icon: Unplug, text: 'Revoke a browser or disconnect the machine, and what it has open closes.' },
             ].map((point) => (
               <li class="flex gap-3">
                 <point.icon size={17} className="mt-0.5 shrink-0 text-zoom" />
@@ -319,25 +321,48 @@ const agents = ['claude', 'codex', 'opencode', 'cursor-agent', 'aider', 'gemini'
       </div>
 
       <PaneFrame tabs={['Remote access']} zoom bodyClass="space-y-3 p-5 text-[13px]">
-        <div class="flex items-center gap-2">
-          <span class="h-2 w-2 rounded-full bg-good"></span>
-          Connected
-          <span class="ml-1 truncate font-mono text-[11px] text-faint">m_7f3a9c21</span>
-          <span class="ml-auto rounded-full bg-zoom px-2 py-0.5 text-[11px] font-medium text-on-accent">On</span>
-        </div>
-        <label class="block">
-          <span class="mb-1 block text-xs text-dim">Server address</span>
-          <span class="block truncate rounded-md border border-line bg-bg px-2.5 py-1.5 font-mono">wss://relay.{SITE.domain}</span>
-        </label>
-        <label class="block">
-          <span class="mb-1 block text-xs text-dim">Connect link · shown once</span>
-          <span class="block truncate rounded-md border border-zoom/60 bg-bg px-2.5 py-1.5 font-mono text-zoom">
-            https://app.{SITE.domain}/#machine=m_7f3a9c21&key=k_••••••••••••
+        <div class="flex items-center justify-between gap-3 rounded-md bg-raised/60 px-3 py-2">
+          <span class="flex items-center gap-2 whitespace-nowrap">
+            <span class="h-2 w-2 shrink-0 rounded-full bg-good"></span>
+            Connected
           </span>
-        </label>
-        <div class="flex justify-end gap-2 pt-1">
-          <span class="rounded-md border border-line px-3 py-1.5 text-xs text-dim">New connect link</span>
-          <span class="rounded-md bg-accent px-3 py-1.5 text-xs text-on-accent">Copy</span>
+          <span class="truncate font-mono text-[11px] text-dim">Machine key 7KQM-3XRA-9DPW-HT2C</span>
+        </div>
+        <div class="flex items-center justify-between gap-3 rounded-md border border-line p-2.5">
+          <div class="min-w-0">
+            <div class="truncate">Ada <span class="text-dim">(a***@example.com)</span></div>
+            <div class="truncate font-mono text-[11px] text-faint">wss://relay.{SITE.domain}</div>
+          </div>
+          <span class="shrink-0 rounded-md px-3 py-1.5 text-xs text-dim">Disconnect</span>
+        </div>
+        <div class="space-y-2 rounded-md border border-warn/60 bg-warn/10 p-2.5">
+          <div class="flex items-center gap-2 font-medium">
+            <span class="h-2 w-2 shrink-0 rounded-full bg-warn"></span>
+            Browser connect requests
+            <span class="rounded-full bg-warn/25 px-1.5 text-[11px] leading-4 font-semibold">1</span>
+          </div>
+          <div class="flex items-center justify-between gap-2 rounded-md border border-line bg-bg px-2.5 py-1.5">
+            <div class="min-w-0">
+              <div class="truncate font-mono text-xs">R2VX-6TNB-QH8E-W3PF</div>
+              <div class="text-[11px] text-faint">First seen Nov 20, 14:05</div>
+            </div>
+            <span class="shrink-0 rounded-md px-2.5 py-1 text-xs text-dim">Dismiss</span>
+          </div>
+          <span class="block pt-0.5 text-xs text-dim">Fingerprint shown in your browser</span>
+          <div class="flex items-center gap-2 rounded-md border border-line bg-bg py-1 pr-1 pl-2.5">
+            <span class="min-w-0 flex-1 truncate font-mono">R2VX-6TNB-QH8E-W3PF</span>
+            <span class="shrink-0 rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-on-accent">Approve</span>
+          </div>
+        </div>
+        <div class="space-y-2 rounded-md border border-line p-2.5">
+          <div class="text-xs text-dim">Approved browsers</div>
+          <div class="flex items-center justify-between gap-2">
+            <div class="min-w-0">
+              <div class="truncate font-mono text-xs">M4TR-8WQE-2KZN-VJ6D</div>
+              <div class="text-[11px] text-faint">Approved Nov 18, 09:42</div>
+            </div>
+            <span class="shrink-0 rounded-md px-2.5 py-1 text-xs text-dim">Revoke</span>
+          </div>
         </div>
       </PaneFrame>
     </div>

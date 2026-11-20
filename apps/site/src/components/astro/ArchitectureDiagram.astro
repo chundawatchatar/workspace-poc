@@ -21,7 +21,7 @@ const flow = (color: string) => `${hair} stroke: ${color}; stroke-width: 1.5; st
     viewBox="0 0 1040 372"
     class="mx-auto hidden h-auto w-full max-w-[1040px] md:block"
     role="img"
-    aria-label="A browser on your machine talks to the host over 127.0.0.1. A browser elsewhere goes through the relay, which your host reaches through one outbound tunnel. The host runs the terminal daemon, which owns your shells and agents."
+    aria-label="A browser on your machine talks to the host over 127.0.0.1. A browser elsewhere, signed in to your account, goes through the relay, which your host reaches through one outbound tunnel and which stores no workspace content. The host runs the terminal daemon, which owns your shells and agents."
   >
     <defs>
       <marker id="head-accent" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto">
@@ -61,13 +61,13 @@ const flow = (color: string) => `${hair} stroke: ${color}; stroke-width: 1.5; st
     <!-- Remote browser, through the relay and the tunnel -->
     <rect x="16.5" y="260.5" width="260" height="64" rx="4" style={box('var(--color-zoom)')}></rect>
     <text x="32" y="287" style={name}>Any browser, anywhere</text>
-    <text x="32" y="307" style={path}>#machine=…&key=…</text>
+    <text x="32" y="307" style={path}>signed in to your account</text>
     <path d="M277 292.5H371" style={rail('var(--color-zoom)')}></path>
     <path class="stream" d="M277 292.5H371" style={flow('var(--color-zoom)')} marker-end="url(#head-zoom)"></path>
 
     <rect x="372.5" y="260.5" width="260" height="64" rx="4" style={box('var(--color-zoom)')}></rect>
     <text x="388" y="287" style={name}>Relay</text>
-    <text x="388" y="307" style={note}>Forwards traffic, stores nothing</text>
+    <text x="388" y="307" style={note}>Relays traffic, stores no workspace content</text>
 
     <path d="M720 108.5H666.5V292.5H633" style={rail('var(--color-zoom)')}></path>
     <path
@@ -107,8 +107,8 @@ const flow = (color: string) => `${hair} stroke: ${color}; stroke-width: 1.5; st
     </li>
     <li class="rounded border border-zoom bg-panel px-3 py-2">
       <b class="font-semibold">Or any browser, via the relay</b>
-      <span class="block font-mono text-xs text-faint">#machine=…&key=…</span>
-      <span class="block text-[11px] text-dim">One outbound tunnel. The relay stores nothing.</span>
+      <span class="block font-mono text-xs text-faint">signed in to your account</span>
+      <span class="block text-[11px] text-dim">One outbound tunnel. The relay stores no workspace content.</span>
     </li>
     <li class="rounded border border-line bg-bg px-3 py-2">
       <b class="font-semibold">Your machine or VM</b>
