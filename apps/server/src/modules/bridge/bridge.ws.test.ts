@@ -274,7 +274,7 @@ describe('bridge socket', () => {
     await opened(b)
     await until(() => of(m, 'ws.open').length === 1)
 
-    const agentState: AgentState = { state: 'working', reason: 'progress', source: 'signals', since: 1_700_000_000_000 }
+    const agentState: AgentState = { state: 'working', reason: 'turn', since: 1_700_000_000_000 }
     const session: SessionInfo = {
       id: 's1',
       title: 'claude',

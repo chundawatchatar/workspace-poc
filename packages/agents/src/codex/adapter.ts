@@ -2,7 +2,6 @@ import { join } from 'node:path'
 import { firstLine, recentTranscripts, safeJson } from '../runtime/helpers'
 import type { AgentAdapter } from '../runtime-types'
 import { definition } from './definition'
-import { codexTracking } from './tracking'
 
 /** The word after a subcommand, as in `codex resume <id>`. */
 function subcommandValue(argv: string[], subcommand: string): string | null {
@@ -42,5 +41,4 @@ export const adapter = {
     return undefined
   },
   resumeCommand: (id) => (id ? `codex resume ${id}` : 'codex'),
-  tracking: codexTracking,
 } satisfies AgentAdapter

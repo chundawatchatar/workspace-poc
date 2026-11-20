@@ -1,12 +1,12 @@
 import { existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
+import type { AgentReport } from '@orch/agents/runtime'
 import type { AgentRef, SessionInfo, TermColors, TermServerMsg } from '@orch/shared'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { Terminal } from '@xterm/headless'
-import type { AgentShellEnv } from './agent-channel'
-import { isShimFolder, zshWrapperFor } from './agent-shim'
 import { AttentionSlot } from './attention'
 import type { Foreground } from './processes'
+import { PROGRAM_STATUS_OSC, PROGRAM_STATUS_REPLY, readProgramStatus, statusQueries } from './program-status'
 
 /** One attached browser terminal. Output is held back until its snapshot is sent. */
 export interface TermClient {
@@ -103,16 +103,9 @@ const KEPT_ENV = new Set([
 /**
  * The environment a new shell starts with. It leaves out whatever the host was
  * launched from (a package script, an agent session, an editor terminal), so
- * agents run in it behave as in the user's own terminal and inherit no tokens.
- * `agent` is this shell's own reporting token, socket and shim folder, when it
- * has them. A shim folder inherited from a product terminal is always dropped.
- * `shell` is the program being started, which decides the zsh wrapper.
+ * agents run in it behave as in the user's own terminal.
  */
-export function shellEnv(
-  env: Record<string, string | undefined>,
-  agent?: AgentShellEnv | null,
-  shell: string = shellProgram(env),
-): Record<string, string> {
+export function shellEnv(env: Record<string, string | undefined>): Record<string, string> {
   const kept: Record<string, string> = {}
   for (const [key, value] of Object.entries(env)) {
     if (value !== undefined && (KEPT_ENV.has(key) || key.startsWith('LC_'))) kept[key] = value
@@ -120,22 +113,15 @@ export function shellEnv(
   // `bun run` puts package binaries and its own `node` shim first.
   const path = (env.PATH ?? '')
     .split(':')
-    .filter((dir) => dir && !dir.includes('/node_modules/.bin') && !dir.includes('/bun-node-') && !isShimFolder(dir))
-  if (agent?.shimDir) path.unshift(agent.shimDir)
+    .filter((dir) => dir && !dir.includes('/node_modules/.bin') && !dir.includes('/bun-node-'))
   if (path.length > 0) kept.PATH = path.join(':')
-  if (agent) {
-    kept.ORCH_AGENT_TOKEN = agent.token
-    kept.ORCH_AGENT_SOCKET = agent.socket
-  }
-  const wrapper = agent?.shimDir ? zshWrapperFor(shell, agent.shimDir) : null
-  if (wrapper) kept.ZDOTDIR = wrapper
   return { ...kept, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'workspace-poc' }
 }
 
-/** How a terminal takes part in agent reporting: one token per shell, given up when that shell ends. */
+/** Where a terminal's agent status goes: the reports its program writes, and the end of its shell. */
 export interface ShellReporting {
-  /** Asked before every shell start, including a restart with Enter. Null means this shell gets no token. */
-  issue(): AgentShellEnv | null
+  /** The program wrote OSC 7501, read into the standard status by `readProgramStatus`. */
+  report(report: AgentReport | 'clear'): void
   exited(): void
 }
 
@@ -315,6 +301,8 @@ export class TerminalCore {
   /** The attached views' theme, for answering colour queries while none is attached. */
   private palette: TermColors | null = null
   private lastRedraw = 0
+  /** The end of the last output, in case a support question is split across two pieces of it. */
+  private queryTail: Uint8Array = new Uint8Array()
 
   constructor(
     readonly id: string,
@@ -336,6 +324,12 @@ export class TerminalCore {
       this.onChange()
     })
     this.term.onBell(() => this.raise('Bell'))
+    // The Program Status Protocol's reports. Its support question is answered in `output`, before parsing.
+    this.term.parser.registerOscHandler(PROGRAM_STATUS_OSC, (data) => {
+      const read = readProgramStatus(data)
+      if (read && read !== 'query') this.reporting?.report(read)
+      return true
+    })
     // Desktop-notification escape sequences that coding agents and scripts emit.
     this.term.parser.registerOscHandler(9, (data) => {
       const progress = parseProgress(data)
@@ -418,7 +412,7 @@ export class TerminalCore {
     if (this.attentionSlot.clear()) this.onChange()
   }
 
-  /** Raises attention for a moment the agent's hooks reported, with a fixed message. */
+  /** Raises attention for a moment the agent reported, with a fixed message. */
   notify(message: string) {
     this.attentionSlot.agent(message, Date.now())
     this.onChange()
@@ -431,7 +425,7 @@ export class TerminalCore {
   private spawn() {
     const proc = Bun.spawn([this.shell, '-l'], {
       cwd: usableCwd(this.cwd),
-      env: shellEnv(process.env, this.reporting?.issue(), this.shell),
+      env: shellEnv(process.env),
       terminal: {
         cols: this.cols,
         rows: this.rows,
@@ -454,8 +448,23 @@ export class TerminalCore {
   // Bun's PTY can't pause reading, so a flood of output is never slowed at the
   // source. Whoever forwards this output skips it for clients that can't keep up.
   private output(data: Uint8Array) {
+    this.answerStatusQueries(data)
     this.term.write(data)
     this.onOutput(data)
+  }
+
+  /**
+   * Answers the Program Status Protocol's support question as soon as the bytes
+   * arrive, always, not only while no view answers queries: no browser terminal
+   * knows it, and a program that gets no answer at start never reports. It reads
+   * the raw output rather than waiting for the parser, which runs later, because
+   * a browser view gets the same bytes at once, and its answer to the
+   * device-attributes query after the question must not arrive first.
+   */
+  private answerStatusQueries(data: Uint8Array) {
+    const { count, tail } = statusQueries(this.queryTail, data)
+    this.queryTail = tail
+    for (let i = 0; i < count; i++) this.proc?.terminal?.write(PROGRAM_STATUS_REPLY)
   }
 
   /**

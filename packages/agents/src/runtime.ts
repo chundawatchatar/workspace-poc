@@ -5,19 +5,10 @@ import { adapter as cursor } from './cursor/adapter'
 import { adapter as opencode } from './opencode/adapter'
 import { adapter as pi } from './pi/adapter'
 import type { AgentKind } from './registry'
-import type { AgentAdapter, AgentTracker } from './runtime-types'
+import type { AgentAdapter } from './runtime-types'
 
+/** How each registered agent's process is recognised and its conversation resumed. */
 export const AGENTS = [claude, codex, opencode, cursor, pi, commandcode] as const satisfies readonly AgentAdapter[]
-
-type TrackedAgent = Extract<(typeof AGENTS)[number], { tracking: AgentTracker }>
-
-/** The kinds that have `tracking`. Exact, so anything keyed by it fails to compile when it misses one. */
-export type TrackedAgentKind = TrackedAgent['kind']
-
-/** The kinds in `agents` that have `tracking`, in list order. */
-export function trackedKinds(agents: readonly AgentAdapter[] = AGENTS): TrackedAgentKind[] {
-  return agents.filter((agent): agent is TrackedAgent => agent.tracking !== undefined).map((agent) => agent.kind)
-}
 
 /** The runtime adapter for a registered agent, or undefined if none was supplied. */
 export function agentAdapter(kind: AgentKind): AgentAdapter | undefined {
@@ -30,8 +21,5 @@ export function agentAdapter(kind: AgentKind): AgentAdapter | undefined {
  */
 export const agentSourceDirectory = import.meta.dir
 
-export * from './claude/tracking'
-export * from './codex/tracking'
-export * from './runtime/events'
-export * from './runtime/shim'
 export type * from './runtime-types'
+export * from './status'

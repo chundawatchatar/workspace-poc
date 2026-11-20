@@ -1,4 +1,4 @@
-import { agentTracking, type DaemonDecoder, type TerminalCore } from '@orch/terminal'
+import type { DaemonDecoder, TerminalCore } from '@orch/terminal'
 import { z } from 'zod'
 
 /** The host-to-daemon messages. Every session request is bound to the connection that attached it. */
@@ -15,8 +15,8 @@ export const request = z.discriminatedUnion('type', [
     create: z.boolean().default(true),
     /** Whether a browser view is attached through this connection; one that is answers terminal queries. */
     viewing: z.boolean().default(false),
-    /** Which agents this session may track. Absent means none, and leaves a session that exists unchanged. */
-    tracking: agentTracking.optional(),
+    /** The session's switch (AG-5): off, its program's reports are kept but raise no notification. */
+    reporting: z.boolean(),
   }),
   z.object({ type: z.literal('input'), data: z.string().max(64 * 1024) }),
   z.object({ type: z.literal('resize'), cols: z.number().int(), rows: z.number().int() }),
@@ -30,9 +30,9 @@ export const request = z.discriminatedUnion('type', [
   z.object({ type: z.literal('redraw') }),
   /** The shell is back at its prompt, so progress its last program left behind is cleared. */
   z.object({ type: z.literal('idle') }),
-  /** Which agents this session may track. Turning all of them off ends its token at once. */
-  z.object({ type: z.literal('tracking'), ...agentTracking.shape }),
-  /** The agent run ended (process inspection saw it leave), so its hook state is dropped. */
+  /** Turns the session's switch on or off. */
+  z.object({ type: z.literal('reporting'), on: z.boolean() }),
+  /** The agent run ended (process inspection saw it leave), so its report is dropped. */
   z.object({ type: z.literal('agentExited') }),
   /** Ends every session and the daemon. Sent by `terminals:stop`, never by a running host. */
   z.object({ type: z.literal('stop') }),

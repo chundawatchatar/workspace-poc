@@ -2,8 +2,7 @@ import { afterEach, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { AGENT_HOOK_REASONS, AGENT_HOOK_STATES } from '@orch/agents/runtime'
-import { agentEvent } from './agent-channel'
+import { AGENT_REASONS, AGENT_STATES } from '@orch/agents/runtime'
 import {
   buildId,
   DaemonDecoder,
@@ -26,6 +25,7 @@ const status = {
   progress: null,
   cols: 80,
   rows: 24,
+  agentReport: null,
 }
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
@@ -52,23 +52,18 @@ test('rejects unbounded or empty daemon frames before buffering their payload', 
   }
 })
 
-test('a daemon status may carry its start time, and one from an older daemon without it still parses', () => {
+test('a daemon status may carry its start time, and carries the last report in the standard status', () => {
   expect(daemonStatus.parse({ ...status, startedAt: 1_700_000_000_000 }).startedAt).toBe(1_700_000_000_000)
-  expect(daemonStatus.parse(status).startedAt).toBeUndefined()
-  expect(daemonStatus.parse(status).agentHook).toBeUndefined()
-  const agentHook = { agent: 'claude', state: 'working', reason: 'tool', at: 5 }
-  expect(daemonStatus.parse({ ...status, agentHook }).agentHook).toEqual(agentHook as never)
-  expect(daemonStatus.parse({ ...status, agentHook: null }).agentHook).toBeNull()
-})
-
-test('every hook event the channel accepts can be stored, except exited', () => {
-  for (const state of AGENT_HOOK_STATES) {
-    for (const reason of AGENT_HOOK_REASONS) {
-      const event = { agent: 'claude', state, reason }
-      expect(agentEvent.safeParse(event).success).toBe(true)
-      expect(daemonStatus.safeParse({ ...status, agentHook: { ...event, at: 5 } }).success).toBe(reason !== 'exited')
+  expect(daemonStatus.parse(status).agentReport).toBeNull()
+  for (const state of AGENT_STATES) {
+    for (const reason of AGENT_REASONS) {
+      const agentReport = { state, reason, at: 5 }
+      expect(daemonStatus.parse({ ...status, agentReport }).agentReport).toEqual(agentReport)
     }
   }
+  expect(daemonStatus.safeParse({ ...status, agentReport: { state: 'working', reason: 'tool', at: 5 } }).success).toBe(
+    false,
+  )
 })
 
 test('an embedded build id reads no file; from source the id hashes the non-test sources', () => {

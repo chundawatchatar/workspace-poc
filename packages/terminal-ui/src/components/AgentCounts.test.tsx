@@ -8,18 +8,16 @@ describe('AgentCounts', () => {
   test('renders nothing for a workspace with no agents to state', () => {
     const noTerminals = makeWorkspace('ws', '/w', makePane([makeSurface('pulls')]))
     const shell = makeSurface()
-    const signalsIdle = makeSurface()
+    const silent = makeSurface()
     const onlyShells = makeWorkspace('ws', '/w', makePane([shell]))
-    const onlySignalsIdle = makeWorkspace('ws', '/w', makePane([signalsIdle]))
+    // An agent that reports nothing, however busy its terminal looks.
+    const onlySilent = makeWorkspace('ws', '/w', makePane([silent]))
     const sessions = {
       [shell.id]: { agentState: null, progress: null },
-      [signalsIdle.id]: {
-        agentState: { state: 'idle', reason: 'detected', source: 'signals', since: 1 },
-        progress: null,
-      },
+      [silent.id]: { agent: { kind: 'opencode', sessionId: null, cwd: '/w' }, agentState: null, progress: 'busy' },
     } as unknown as Record<string, SessionInfo>
 
-    for (const workspace of [noTerminals, onlyShells, onlySignalsIdle]) {
+    for (const workspace of [noTerminals, onlyShells, onlySilent]) {
       const { container, unmount } = render(<AgentCounts counts={agentCounts(workspace, sessions)} active={false} />)
       expect(container).toBeEmptyDOMElement()
       unmount()

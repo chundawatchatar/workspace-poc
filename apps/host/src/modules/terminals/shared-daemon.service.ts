@@ -3,7 +3,7 @@ import { closeSync, openSync } from 'node:fs'
 import { createConnection } from 'node:net'
 import { join } from 'node:path'
 import type { DaemonCompatibility } from '@orch/shared'
-import { type AgentTracking, DAEMON_PROTOCOL, type daemonStatus, shellEnv, trackingForAll } from '@orch/terminal'
+import { DAEMON_PROTOCOL, type daemonStatus, shellEnv } from '@orch/terminal'
 import type { z } from 'zod'
 import type { DaemonRepository } from './daemon.repository'
 import { type DaemonContact, daemonCompatibility } from './daemon-build'
@@ -27,8 +27,6 @@ export class SharedDaemon {
   /** The command that stops the daemon, named in every warning about it. */
   readonly stopHint: string
   private readonly shell: string
-  /** The user's trust answers as tracking, read each time a terminal tells the daemon its tracking. */
-  readonly tracking: () => AgentTracking
 
   constructor(options: {
     repository: DaemonRepository
@@ -36,14 +34,12 @@ export class SharedDaemon {
     build: string
     stopHint: string
     shell: string
-    tracking?: () => AgentTracking
   }) {
     this.repository = options.repository
     this.command = options.command
     this.build = options.build
     this.stopHint = options.stopHint
     this.shell = options.shell
-    this.tracking = options.tracking ?? (() => trackingForAll(false))
   }
 
   /** When the daemon last heard from started, in epoch milliseconds. Null until a status carried one. */

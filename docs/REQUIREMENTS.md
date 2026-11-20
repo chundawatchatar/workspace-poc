@@ -52,11 +52,11 @@ A free developer workspace that runs on the user's own machine or VM and is used
 
 | ID | Requirement | Status |
 | --- | --- | --- |
-| AG-1 | For Claude Code and Codex, each tab shows whether the agent is working, waiting for the user, or idle. Tabs and sidebar rows show it. Limits: agent hooks exist only for Claude Code and Codex; they need Track answered once for that agent (AG-4) and a shell started after that answer; without hooks the state comes from terminal signals, which can't tell idle from a turn in progress, so no idle mark shows; Codex reports only finished turns, so it shows no working state and its waiting state comes from the approval bell. | Partly |
-| AG-2 | The sidebar shows, per workspace, how many agents are in each state. Limits: as for AG-1, hooks exist only for Claude Code and Codex and need Track answered for that agent and a shell started after it; without hooks there is no idle count; Codex reports only finished turns, so it shows no working count. | Partly |
-| AG-3 | The user is notified when an agent finishes, asks a question, or needs permission. Limits: notifications follow hook state, so they exist only for Claude Code and Codex, and need Track answered for that agent and a shell started after it; without hooks the bell and OSC 9 attention that already exists is the only notification; Codex reports only finished turns, its approvals come from the bell, and the first finished turn of a Codex run raises no notification. | Partly |
-| AG-4 | Agent tracking works without editing the user's own agent settings. Where an agent asks the user to trust the tracking, the product asks once and never bypasses that check. | Done |
-| AG-5 | Tracking can be turned off for a single session. | Done |
+| AG-1 | Each tab shows whether its agent is working, waiting for the user, or idle. Tabs and sidebar rows show it. The status is the one the agent reports through the Program Status Protocol (OSC 7501), which Codex, Claude Code and pi speak. Limits: an agent that doesn't speak it (OpenCode, Cursor Agent, Command Code, or an older version) shows no status. | Partly |
+| AG-2 | The sidebar shows, per workspace, how many agents are in each state. Limits: as for AG-1, only agents that report their status are counted. | Partly |
+| AG-3 | The user is notified when an agent finishes, fails, asks a question, or needs permission or a sign-in. Limits: as for AG-1, only for agents that report their status; for the others the bell and OSC 9 attention that already exists is the only notification. | Partly |
+| AG-4 | Agent status works without editing the user's own agent settings: the product only reads what the agent writes in its own terminal, and adds no hooks or wrappers. | Done |
+| AG-5 | Agent status can be turned off for a single terminal. | Done |
 | AG-6 | Events such as a pull request opening, an issue being assigned or a check failing can start the user's chosen agent in a new pane, where the user can watch or take over. | Later |
 | AG-7 | Agents started by events act only with access limited to their repository, and need the user's approval to merge or to use secrets. | Later |
 

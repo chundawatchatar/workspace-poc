@@ -1,15 +1,12 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { Terminal } from '@xterm/headless'
-import { writeAgentShim } from './agent-shim'
 import {
   assignResponder,
   deliver,
   modesTail,
   parseProgress,
+  type ShellReporting,
   scrollRegion,
   scrollRegionTail,
   shellEnv,
@@ -92,40 +89,6 @@ describe('shellEnv', () => {
       COLORTERM: 'truecolor',
       TERM_PROGRAM: 'workspace-poc',
     })
-  })
-
-  test('adds only the reporting token it is given, never an inherited one', () => {
-    const inherited = { ORCH_AGENT_TOKEN: 'outer', ORCH_AGENT_SOCKET: '/outer/agent.sock', ORCH_AGENT_SHIMMED: '1' }
-    expect(Object.keys(shellEnv(inherited)).filter((key) => key.startsWith('ORCH_AGENT'))).toEqual([])
-    const own = { token: 'own', socket: '/run/agent.sock', shimDir: null }
-    expect(shellEnv(inherited, own)).toMatchObject({
-      ORCH_AGENT_TOKEN: 'own',
-      ORCH_AGENT_SOCKET: '/run/agent.sock',
-    })
-    expect(shellEnv(inherited, own).ORCH_AGENT_SHIMMED).toBeUndefined()
-  })
-
-  test('puts the shim folder first only with a token, and never hands on an inherited one', () => {
-    const runtime = mkdtempSync(join(tmpdir(), 'orch-shell-env-'))
-    try {
-      const inherited = writeAgentShim(join(runtime, 'custom place'))
-      const shimDir = writeAgentShim(join(runtime, 'own'))
-      const env = { PATH: `${inherited}:/usr/bin:${inherited}` }
-      const own = { token: 'own', socket: '/run/agent.sock', shimDir }
-
-      expect(shellEnv(env).PATH).toBe('/usr/bin')
-      expect(shellEnv(env, { ...own, shimDir: null }).PATH).toBe('/usr/bin')
-      expect(shellEnv(env, own, '/bin/bash').PATH).toBe(`${shimDir}:/usr/bin`)
-      expect(shellEnv(env, own, '/bin/bash').ZDOTDIR).toBeUndefined()
-      expect(shellEnv(env, undefined, '/bin/zsh').ZDOTDIR).toBeUndefined()
-      expect(shellEnv({ ...env, ZDOTDIR: '/outer' }, own, '/bin/zsh').ZDOTDIR).toBe(join(dirname(shimDir), 'zsh'))
-
-      // zsh would skip the user's startup files if the wrapper folder had been cleaned up.
-      rmSync(join(dirname(shimDir), 'zsh', '.zshrc'))
-      expect(shellEnv(env, own, '/bin/zsh').ZDOTDIR).toBeUndefined()
-    } finally {
-      rmSync(runtime, { recursive: true, force: true })
-    }
   })
 })
 
@@ -231,7 +194,7 @@ test('assignResponder lets exactly one view answer queries, preferring the contr
 })
 
 /** A real shell on a PTY, as a daemon session runs it. */
-async function shell() {
+async function shell(reporting?: ShellReporting) {
   const core = new TerminalCore(
     'test',
     process.cwd(),
@@ -240,6 +203,7 @@ async function shell() {
     () => {},
     () => {},
     '/bin/bash',
+    reporting,
   )
   const waitFor = async (text: string) => {
     for (let tries = 0; tries < 100; tries++) {
@@ -254,6 +218,24 @@ async function shell() {
   await waitFor('READY')
   return { core, waitFor }
 }
+
+test('OSC 7501 reports reach the session, and the support question is answered even while a view answers queries', async () => {
+  const reports: unknown[] = []
+  const { core, waitFor } = await shell({ report: (report) => reports.push(report), exited: () => {} })
+  // A view attached, so the core answers no other query; the browser terminal doesn't know this one.
+  core.answerQueries(false)
+  core.input(
+    "printf '\\033]7501;state=blocked:app=codex:kind=permission\\007\\033]7501;state=working:id=sub\\007%s' DO''NE\r",
+  )
+  await waitFor('DONE')
+  expect(reports).toEqual([{ state: 'waiting', reason: 'permission' }])
+  core.input(
+    `stty raw -echo; printf '\\033]7501;?\\033\\\\'; r=$(dd bs=32 count=1 2>/dev/null); stty sane; echo "A$(printf %s "$r" | od -An -c | tr -d ' \\n')"\r`,
+  )
+  const screen = await waitFor('A033]7501;?')
+  core.kill()
+  expect(screen).toContain('A033]7501;?')
+}, 15_000)
 
 /** The modes a program sets that change what the terminal sends back to it, read from a restored terminal. */
 function inputModes(term: Terminal) {

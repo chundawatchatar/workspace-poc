@@ -35,7 +35,4 @@ export interface AgentDefinition {
   initials: string
   icon?: AgentMark
   title: AgentTitleRules
-  capabilities: {
-    hooks: boolean
-  }
 }

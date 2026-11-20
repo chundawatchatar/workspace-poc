@@ -68,6 +68,7 @@ const status = {
   cols: 80,
   rows: 24,
   build: 'another-build',
+  agentReport: null,
 }
 
 /**

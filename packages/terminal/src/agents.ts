@@ -8,8 +8,6 @@ export {
   type AgentAdapter,
   type AgentProcess,
   agentAdapter,
-  type TrackedAgentKind,
-  trackedKinds,
 } from '@orch/agents/runtime'
 
 /** Session ids are typed into a shell, so anything beyond these characters is refused. */
@@ -18,7 +16,7 @@ const SAFE_ID = /^[\w.:-]{1,128}$/
 /** The command that resumes `ref`. An id that is unsafe to type into a shell is treated as no id. */
 export function resumeCommand(ref: AgentRef): string | null {
   const adapter = agentAdapter(ref.kind)
-  if (!adapter?.resumeCommand) return null
+  if (!adapter) return null
   return adapter.resumeCommand(ref.sessionId && SAFE_ID.test(ref.sessionId) ? ref.sessionId : null)
 }
 

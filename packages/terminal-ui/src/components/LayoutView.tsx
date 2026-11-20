@@ -53,7 +53,6 @@ import { AgentStateMark } from './AgentStateMark'
 import { IssuesView, PullsView } from './SampleSurfaces'
 import { pendingAttention } from './Sidebar'
 import { TerminalView } from './TerminalView'
-import { TrustNotice } from './TrustNotice'
 
 const DRAG_TYPE = 'application/x-poc-surface'
 
@@ -367,17 +366,13 @@ function PaneView({ workspace, pane, split }: { workspace: Workspace; pane: Pane
           return (
             <div key={surface.id} className={`absolute inset-0 ${visible ? '' : 'pointer-events-none invisible'}`}>
               {surface.kind === 'terminal' ? (
-                // The notice takes rows from the terminal rather than covering its top, where agents ask their own questions.
-                <div className="flex h-full flex-col">
-                  <TrustNotice sessionId={surface.id} />
-                  <div className="relative min-h-0 flex-1">
-                    <TerminalView
-                      sessionId={surface.id}
-                      cwd={workspace.cwd}
-                      active={visible && focused && !overlayOpen}
-                    />
-                    <Interrupted sessionId={surface.id} />
-                  </div>
+                <div className="relative h-full">
+                  <TerminalView
+                    sessionId={surface.id}
+                    cwd={workspace.cwd}
+                    active={visible && focused && !overlayOpen}
+                  />
+                  <Interrupted sessionId={surface.id} />
                 </div>
               ) : surface.kind === 'pulls' ? (
                 <PullsView />

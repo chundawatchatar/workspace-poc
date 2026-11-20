@@ -146,8 +146,7 @@ describe('LayoutView tab bar', () => {
 
 const claude = { kind: 'claude', sessionId: null, cwd: '/home/me/repo' } as const
 const codex = { ...claude, kind: 'codex' } as const
-const state = (name: 'working' | 'waiting' | 'idle') =>
-  ({ state: name, reason: 'tool', source: 'hooks', since: 1 }) as const
+const state = (name: 'working' | 'waiting' | 'idle') => ({ state: name, reason: 'turn', since: 1 }) as const
 
 /** The tab whose tooltip starts with this title. */
 const tabOf = (title: string) => screen.getByTitle(new RegExp(`^${title}( |$)`))

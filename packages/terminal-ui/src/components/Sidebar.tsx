@@ -1,6 +1,6 @@
 import { type GitInfo, listPanes, routes, type SessionInfo, type Workspace } from '@orch/shared'
 import { REMOTE_ACCESS_TONE_CLASS } from '@orch/ui'
-import { ChevronRight, GitBranch, Keyboard, Moon, Palette, Plus, Sun, X } from '@orch/ui/icons'
+import { ChevronRight, GitBranch, Keyboard, Moon, Palette, Plus, Sun, Volume2, VolumeX, X } from '@orch/ui/icons'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { agentCounts } from '../lib/agentStatus'
@@ -12,7 +12,7 @@ import { PENDING_DEVICES_POLL_MS } from '../lib/pendingDevices'
 import { remoteAccessLabel } from '../lib/remoteAccess'
 import { LEADER_LABEL } from '../lib/shortcuts'
 import { SIDEBAR_WIDTH, setSidebarWidth, sidebarWidth } from '../lib/sidebarWidth'
-import { setOverlay, toggleThemeMode, useApp } from '../lib/store'
+import { setOverlay, setSound, toggleThemeMode, useApp } from '../lib/store'
 import { useNavigation, WorkspaceLink } from '../navigation'
 import { usePageOptions } from '../pageOptions'
 import { AgentCounts } from './AgentCounts'
@@ -187,10 +187,22 @@ function ResizeHandle() {
 
 function ThemeButtons() {
   const theme = useApp((s) => s.theme)
+  const sound = useApp((s) => s.sound)
   const button = 'rounded p-1 hover:bg-raised hover:text-ink'
   const toggleLabel = theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'
+  const soundLabel = sound ? 'Mute agent sounds' : 'Turn on agent sounds'
   return (
     <>
+      <button
+        type="button"
+        title={soundLabel}
+        aria-label={soundLabel}
+        aria-pressed={!sound}
+        className={button}
+        onClick={() => setSound(!sound)}
+      >
+        {sound ? <Volume2 size={14} /> : <VolumeX size={14} />}
+      </button>
       <button type="button" title={toggleLabel} aria-label={toggleLabel} className={button} onClick={toggleThemeMode}>
         {theme === 'dark' ? <Moon size={14} /> : <Sun size={14} />}
       </button>

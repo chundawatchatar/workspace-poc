@@ -1,9 +1,8 @@
 import { createHash } from 'node:crypto'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { AGENT_HOOK_STATES, agentSourceDirectory, STORED_AGENT_HOOK_REASONS } from '@orch/agents/runtime'
+import { AGENT_REASONS, AGENT_STATES, agentSourceDirectory } from '@orch/agents/runtime'
 import { z } from 'zod'
-import { trackedKinds } from './agents'
 
 /**
  * The terminal daemon wire version: JSON control messages and raw binary frames
@@ -14,8 +13,11 @@ import { trackedKinds } from './agents'
  * request's `type` and `protocol` fields and the `refused` answer must stay
  * readable by every future protocol: they are how a host and a daemon of
  * different protocols find out, so a host can leave the daemon's shells alone.
+ *
+ * 2: agent status comes from the program's own OSC 7501, as `agentReport` in the status and `reporting` in `hello`,
+ * so a daemon of protocol 1, which spoke the hook channel's `tracking` and `agentHook`, is refused and named.
  */
-export const DAEMON_PROTOCOL = 1
+export const DAEMON_PROTOCOL = 2
 
 const MAX_FRAME = 16 * 1024 * 1024
 /** Frame kinds: JSON control, or a raw terminal-output chunk. */
@@ -44,16 +46,8 @@ export const daemonStatus = z.object({
   build: z.string().optional(),
   /** When the daemon process started, in epoch milliseconds. Absent from daemons started by an older build. */
   startedAt: z.number().int().optional(),
-  /** The last hook event of the current agent run. Absent from daemons started by an older build. */
-  agentHook: z
-    .object({
-      agent: z.enum(trackedKinds()),
-      state: z.enum(AGENT_HOOK_STATES),
-      reason: z.enum(STORED_AGENT_HOOK_REASONS),
-      at: z.number(),
-    })
-    .nullable()
-    .optional(),
+  /** The last OSC 7501 report of the program in the foreground, in the standard status, or null when there is none. */
+  agentReport: z.object({ state: z.enum(AGENT_STATES), reason: z.enum(AGENT_REASONS), at: z.number() }).nullable(),
 })
 
 /** Replaced with a string literal by a build that passes `--define ORCH_BUILD_ID='"<id>"'`; undefined otherwise. */

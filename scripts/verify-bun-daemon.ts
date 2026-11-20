@@ -98,7 +98,16 @@ const child = Bun.spawn([process.execPath, daemonScript, '--socket', socketPath,
 daemon = child
 
 async function hello(client: Client) {
-  client.send({ type: 'hello', protocol: DAEMON_PROTOCOL, id, token, cwd: runtime, cols: 100, rows: 30 })
+  client.send({
+    type: 'hello',
+    protocol: DAEMON_PROTOCOL,
+    id,
+    token,
+    cwd: runtime,
+    cols: 100,
+    rows: 30,
+    reporting: true,
+  })
   const snapshot = await client.wait(isSnapshot)
   if (!isSnapshot(snapshot)) fail('first frame was not a snapshot')
   return snapshot

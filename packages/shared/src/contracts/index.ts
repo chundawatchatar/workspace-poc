@@ -1,4 +1,3 @@
-import { agentTrackingContract } from './agentTracking'
 import { e2eContract } from './e2eSession'
 import { eventsSocket } from './events'
 import { fsContract } from './fs'
@@ -10,16 +9,6 @@ import { serverSystemContract } from './serverSystem'
 import { systemContract } from './system'
 import { terminalSocket } from './terminals'
 
-export {
-  type AgentTrackingAnswer,
-  type AgentTrackingStatus,
-  agentTrackingAnswer,
-  agentTrackingStatus,
-  type TrackedAgent,
-  trackedAgent,
-  type UpdateAgentTrackingBody,
-  updateAgentTrackingBody,
-} from './agentTracking'
 export * from './contract'
 export {
   CLOSE_DEVICE_NOT_APPROVED,
@@ -280,7 +269,6 @@ export const routes = {
   fs: fsContract,
   git: gitContract,
   remoteAccess: remoteAccessContract,
-  agentTracking: agentTrackingContract,
   e2e: e2eContract,
   sockets: {
     events: eventsSocket,

@@ -3,7 +3,6 @@ import { join } from 'node:path'
 import { flagValue, safeJson } from '../runtime/helpers'
 import type { AgentAdapter } from '../runtime-types'
 import { definition } from './definition'
-import { claudeTracking } from './tracking'
 
 /** The runtime integration for Claude Code. */
 export const adapter = {
@@ -24,5 +23,4 @@ export const adapter = {
     }
   },
   resumeCommand: (id) => (id ? `claude --resume ${id}` : 'claude'),
-  tracking: claudeTracking,
 } satisfies AgentAdapter

@@ -29,14 +29,6 @@ function isSpace(code: number) {
   )
 }
 
-/** True when the title's first character after any whitespace is a spinner frame, as while an agent runs a turn. */
-export function titleSpins(title: string, kind?: AgentKind) {
-  const rules = kind ? AGENT_DEFINITIONS[kind].title : standardTitleRules
-  let index = 0
-  while (index < title.length && isSpace(title.charCodeAt(index))) index += 1
-  return index < title.length && isSpinnerFrame(title.charCodeAt(index), rules)
-}
-
 /**
  * Removes agent glyphs and the whitespace around them from both ends of a
  * title, keeping any inside the text (`repo · main`). It walks inward from each

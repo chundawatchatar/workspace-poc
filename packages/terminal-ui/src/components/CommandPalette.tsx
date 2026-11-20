@@ -1,18 +1,8 @@
-import {
-  AGENT_LABELS,
-  type AgentTrackingAnswer,
-  type AgentTrackingStatus,
-  listPanes,
-  type SessionInfo,
-  type SurfaceKind,
-  type TrackedAgent,
-  trackedAgent,
-  type Workspace,
-} from '@orch/shared'
+import { listPanes, type SessionInfo, type SurfaceKind, type Workspace } from '@orch/shared'
 import { Dialog, THEMES } from '@orch/ui'
 import { ChevronRight, GitPullRequest, KanbanSquare, LayoutGrid, Search, SquareTerminal } from '@orch/ui/icons'
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
-import { SWITCH_SHORT_HINT, useAgentTrackingAnswers, useAnswerAgentTracking } from '../lib/agentTracking'
+import { SWITCH_HINT } from '../lib/agentTracking'
 import {
   addSurface,
   closeSurface,
@@ -28,10 +18,14 @@ import {
   selectTheme,
   setAgentTracking,
   setOverlay,
+  setSound,
   setThemeChoice,
   toggleSidebar,
   useApp,
 } from '../lib/store'
+
+const SOUND_HINT = 'A chime when an agent waits for you or finishes a turn, in this browser'
+
 import { useNavigation } from '../navigation'
 import { usePageOptions } from '../pageOptions'
 import { tidyTitle } from './LayoutView'
@@ -93,43 +87,13 @@ function tabItems(workspace: Workspace, sessions: Record<string, SessionInfo>, g
   )
 }
 
-/**
- * The tracking switch of the focused terminal, when there is one, and a command per agent kind to change its
- * stored trust answer, once the answers are known.
- */
-function trackingCommands(
-  focused: SessionInfo | undefined,
-  answers: AgentTrackingStatus | undefined,
-  answer: (agent: TrackedAgent, answer: AgentTrackingAnswer) => void,
-) {
-  const items: { label: string; run: () => void; hint: string }[] = []
-  if (focused) {
-    const on = focused.agentTracking
-    items.push({
-      label: on ? 'Stop tracking the agent in this terminal' : 'Track the agent in this terminal again',
-      run: () => setAgentTracking(focused.id, !on),
-      hint: SWITCH_SHORT_HINT,
-    })
-  }
-  for (const kind of answers ? trackedAgent.options : []) {
-    const on = answers?.[kind] === 'on'
-    items.push({
-      label: `${on ? 'Stop tracking' : 'Track'} ${AGENT_LABELS[kind]} with hooks`,
-      run: () => answer(kind, on ? 'off' : 'on'),
-      hint: 'Applies to agents started afterwards',
-    })
-  }
-  return items
-}
-
 export function CommandPalette() {
   const { workspaceId, navigate } = useNavigation()
   const { remoteAccessSetting } = usePageOptions()
   const workspaces = useApp((s) => s.state?.workspaces)
   const sessions = useApp((s) => s.sessions)
   const home = useApp((s) => s.info?.home)
-  const answers = useAgentTrackingAnswers()
-  const { answer } = useAnswerAgentTracking()
+  const sound = useApp((s) => s.sound)
   const [query, setQuery] = useState('')
   const [index, setIndex] = useState(0)
   const list = useRef<HTMLDivElement>(null)
@@ -179,7 +143,11 @@ export function CommandPalette() {
       }
     }
     const focused = current && sessions[currentPane(current).activeSurfaceId]
-    for (const item of trackingCommands(focused, answers, answer)) command(item.label, item.run, undefined, item.hint)
+    if (focused) {
+      const on = focused.agentTracking
+      const label = on ? 'Stop tracking the agent in this terminal' : 'Track the agent in this terminal again'
+      command(label, () => setAgentTracking(focused.id, !on), undefined, SWITCH_HINT)
+    }
     command('New workspace', () => setOverlay('new-workspace'), 'Ctrl+B W')
     command('Toggle sidebar', toggleSidebar, 'Ctrl+B B  ·  ⌘B')
     command('Choose theme…', () => setOverlay('themes'), 'Ctrl+B T')
@@ -187,10 +155,11 @@ export function CommandPalette() {
     command('Appearance: Dark', () => setThemeChoice('dark'))
     command('Appearance: Follow system', () => setThemeChoice('system'))
     for (const theme of THEMES) command(`Theme: ${theme.name}`, () => selectTheme(theme.id))
+    command(sound ? 'Mute agent sounds' : 'Turn on agent sounds', () => setSound(!sound), undefined, SOUND_HINT)
     command('Show keyboard shortcuts', () => setOverlay('help'), 'Ctrl+B ?')
     if (remoteAccessSetting) command('Remote access…', () => setOverlay('remote-access'))
     return result
-  }, [workspaces, sessions, home, workspaceId, navigate, remoteAccessSetting, answers, answer])
+  }, [workspaces, sessions, home, workspaceId, navigate, remoteAccessSetting, sound])
 
   const visible = useMemo(() => {
     const trimmed = query.trim().toLowerCase()

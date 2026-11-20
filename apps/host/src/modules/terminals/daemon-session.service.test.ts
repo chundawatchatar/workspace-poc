@@ -1,14 +1,10 @@
 import { afterEach, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AgentRef } from '@orch/shared'
-import { type AgentTracking, DAEMON_PROTOCOL, DaemonDecoder, encodeControlFrame } from '@orch/terminal'
-import { AgentTrackingRepository } from '../agent-tracking/agent-tracking.repository'
-import { AgentTrackingService } from '../agent-tracking/agent-tracking.service'
+import { DAEMON_PROTOCOL, DaemonDecoder, encodeControlFrame } from '@orch/terminal'
 import type { DaemonRecord, DaemonRepository } from './daemon.repository'
-import { resendTracking } from './daemon.service'
 import { DaemonSession } from './daemon-session.service'
 import type { SharedDaemon } from './shared-daemon.service'
 
@@ -29,6 +25,7 @@ const status = {
   progress: null,
   cols: 80,
   rows: 24,
+  agentReport: null,
 }
 const agent: AgentRef = { kind: 'claude', sessionId: null, cwd: '/repo' }
 const found = (pid: number) => ({
@@ -46,9 +43,9 @@ async function until(check: () => boolean) {
  * A session attached to a fake daemon, which records every message and sends the statuses the test gives it.
  * Its record lives in `records`, so a second session with the same id reads what the first saved.
  */
-async function setup(tracking: () => AgentTracking, records = new Map<string, DaemonRecord>()) {
+async function setup(records = new Map<string, DaemonRecord>()) {
   const dir = mkdtempSync('/tmp/orch-session-')
-  const received: { type: string; tracking?: unknown }[] = []
+  const received: { type: string; reporting?: unknown; on?: unknown }[] = []
   let peer: Socket | undefined
   const server: Server = createServer((socket) => {
     peer = socket
@@ -73,7 +70,7 @@ async function setup(tracking: () => AgentTracking, records = new Map<string, Da
       return next
     },
   } as unknown as DaemonRepository
-  const shared = { repository, tracking, heard() {}, ensureStarted: async () => {} } as unknown as SharedDaemon
+  const shared = { repository, heard() {}, ensureStarted: async () => {} } as unknown as SharedDaemon
   let changes = 0
   const session = new DaemonSession('t1', '/repo', 80, 24, () => changes++, shared)
   cleanups.push(() => {
@@ -86,64 +83,38 @@ async function setup(tracking: () => AgentTracking, records = new Map<string, Da
   return { session, received, report, changes: () => changes, records }
 }
 
-/** Trust answers kept in a temporary folder, with no file to start with. */
-function answers() {
-  const dir = mkdtempSync(join(tmpdir(), 'orch-trust-'))
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
-  return new AgentTrackingService(new AgentTrackingRepository(join(dir, 'agent-tracking.json')))
-}
+const reportingSent = (received: { type: string; on?: unknown }[]) =>
+  received.filter((message) => message.type === 'reporting').map((message) => message.on)
 
-const trackingSent = (received: { type: string }[]) =>
-  received.filter((message) => message.type === 'tracking').map(({ type: _type, ...tracking }) => tracking)
-
-test('the trust answers decide what hello and tracking carry, and a changed answer reaches every open session', async () => {
-  const trust = answers()
-  const first = await setup(() => trust.tracking())
-  expect(first.received[0]).toMatchObject({ type: 'hello', tracking: { claude: false, codex: false } })
-
-  const second = await setup(() => trust.tracking())
-  trust.onChange(() => resendTracking([first.session, second.session]))
-  trust.update({ agent: 'claude', answer: 'on' })
-  for (const { received } of [first, second]) {
-    await until(() => trackingSent(received).length === 1)
-    expect(trackingSent(received)).toEqual([{ claude: true, codex: false }])
-  }
-  trust.update({ agent: 'claude', answer: 'on' })
-  await Bun.sleep(10)
-  expect(trackingSent(first.received)).toHaveLength(1)
-
-  const third = await setup(() => trust.tracking())
-  expect(third.received[0]).toMatchObject({ type: 'hello', tracking: { claude: true, codex: false } })
-})
-
-test('the per-session switch drops the agent state at once, is saved, and survives a host restart', async () => {
-  const { session, received, report, records } = await setup(() => ({ claude: true, codex: true }))
+test('the per-session switch drops the agent state at once, is saved, tells the daemon, and survives a host restart', async () => {
+  const { session, received, report, records } = await setup()
+  expect(received[0]).toMatchObject({ type: 'hello', reporting: true })
   session.observe(found(100) as never)
   session.observeAgent(agent, false)
-  report({ agentHook: { agent: 'claude', state: 'working', reason: 'tool', at: Date.now() } })
-  await until(() => session.info().agentState?.source === 'hooks')
+  report({ agentReport: { state: 'working', reason: 'turn', at: Date.now() } })
+  await until(() => session.info().agentState?.state === 'working')
   expect(session.info().agentTracking).toBe(true)
 
   session.setAgentTracking(false)
   expect(session.info()).toMatchObject({ agentTracking: false, agentState: null })
   expect(records.get('t1')?.agentTracking).toBe(false)
-  await until(() => trackingSent(received).length === 1)
-  expect(trackingSent(received)).toEqual([{ claude: false, codex: false }])
+  await until(() => reportingSent(received).length === 1)
+  expect(reportingSent(received)).toEqual([false])
 
-  // The host restarts: a new session reads the record and tells the daemon tracking is off.
-  const restarted = await setup(() => ({ claude: true, codex: true }), records)
-  expect(restarted.received[0]).toMatchObject({ type: 'hello', tracking: { claude: false, codex: false } })
+  // The host restarts: a new session reads the record and tells the daemon the switch is off.
+  const restarted = await setup(records)
+  expect(restarted.received[0]).toMatchObject({ type: 'hello', reporting: false })
   expect(restarted.session.info().agentTracking).toBe(false)
 
   session.setAgentTracking(true)
   expect(records.get('t1')).not.toHaveProperty('agentTracking')
-  expect(session.info()).toMatchObject({ agentTracking: true, agentState: { source: 'hooks' } })
-  await until(() => trackingSent(received).length === 2)
-  expect(trackingSent(received)[1]).toEqual({ claude: true, codex: true })
+  expect(session.info()).toMatchObject({ agentTracking: true, agentState: { state: 'working', reason: 'turn' } })
+  await until(() => reportingSent(received).length === 2)
+  expect(reportingSent(received)[1]).toBe(true)
 })
 
 test('the daemon hears agentExited when a known agent leaves or its process changes, and only then', async () => {
-  const { session, received } = await setup(() => ({ claude: false, codex: false }))
+  const { session, received } = await setup()
   const exits = () => received.filter((message) => message.type === 'agentExited').length
   session.observeAgent(null, false)
   session.observe(found(100) as never)
@@ -162,32 +133,4 @@ test('the daemon hears agentExited when a known agent leaves or its process chan
   session.observeAgent(null, false)
   await Bun.sleep(10)
   expect(exits()).toBe(2)
-})
-
-test('a working hook turns interrupted once progress has ended and the wait is over, until the next hook event', async () => {
-  const { session, report, changes } = await setup(() => ({ claude: true, codex: true }))
-  session.observe(found(100) as never)
-  session.observeAgent(agent, false)
-  const agentHook = { agent: 'claude', state: 'working', reason: 'tool', at: Date.now() - 10 }
-  report({ agentHook, progress: 'busy' })
-  await until(() => session.info().progress === 'busy')
-  expect(session.info().agentState).toMatchObject({ reason: 'tool', source: 'hooks' })
-  expect(Object.keys(session.info())).not.toContain('agentHook')
-  const before = Date.now
-  try {
-    report({ agentHook, progress: null })
-    await until(() => session.info().progress === null)
-    expect(session.info().agentState).toMatchObject({ state: 'working', source: 'hooks' })
-    const seen = changes()
-    const later = before() + 3100
-    Date.now = () => later
-    expect(session.info().agentState).toMatchObject({ state: 'idle', reason: 'interrupted', source: 'signals' })
-    Date.now = before
-    report({ agentHook: { ...agentHook, at: later }, progress: null })
-    await until(() => changes() > seen)
-    Date.now = () => later + 1
-    expect(session.info().agentState).toMatchObject({ state: 'working', reason: 'tool', source: 'hooks' })
-  } finally {
-    Date.now = before
-  }
 })

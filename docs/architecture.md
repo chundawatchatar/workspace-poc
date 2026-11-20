@@ -497,16 +497,12 @@ user's approval (AG-7).
 
 ### Agent status
 
-Built (AG-1 to AG-5, jobs 037 to 046). Tabs show whether their Claude Code or Codex agent is working, waiting for the
-user or idle, the sidebar counts agents per state for each workspace, and hook transitions raise notifications. The
-state comes from terminal signals for every recognised agent, and from agent hooks once the user answers Track for
-that agent. Hooks are added per session by a command shim, never by editing the agent's settings. The design and its
-limits are in [agents](agents.md).
-
-One rule matters beyond the feature: the daemon's `agent.sock`, where hooks report, is the only local endpoint outside
-the `routes` registry (apart from the daemon's control socket `host.sock`, which only the host talks to). It is a Unix socket of the daemon, not the host's HTTP server, so the tunnel and the `/m/<id>`
-relay can never reach it, and it is never added to `routes` or relayed. Remote clients only see the derived
-`agentState` in `SessionInfo`.
+Built (AG-1 to AG-5). Tabs show whether their agent is working, waiting for the user or idle, the sidebar counts
+agents per state for each workspace, and changes that need the user raise notifications. Every agent's status comes
+from the Program Status Protocol (OSC 7501) it writes into its own terminal output, which the daemon reads; the
+product adds no hooks and edits no agent settings, and an agent that doesn't speak the protocol shows no status.
+Codex, Claude Code and pi speak it. The design and its limits are in [agents](agents.md). Remote clients only see the
+derived `agentState` in `SessionInfo`.
 
 ## Planned features on this base
 

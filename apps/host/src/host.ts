@@ -5,8 +5,6 @@ import type { HostInfo } from '@orch/shared'
 import { SessionManager, shellProgram } from '@orch/terminal'
 import { createApp } from './app'
 import { tunnelEnv } from './lib/principal'
-import { AgentTrackingRepository, agentTrackingPath } from './modules/agent-tracking/agent-tracking.repository'
-import { AgentTrackingService } from './modules/agent-tracking/agent-tracking.service'
 import { E2eSessions } from './modules/e2e/e2e.service'
 import { EventHub } from './modules/events/events.service'
 import { dataFile, LayoutRepository } from './modules/layout/layout.repository'
@@ -18,7 +16,7 @@ import { LinkedAccountRepository, linkedAccountPath } from './modules/remote-acc
 import { RemoteAccessService } from './modules/remote-access/remote-access.service'
 import { settingsPath } from './modules/settings/settings.repository'
 import type { Settings } from './modules/settings/settings.service'
-import { daemonFactory, resendTracking, restoreTerminals } from './modules/terminals/daemon.service'
+import { daemonFactory, restoreTerminals } from './modules/terminals/daemon.service'
 import { stopDaemonHint } from './modules/terminals/daemon-build'
 import { machineKeyFile } from './modules/tunnel/tunnel.repository'
 import type { UiSite } from './modules/ui/ui.service'
@@ -73,22 +71,18 @@ export function startHost(options: HostOptions): { url: string; instanceId: stri
 
   const hub = new EventHub()
   const layout = new LayoutRepository(dataFile(dataDir), projectRoot)
-  const agentTracking = new AgentTrackingService(new AgentTrackingRepository(agentTrackingPath(dataDir)))
   const daemon = daemonFactory({
     dataDir,
     runtime: options.daemonRuntime,
     daemonCommand: options.daemonCommand,
     build: options.build,
     stopHint: stopDaemonHint(packaged),
-    tracking: () => agentTracking.tracking(),
   })
   const sessions = new SessionManager(
     (session) => hub.broadcast({ type: 'session', session: session.info() }),
     (id) => hub.broadcast({ type: 'session.gone', id }),
     daemon.create,
   )
-  // A changed answer reaches agents started afterwards in every open terminal, not only in new ones.
-  agentTracking.onChange(() => resendTracking(sessions.list()))
 
   // In memory only. It reads the machine key at each open, and remote access closes its sessions with its sockets.
   const e2eSessions: E2eSessions = new E2eSessions({ machineKey: () => remoteAccess.signingKey() })
@@ -115,7 +109,6 @@ export function startHost(options: HostOptions): { url: string; instanceId: stri
     machinePublicKey: () => remoteAccess.machinePublicKey(),
     instanceId,
     remoteAccess,
-    agentTracking,
     e2eSessions,
     ui: options.ui,
   })

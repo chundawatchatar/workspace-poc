@@ -5,7 +5,7 @@ import { DEFAULT_DENIED_HINT, DEFAULT_UNAPPROVED_HINT, LOCAL_OFFLINE_HINT } from
 import { Overlays } from './components/Overlays'
 import { Sidebar } from './components/Sidebar'
 import { useShortcuts } from './lib/shortcuts'
-import { connect, initTheme, useApp } from './lib/store'
+import { connect, initSound, initTheme, useApp } from './lib/store'
 import { type Navigation, NavigationProvider, useNavigation } from './navigation'
 import { type PageOptions, PageOptionsProvider } from './pageOptions'
 import type { HostTransport } from './transport'
@@ -114,6 +114,7 @@ export function TerminalUI({
 
   useEffect(() => connect(transport), [transport])
   useEffect(initTheme, [])
+  useEffect(initSound, [])
 
   return (
     <QueryClientProvider client={queryClient}>

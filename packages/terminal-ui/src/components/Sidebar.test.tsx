@@ -72,7 +72,7 @@ function setup({
     progress: null,
     agent: { kind: 'claude', sessionId: null, cwd: '/home/me/repo' },
     interrupted: null,
-    agentState: { state: 'waiting', reason: 'question', source: 'hooks', since: 1 },
+    agentState: { state: 'waiting', reason: 'question', since: 1 },
     agentTracking: true,
   }
   const socket = { readyState: 1, send: () => {}, close: () => {} } as unknown as WebSocket

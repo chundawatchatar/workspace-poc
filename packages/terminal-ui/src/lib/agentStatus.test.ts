@@ -22,30 +22,26 @@ import {
 const claude = { kind: 'claude', sessionId: null, cwd: '/w' } as const
 const codex = { kind: 'codex', sessionId: null, cwd: '/w' } as const
 
-function agentState(state: AgentStateName, reason: AgentReason, source: AgentState['source'] = 'hooks'): AgentState {
-  return { state, reason, source, since: 1 }
+function agentState(state: AgentStateName, reason: AgentReason): AgentState {
+  return { state, reason, since: 1 }
 }
 
-/** The fields of a live, tracked session whose title doesn't spin. */
+/** The fields of a live, tracked session. */
 const live = { title: 'repo', alive: true, interrupted: null, agentTracking: true } as const
 
 describe('agentStatus', () => {
   const kinds: [AgentState | null | undefined, SessionInfo['progress'], AgentStatusKind | undefined][] = [
-    [agentState('working', 'tool'), null, 'working'],
-    [agentState('working', 'progress'), 'error', 'working'],
+    [agentState('working', 'turn'), 'error', 'working'],
     [agentState('waiting', 'permission'), 'busy', 'waiting'],
-    [agentState('waiting', 'attention'), 'error', 'waiting'],
-    [agentState('idle', 'error'), 'error', 'failed'],
-    [agentState('idle', 'finished'), 'error', 'failed'],
-    [agentState('idle', 'finished'), 'busy', 'idle'],
-    [agentState('idle', 'interrupted'), null, 'idle'],
-    [agentState('idle', 'detected', 'signals'), null, undefined],
-    [agentState('idle', 'detected', 'signals'), 'busy', 'working'],
-    [agentState('idle', 'error', 'signals'), 'error', 'failed'],
-    [null, 'busy', 'working'],
-    [undefined, 'error', 'failed'],
+    [agentState('waiting', 'auth'), null, 'waiting'],
+    [agentState('idle', 'finished'), 'error', 'idle'],
+    [agentState('idle', 'ready'), null, 'idle'],
+    // Failed is the agent's own word, not the progress bar's.
+    [agentState('idle', 'error'), null, 'failed'],
+    // An agent that reports nothing shows nothing, whatever its terminal shows.
+    [null, 'busy', undefined],
+    [undefined, 'error', undefined],
     [null, null, undefined],
-    [undefined, null, undefined],
   ]
 
   test.each(kinds)('picks the kind from state %j and progress %j', (state, progress, kind) => {
@@ -56,32 +52,28 @@ describe('agentStatus', () => {
     expect(agentStatus(undefined)).toBeNull()
   })
 
-  test('keeps the plain labels for a program with no agent', () => {
+  test('shows the progress of a program with no agent, in plain labels', () => {
     expect(agentStatus({ ...live, progress: 'busy', agent: null })).toEqual({
       kind: 'working',
       label: 'Working',
       tooltip: 'Working',
     })
     expect(agentStatus({ ...live, progress: 'error', agent: null })?.label).toBe('Failed')
+    expect(agentStatus({ ...live, progress: null, agent: null })).toBeNull()
   })
 
-  test('names the agent, state, reason and source', () => {
-    const status = (
-      state: AgentState,
-      progress: SessionInfo['progress'] = null,
-      agent: typeof claude | typeof codex = claude,
-    ) => agentStatus({ ...live, agentState: state, progress, agent })
+  test('names the agent, state and reason', () => {
+    const status = (state: AgentState, agent: typeof claude | typeof codex = claude) =>
+      agentStatus({ ...live, agentState: state, progress: null, agent })
 
-    expect(status(agentState('waiting', 'permission'))?.tooltip).toBe(
-      'Claude Code waiting for you: needs permission (agent hooks)',
-    )
-    expect(status(agentState('waiting', 'attention', 'signals'), null, codex)).toMatchObject({
-      label: 'Codex waiting for you',
-      tooltip: 'Codex waiting for you: asked for attention (terminal signals)',
+    expect(status(agentState('waiting', 'permission'))?.tooltip).toBe('Claude Code waiting for you: needs permission')
+    expect(status(agentState('working', 'turn'), codex)).toMatchObject({
+      label: 'Codex working',
+      tooltip: 'Codex working: running a turn',
     })
-    expect(status(agentState('idle', 'detected'))).toMatchObject({
+    expect(status(agentState('idle', 'finished'))).toMatchObject({
       label: 'Claude Code idle',
-      tooltip: 'Claude Code idle (agent hooks)',
+      tooltip: 'Claude Code idle: turn finished',
     })
   })
 })
@@ -101,12 +93,7 @@ describe('sidebarSignal', () => {
   const waiting = agentStatus({ ...live, agentState: agentState('waiting', 'question'), progress: null, agent: claude })
   const working = agentStatus({ ...live, progress: 'busy', agent: null })
   const failed = agentStatus({ ...live, progress: 'error', agent: null })
-  const signalIdle = agentStatus({
-    ...live,
-    agentState: agentState('idle', 'detected', 'signals'),
-    progress: null,
-    agent: claude,
-  })
+  const silent = agentStatus({ ...live, agentState: null, progress: null, agent: claude })
 
   const rows: [string, Parameters<typeof sidebarSignal>[0], Parameters<typeof sidebarSignal>[1], SidebarSignal][] = [
     ['working beats attention', { ...session, attention }, working, 'status'],
@@ -114,7 +101,7 @@ describe('sidebarSignal', () => {
     ['failed beats attention', { ...session, attention }, failed, 'status'],
     ['attention beats an idle agent', { ...session, attention, process }, idle, 'attention'],
     ['an idle agent beats the running dot', { ...session, process }, idle, 'status'],
-    ['an idle state from signals keeps the running dot', { ...session, process }, signalIdle, 'running'],
+    ['an agent that reports nothing keeps the running dot', { ...session, process }, silent, 'running'],
     ['interrupted beats running', { ...session, interrupted, process }, null, 'interrupted'],
     ['running', { ...session, process }, null, 'running'],
     ['exited', { ...session, alive: false }, null, 'exited'],
@@ -132,15 +119,12 @@ describe('agentCounts', () => {
     ({ agentState, progress }) as SessionInfo
 
   const cases: [string, SessionInfo | undefined, 'waiting' | 'working' | 'idle' | null][] = [
-    ['working from hooks', session(agentState('working', 'tool')), 'working'],
-    ['working from signals', session(agentState('working', 'progress', 'signals')), 'working'],
-    ['waiting from hooks', session(agentState('waiting', 'permission')), 'waiting'],
-    ['waiting from signals', session(agentState('waiting', 'attention', 'signals')), 'waiting'],
-    ['idle from hooks', session(agentState('idle', 'finished')), 'idle'],
-    ['failed idle from hooks', session(agentState('idle', 'error'), 'error'), 'idle'],
-    ['idle from signals', session(agentState('idle', 'detected', 'signals')), null],
-    ['null state, busy', session(null, 'busy'), null],
-    ['null state, error', session(null, 'error'), null],
+    ['working', session(agentState('working', 'turn')), 'working'],
+    ['waiting', session(agentState('waiting', 'permission')), 'waiting'],
+    ['idle', session(agentState('idle', 'finished')), 'idle'],
+    ['failed, as idle', session(agentState('idle', 'error')), 'idle'],
+    ['no report, busy', session(null, 'busy'), null],
+    ['no report, error', session(null, 'error'), null],
     ['undefined state, busy', session(undefined, 'busy'), null],
     ['no session', undefined, null],
   ]
@@ -166,7 +150,7 @@ describe('agentCounts', () => {
       a: makePane([active, background]),
       b: makePane([split, pulls]),
     } as const
-    const working = session(agentState('working', 'tool'))
+    const working = session(agentState('working', 'turn'))
 
     const counts = agentCounts(makeWorkspace('ws', '/w', root), {
       [background.id]: working,
@@ -177,86 +161,6 @@ describe('agentCounts', () => {
     })
 
     expect(counts).toEqual({ waiting: 1, working: 2, idle: 0 })
-  })
-})
-
-describe('agentStatus and agentCounts with a spinning title', () => {
-  /** A live, tracked Codex session with the title and state given. */
-  const session = (title: string, state: AgentState | null = null, more: Partial<SessionInfo> = {}): SessionInfo => ({
-    id: 's',
-    title,
-    alive: true,
-    attention: null,
-    process: null,
-    cwd: '/w',
-    progress: null,
-    agent: codex,
-    interrupted: null,
-    agentState: state,
-    agentTracking: true,
-    ...more,
-  })
-
-  /** What the tab shows and how the workspace counts one terminal holding `info`. */
-  function judge(info: SessionInfo) {
-    const surface = makeSurface()
-    const counts = agentCounts(makeWorkspace('ws', '/w', makePane([surface])), { [surface.id]: info })
-    return { status: agentStatus(info), counts }
-  }
-
-  test.each(['⠋ Fix login', '  ⣿ Fix login', '\u2801', '◐ Fix login', '◒ x', '✶ x', '✻ x', '✽ x', '✢ x', '· notes'])(
-    '%j counts as working',
-    (title) => {
-      expect(judge(session(title))).toEqual({
-        status: { kind: 'working', label: 'Codex working', tooltip: 'Codex working (title)' },
-        counts: { waiting: 0, working: 1, idle: 0 },
-      })
-    },
-  )
-
-  test.each(['✳ Fix login', '✦ Fix login', '● Fix login', '⏺ Fix login', 'Fix login', '\u2800 Fix login', 'Fix ⠋', ''])(
-    '%j is no sign of work',
-    (title) => {
-      expect(judge(session(title))).toEqual({ status: null, counts: { waiting: 0, working: 0, idle: 0 } })
-    },
-  )
-
-  test.each([
-    ['no agent', { agent: null }],
-    ['tracking off', { agentTracking: false }],
-    ['not alive', { alive: false }],
-    ['interrupted', { interrupted: { agent: codex, cwd: '/w', command: 'codex resume' } }],
-  ] as const)('gives nothing with %s', (_name, more) => {
-    expect(judge(session('⠋ Fix login', null, more))).toEqual({
-      status: null,
-      counts: { waiting: 0, working: 0, idle: 0 },
-    })
-  })
-
-  test("outranks a hook's stale idle, and the tooltip doesn't carry its reason or source", () => {
-    const { status, counts } = judge(session('⠋ Fix login', agentState('idle', 'finished')))
-    expect(status).toEqual({ kind: 'working', label: 'Codex working', tooltip: 'Codex working (title)' })
-    expect(status?.tooltip).not.toBe('Codex working: turn finished (agent hooks)')
-    expect(counts).toEqual({ waiting: 0, working: 1, idle: 0 })
-  })
-
-  test.each([agentState('waiting', 'permission'), agentState('waiting', 'attention', 'signals')])(
-    'never outranks %j',
-    (state) => {
-      const { status, counts } = judge(session('⠋ Fix login', state))
-      expect(status?.kind).toBe('waiting')
-      expect(counts).toEqual({ waiting: 1, working: 0, idle: 0 })
-    },
-  )
-
-  test('leaves a working state its reason and source, and a failure stays failed', () => {
-    expect(judge(session('⠋ Fix login', agentState('working', 'tool'))).status?.tooltip).toBe(
-      'Codex working: using a tool (agent hooks)',
-    )
-    expect(judge(session('⠋ Fix login', agentState('idle', 'error'), { progress: 'error' }))).toEqual({
-      status: { kind: 'failed', label: 'Codex failed', tooltip: 'Codex failed: reported an error (agent hooks)' },
-      counts: { waiting: 0, working: 0, idle: 1 },
-    })
   })
 })
 

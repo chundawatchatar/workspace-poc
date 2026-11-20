@@ -15,10 +15,8 @@ import {
   resumeCommand,
   type TermClient,
   type TerminalSession,
-  trackingForAll,
 } from '@orch/terminal'
 import type { z } from 'zod'
-import { ProgressWatch } from './agent-interrupt.service'
 import type { DaemonRecord } from './daemon.repository'
 import { DaemonRefused } from './daemon-build'
 import type { SharedDaemon } from './shared-daemon.service'
@@ -56,7 +54,6 @@ export class DaemonSession implements TerminalSession {
   private palette: TermColors | null = null
   /** The last derived agent state, so its `since` stays put while the state doesn't change. */
   private agentState: SessionInfo['agentState'] = null
-  private readonly progress = new ProgressWatch(() => this.onChange(this))
   /** Why the daemon can't be reached, shown to every view until a connection is made, also to ones that attach. */
   private notice: string | null = null
 
@@ -87,10 +84,10 @@ export class DaemonSession implements TerminalSession {
       attention: status?.attention ?? null,
       progress: status?.progress ?? null,
     }
-    const reported = { agentHook: status?.agentHook, progressEndedAt: this.progress.endedAt }
-    const agentTracking = this.record.agentTracking !== false
+    const agentTracking = this.reporting()
+    const agentReport = status?.agentReport ?? null
     // With the switch off the terminal shows no agent state, so the tab mark and the sidebar counts drop it.
-    this.agentState = agentTracking ? deriveAgentState({ ...signals, ...reported }, this.agentState, Date.now()) : null
+    this.agentState = agentTracking ? deriveAgentState({ ...signals, agentReport }, this.agentState, Date.now()) : null
     const cwd = interrupted?.cwd ?? this.workingDir ?? this.record.cwd ?? this.cwd
     return {
       ...signals,
@@ -104,24 +101,19 @@ export class DaemonSession implements TerminalSession {
   }
 
   /**
-   * Turns agent tracking off or on again for this terminal. Off forgets the shell's token in the daemon at once;
-   * on gives the running shell none, so hooks return only once the shell starts again. Both outlive the host.
+   * Turns the agent status off or on again for this terminal (AG-5). Off hides the state at once and the daemon
+   * raises no notification for it; on shows the last report again. It outlives the host.
    */
   setAgentTracking(on: boolean) {
-    if (on === (this.record.agentTracking !== false)) return
+    if (on === this.reporting()) return
     this.save({ agentTracking: on ? undefined : false })
-    this.resendTracking()
+    this.send({ type: 'reporting', on })
     this.onChange(this)
   }
 
-  /** Tells the daemon which agents this terminal may track now. */
-  resendTracking() {
-    this.send({ type: 'tracking', ...this.tracking() })
-  }
-
-  /** The trust answers with the switch applied: all false while the switch is off. */
-  private tracking() {
-    return this.record.agentTracking === false ? trackingForAll(false) : this.shared.tracking()
+  /** The terminal's switch. */
+  private reporting() {
+    return this.record.agentTracking !== false
   }
 
   observe(found: (Foreground & { cwd: string | null }) | undefined) {
@@ -248,7 +240,6 @@ export class DaemonSession implements TerminalSession {
   kill() {
     this.closing = true
     clearTimeout(this.retry)
-    this.progress.stop()
     this.stopResync()
     if (this.socket) this.send({ type: 'close' })
     else if (!this.connecting) void this.connect(false)
@@ -257,7 +248,6 @@ export class DaemonSession implements TerminalSession {
   shutdown() {
     this.stopped = true
     clearTimeout(this.retry)
-    this.progress.stop()
     this.stopResync()
     this.socket?.destroy()
     this.clients.clear()
@@ -373,7 +363,6 @@ export class DaemonSession implements TerminalSession {
     // The first status of a connection says whether this daemon takes the theme; one from an older build doesn't.
     const first = this.status === null
     this.status = message.status
-    this.progress.note(message.status.progress)
     if (first) this.initialise(message.status)
     if (!message.status.alive) this.process = null
     this.onChange(this)
@@ -468,7 +457,7 @@ export class DaemonSession implements TerminalSession {
           // agent: it is shown as interrupted instead, so the agent can be resumed.
           create: !this.closing && (this.restoring !== null || !this.record.agent),
           viewing: this.clients.size > 0,
-          tracking: this.tracking(),
+          reporting: this.reporting(),
         })
       })
       socket.on('data', (chunk: Buffer) => {

@@ -80,11 +80,12 @@ test('refuses a credentials directory accessible to other users', () => {
   expect(() => new DaemonRepository(options)).toThrow('must be private')
 })
 
-test('refuses a runtime folder too long for the reporting socket, which is one byte longer than the host socket', () => {
+test('refuses a runtime folder whose socket path would be over 100 bytes', () => {
   const { dataDir } = folders()
-  const runtime = join(dataDir, 'r'.repeat(100 - dataDir.length - 'host.sock'.length - 2))
-  expect(Buffer.byteLength(join(runtime, 'host.sock'))).toBe(100)
-  expect(() => new DaemonRepository({ dataDir, runtime })).toThrow('over 100 bytes')
+  const fits = join(dataDir, 'r'.repeat(100 - dataDir.length - 'host.sock'.length - 2))
+  expect(Buffer.byteLength(join(fits, 'host.sock'))).toBe(100)
+  expect(() => new DaemonRepository({ dataDir, runtime: fits })).not.toThrow()
+  expect(() => new DaemonRepository({ dataDir, runtime: `${fits}r` })).toThrow('over 100 bytes')
 })
 
 test('keeps where a terminal was and the agent it ran, and still reads records from before they existed', () => {

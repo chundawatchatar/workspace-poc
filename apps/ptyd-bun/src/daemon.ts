@@ -1,21 +1,15 @@
 import { randomBytes } from 'node:crypto'
-import { chmodSync, existsSync, unlinkSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { existsSync, unlinkSync } from 'node:fs'
 import { routes } from '@orch/shared'
 import {
-  AgentChannel,
-  type AgentTracking,
-  agentSocketPath,
-  agentTracking,
+  AgentReports,
   DAEMON_PROTOCOL,
   DaemonDecoder,
   daemonBuild,
   encodeControlFrame,
   encodeOutputFrame,
-  prepareAgentShim,
   shellProgram,
   TerminalCore,
-  trackingForAll,
 } from '@orch/terminal'
 import { MAX_QUEUE, type Peer, type Request, request, requestTypes, type SessionEntry } from './requests'
 
@@ -58,7 +52,7 @@ export async function runDaemon(argv: string[]): Promise<void> {
   const sessions = new Map<string, SessionEntry>()
   const sendStatus = (entry: SessionEntry | undefined) => entry && broadcast(entry, statusMessage(entry))
   const notify = (id: string, message: string) => sessions.get(id)?.core.notify(message)
-  const agents = new AgentChannel((id) => sendStatus(sessions.get(id)), notify)
+  const agents = new AgentReports((id) => sendStatus(sessions.get(id)), notify)
 
   function statusMessage(entry: SessionEntry) {
     const info = entry.core.info()
@@ -83,7 +77,7 @@ export async function runDaemon(argv: string[]): Promise<void> {
         queries: true,
         build,
         startedAt,
-        agentHook: agents.hook(entry.id),
+        agentReport: agents.last(entry.id),
       },
     }
   }
@@ -166,16 +160,15 @@ export async function runDaemon(argv: string[]): Promise<void> {
     cwd: string,
     cols: number,
     rows: number,
-    tracking: AgentTracking | undefined,
+    reporting: boolean,
   ): SessionEntry {
     const existing = sessions.get(id)
     if (existing) {
       if (existing.token !== token) throw new Error('terminal identity mismatch')
-      if (tracking) agents.setTracking(id, tracking)
+      agents.setReporting(id, reporting)
       return existing
     }
-    // The core starts its shell while it is constructed, so the session's token must be ready to issue before that.
-    agents.setTracking(id, tracking ?? trackingForAll(false))
+    agents.setReporting(id, reporting)
     // The core's callbacks close over `entry`, so fill it in after construction.
     const entry = { id, token, core: undefined as unknown as TerminalCore, peers: new Set<Peer>() }
     entry.core = new TerminalCore(
@@ -189,7 +182,7 @@ export async function runDaemon(argv: string[]): Promise<void> {
       },
       () => broadcast(entry, statusMessage(entry)),
       shell,
-      { issue: () => agents.issue(id), exited: () => agents.shellExited(id) },
+      { report: (report) => agents.report(id, report), exited: () => agents.clear(id) },
     )
     sessions.set(id, entry)
     return entry
@@ -231,7 +224,7 @@ export async function runDaemon(argv: string[]): Promise<void> {
     }
     let entry: SessionEntry
     try {
-      entry = ensureSession(message.id, message.token, message.cwd, message.cols, message.rows, message.tracking)
+      entry = ensureSession(message.id, message.token, message.cwd, message.cols, message.rows, message.reporting)
     } catch {
       drop(peer)
       return
@@ -288,11 +281,11 @@ export async function runDaemon(argv: string[]): Promise<void> {
       case 'idle':
         entry.core.idle()
         break
-      case 'tracking':
-        agents.setTracking(entry.id, agentTracking.parse(message))
+      case 'reporting':
+        agents.setReporting(entry.id, message.on)
         break
       case 'agentExited':
-        agents.agentExited(entry.id)
+        agents.clear(entry.id)
         break
       case 'close':
         closeSession(entry, peer)
@@ -341,7 +334,6 @@ export async function runDaemon(argv: string[]): Promise<void> {
   }
 
   let server: ReturnType<typeof listen> | null = null
-  let agentServer: Bun.Server<undefined> | null = null
   let stopping = false
 
   function listen() {
@@ -412,27 +404,6 @@ export async function runDaemon(argv: string[]): Promise<void> {
     }
   }
 
-  /**
-   * Binds the reporting channel. Terminals work without it, so a failure only means no shell gets a token. It runs
-   * once `host.sock` is held, so a second daemon that loses that race never touches the live channel's socket.
-   */
-  function bindAgentChannel() {
-    const path = agentSocketPath(socketPath)
-    try {
-      try {
-        unlinkSync(path)
-      } catch {}
-      agentServer = Bun.serve({ unix: path, development: false, fetch: (request) => agents.handle(request) })
-      chmodSync(path, 0o600)
-      agents.open(path, prepareAgentShim(dirname(socketPath)))
-      setInterval(() => agents.tick(), 100).unref()
-    } catch (error) {
-      agentServer?.stop(true)
-      agentServer = null
-      console.error('ptyd-bun: the agent channel is off', error instanceof Error ? error.message : 'unknown error')
-    }
-  }
-
   async function start() {
     try {
       server = listen()
@@ -446,7 +417,6 @@ export async function runDaemon(argv: string[]): Promise<void> {
       } catch {}
       server = listen()
     }
-    bindAgentChannel()
   }
 
   function shutdown(code: number) {
@@ -460,12 +430,9 @@ export async function runDaemon(argv: string[]): Promise<void> {
     }
     peers.clear()
     server?.stop(true)
-    agentServer?.stop(true)
-    for (const path of agentServer ? [socketPath, agentSocketPath(socketPath)] : [socketPath]) {
-      try {
-        unlinkSync(path)
-      } catch {}
-    }
+    try {
+      unlinkSync(socketPath)
+    } catch {}
     process.exit(code)
   }
 

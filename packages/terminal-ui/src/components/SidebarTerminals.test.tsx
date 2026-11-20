@@ -76,7 +76,7 @@ describe('SidebarTerminals', () => {
       {
         process: { ...started, name: 'claude', command: 'claude' },
         agent: claude,
-        agentState: { state: 'idle', reason: 'finished', source: 'hooks', since: 1 },
+        agentState: { state: 'idle', reason: 'finished', since: 1 },
         attention: { at: 10, message: 'Done' },
       },
       { process: { ...started, name: 'codex', command: 'codex' }, agent: { ...claude, kind: 'codex' } },

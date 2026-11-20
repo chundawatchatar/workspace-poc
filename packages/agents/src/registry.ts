@@ -24,13 +24,3 @@ export function agentDefinition(kind: AgentKind): AgentDefinition {
 export const AGENT_LABELS = Object.fromEntries(
   AGENT_KINDS.map((kind) => [kind, AGENT_DEFINITIONS[kind].label]),
 ) as Record<AgentKind, string>
-
-/** The agents whose per-session hooks can report status. */
-export type HookAgentKind = {
-  [K in AgentKind]: (typeof AGENT_DEFINITIONS)[K]['capabilities']['hooks'] extends true ? K : never
-}[AgentKind]
-
-/** The kinds whose definitions advertise hook tracking. */
-export const HOOK_AGENT_KINDS = AGENT_KINDS.filter(
-  (kind): kind is HookAgentKind => AGENT_DEFINITIONS[kind].capabilities.hooks,
-)

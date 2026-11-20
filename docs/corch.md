@@ -14,8 +14,6 @@ Requirements:
 - macOS or Linux, on x64 or arm64: `darwin-arm64`, `darwin-x64`, `linux-arm64` or `linux-x64`. Windows and Linux with
   musl are not supported.
 - npm, with Node 18 or later, which runs the small `corch` launcher.
-- `curl`, for agent tracking: the hooks report to the terminal daemon with `curl --unix-socket`. Without it the
-  terminals work, but agents show no working, waiting or idle state from hooks.
 - The host runs `git`, `ps` and `lsof` from its `PATH`, as a terminal would.
 
 No release is published yet, so today you build the npm packages from the repo and install their tarballs:
@@ -117,7 +115,6 @@ corch will not use the data folder /home/me/.local/share/corch: other users have
 | `corch.service.log` | macOS service only: what the host prints before its own log starts. |
 | `state.json` | The layout: workspaces, panes and tabs. Delete it, with the host stopped, to reset the layout. |
 | `terminal-daemons/` | One record per terminal: how to reattach to it, its last folder and the agent to resume. |
-| `agent-tracking.json` | Your ask-once answers for agent tracking. Delete it to be asked again. |
 | `remote-access.json` | The old on/off switch for remote access. No longer read; you can delete it. |
 | `machine-key` | The machine's Ed25519 key. The machine id is the hash of its public key, so deleting it gives a new id. |
 | `access-keys.json` | The old remote access keys. No longer read; you can delete it. |
@@ -128,7 +125,7 @@ corch will not use the data folder /home/me/.local/share/corch: other users have
 `corch.lock` and `corch.run.json` exist only while a host runs; a command that finds them left by a host that is gone
 removes them. The files appear as they are needed, so a new folder holds only a few.
 
-The terminal daemon's socket and agent shims are not in the data folder but in a runtime folder of their own,
+The terminal daemon's socket is not in the data folder but in a runtime folder of its own,
 `/tmp/orchpty-<uid>-<hash>`, one per data folder.
 
 The dev host keeps the same files, apart from the `corch.*` ones, in `apps/host/.data/`.
@@ -469,5 +466,4 @@ What a compiled executable needs, as found when the host was first compiled:
 - **The runtime folder is per data folder.** Each compiled host's daemon runtime folder is named after its data
   folder, so two hosts never share a daemon.
 - **No native dependencies.** The pseudo-terminal is Bun's own, and every dependency is plain JavaScript. At runtime
-  the host still runs `git`, `ps` and `lsof` from `PATH`, and the agent hooks need `/bin/sh` and `curl`. The hooks are
-  scripts the daemon writes into its runtime folder, not files of the package.
+  the host still runs `git`, `ps` and `lsof` from `PATH`.

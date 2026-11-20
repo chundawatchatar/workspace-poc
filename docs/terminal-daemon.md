@@ -32,8 +32,8 @@ by running itself again with the `__daemon` subcommand (`daemonCommand` in
 `apps/host/src/modules/terminals/daemon-build.ts`); the daemon needs nothing
 from the repo.
 
-Each data folder gets its own daemon, with its socket, `agent.sock`, its log
-and the agent shims in a runtime folder of its own,
+Each data folder gets its own daemon, with its socket and its log in a runtime
+folder of its own,
 `/tmp/orchpty-<uid>-<hash>`, named after the data folder (`daemonRuntimeDir`).
 So two `corch` hosts with different data folders never share a daemon. The dev
 data folder, `apps/host/.data/`, keeps the folder name it had before the data
@@ -139,41 +139,28 @@ Enter). Terminals without an agent are created again as usual, in their saved
 
 ## Agent tracking
 
-The daemon is where agent hooks report, because it is the one process that is
-always there while an agent runs. The whole design is in
-[agents.md](agents.md); the daemon's part is:
+Agents report their own status in their terminal output, through the Program
+Status Protocol (OSC 7501). The daemon reads every byte a session prints, so it
+is where status is read. The whole design is in [agents.md](agents.md); the
+daemon's part is:
 
-- **A second socket.** Next to `host.sock` the daemon listens on
-  `<runtime>/agent.sock`, plain HTTP for the hook script. It is the only local
-  endpoint outside the host's `routes` registry, and the tunnel and the
-  `/m/<id>` relay never reach it. A shell only gets this address, so it can
-  never speak the control protocol on `host.sock`.
-- **The shim folder.** At start the daemon writes `<runtime>/agent/`: the
-  `claude` and `codex` shims and `orch-agent-hook` in `bin/`, the generated
-  Claude Code settings and the zsh startup wrapper, all from fixed contents in
-  `packages/terminal/src/agent-shim.ts` and `packages/agents/src/`. If the write fails, shells start
-  without the `PATH` change.
-- **Per-session tokens.** When a session tracks any agent, each shell it starts
-  gets a fresh random token in `ORCH_AGENT_TOKEN`, with `ORCH_AGENT_SOCKET`.
-  Only that shell's environment and the daemon's memory hold it: it is never
-  sent to the host, stored or logged.
-- **Requests from the host.** `hello` carries `tracking` (which agents the
-  session may track; absent means none), and two requests change it later:
-  `tracking`, sent when the user's answer or the terminal's switch changes, and
-  `agentExited`, sent when process inspection sees the agent leave, which drops
-  its hook state. The daemon's status carries the last hook event as
-  `agentHook`.
-- **The switch in the record.** A terminal the user stopped tracking has
-  `agentTracking: false` in its record under `terminal-daemons/`; absent
-  means on. The host reads it before `hello`.
-- **Hook state lives in memory.** It survives a host restart, but a daemon
-  restart loses it with the sessions, and a resumed agent starts from terminal
-  signals with a new token.
-- **Editing tracking code changes `daemonBuild`.** The build hash covers the channel,
-  shims and agent adapters in `packages/terminal/src` and `packages/agents/src`,
-  along with the daemon sources, including nested folders. A running daemon keeps the old code, and the
-  host reports it as `outdated`, until `bun run terminals:stop`, which ends its
-  shells.
+- **Reading and answering OSC 7501.** Each session's `TerminalCore` reads the
+  reports with `readProgramStatus` and always answers the protocol's support
+  question, even while a browser view answers the other queries, since no
+  browser terminal knows it.
+- **The last report per session.** `AgentReports` keeps it in memory and raises
+  the notifications. The daemon's status carries it as `agentReport`. It
+  survives a host restart; a daemon restart loses it with the sessions.
+- **Requests from the host.** `hello` carries `reporting`, the terminal's switch
+  (`agentTracking: false` in its record under `terminal-daemons/` means off), and
+  `{ type: 'reporting', on }` changes it later. Off, reports are kept but raise
+  no notification. `agentExited`, sent when process inspection sees the agent
+  leave, drops the report.
+- **Editing this code changes `daemonBuild`.** The build hash covers
+  `packages/terminal/src` and `packages/agents/src`, along with the daemon
+  sources, including nested folders. A running daemon keeps the old code, and
+  the host reports it as `outdated`, until `bun run terminals:stop`, which ends
+  its shells.
 
 ## Why output is binary
 

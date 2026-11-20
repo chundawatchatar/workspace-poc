@@ -25,6 +25,9 @@ import {
 } from '@orch/ui'
 import { useSyncExternalStore } from 'react'
 import type { HostTransport } from '../transport'
+import { listenForUnlock, playCue, soundCue, unlockAudio } from './agentSound'
+
+const SOUND_KEY = 'poc-agent-sound'
 
 export type Overlay =
   | 'help'
@@ -66,6 +69,8 @@ export interface Snapshot {
   /** The theme in use, and the theme to use for each mode. */
   themeId: string
   preferred: Record<Theme, string>
+  /** Whether agents' cues play a sound. Local to this browser. */
+  sound: boolean
 }
 
 const initial: Snapshot = {
@@ -83,6 +88,7 @@ const initial: Snapshot = {
   theme: 'dark',
   themeId: DEFAULT_THEME.dark,
   preferred: DEFAULT_THEME,
+  sound: true,
 }
 
 let snapshot = initial
@@ -136,9 +142,13 @@ function handle(event: ServerEvent) {
     case 'state':
       set({ state: event.state })
       break
-    case 'session':
+    case 'session': {
+      const previous = snapshot.sessions[event.session.id]
       set({ sessions: { ...snapshot.sessions, [event.session.id]: event.session } })
+      const cue = snapshot.sound ? soundCue(previous, event.session) : null
+      if (cue) playCue(cue)
       break
+    }
     case 'session.gone': {
       const { [event.id]: _gone, ...sessions } = snapshot.sessions
       set({ sessions })
@@ -379,6 +389,19 @@ export function setThemeChoice(choice: ThemeChoice) {
 
 export function toggleThemeMode() {
   setThemeChoice(snapshot.theme === 'dark' ? 'light' : 'dark')
+}
+
+/** Reads whether this browser muted agent sounds, which are on until muted, and unlocks audio on the first gesture. */
+export function initSound() {
+  set({ sound: read(SOUND_KEY) !== 'off' })
+  return listenForUnlock()
+}
+
+/** Turns agent sounds on or off in this browser. Call it from a click or key, so turning them on also unlocks audio. */
+export function setSound(on: boolean) {
+  if (on) unlockAudio()
+  save(SOUND_KEY, on ? 'on' : 'off')
+  set({ sound: on })
 }
 
 /**

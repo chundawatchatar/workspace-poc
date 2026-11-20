@@ -1,7 +1,6 @@
 import { createConnection } from 'node:net'
 import { type AppState, listPanes } from '@orch/shared'
 import {
-  type AgentTracking,
   DAEMON_PROTOCOL,
   DaemonDecoder,
   daemonMessage,
@@ -38,6 +37,7 @@ export function closeDaemon(
           id: record.id,
           token: record.token,
           create: false,
+          reporting: record.agentTracking !== false,
         }),
       ),
     )
@@ -121,15 +121,10 @@ export function stopDaemon(repository: DaemonRepository): Promise<'stopped' | 'a
   })
 }
 
-/** Tells every open terminal's daemon session its tracking again, after a trust answer changed. */
-export function resendTracking(sessions: TerminalSession[]) {
-  for (const session of sessions) if (session instanceof DaemonSession) session.resendTracking()
-}
-
 /**
  * Creates the one persistent daemon and the terminals that attach to it. The entry point gives the data folder, the
  * daemon's runtime folder, the command that starts the daemon, this host's build and the command that stops the
- * daemon; `tracking` reads the trust answers.
+ * daemon.
  */
 export function daemonFactory(options: {
   dataDir: string
@@ -137,7 +132,6 @@ export function daemonFactory(options: {
   daemonCommand: string[]
   build: string
   stopHint: string
-  tracking?: () => AgentTracking
 }) {
   const repository = new DaemonRepository({ dataDir: options.dataDir, runtime: options.runtime })
   const shared = new SharedDaemon({
@@ -146,7 +140,6 @@ export function daemonFactory(options: {
     build: options.build,
     stopHint: options.stopHint,
     shell: shellProgram(),
-    tracking: options.tracking,
   })
   return {
     repository,

@@ -10,11 +10,11 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
-import { agentSocketPath } from '@orch/terminal'
+import { AGENT_KINDS } from '@orch/shared'
 import { z } from 'zod'
 
 const agentSchema = z.object({
-  kind: z.enum(['claude', 'codex', 'opencode', 'cursor', 'pi', 'commandcode']),
+  kind: z.enum(AGENT_KINDS),
   sessionId: z.string().nullable(),
   cwd: z.string(),
 })
@@ -73,8 +73,8 @@ export class DaemonRepository {
         throw new Error(`Terminal daemon directory must be private and owned by this user: ${dir}`)
       }
     }
-    // The daemon binds its reporting channel next to this socket, under a name one byte longer.
-    if (Buffer.byteLength(agentSocketPath(this.socket)) > 100)
+    // A Unix socket path over about 100 bytes can't be bound on macOS.
+    if (Buffer.byteLength(this.socket) > 100)
       throw new Error(`The terminal daemon's runtime folder produces a socket path over 100 bytes: ${this.runtime}`)
   }
 

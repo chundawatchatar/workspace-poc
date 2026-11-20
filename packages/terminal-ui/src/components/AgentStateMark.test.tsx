@@ -1,16 +1,15 @@
 import { describe, expect, test } from 'bun:test'
-import type { AgentStateName, SessionInfo } from '@orch/shared'
+import type { AgentReason, AgentStateName } from '@orch/shared'
 import { render, screen } from '@testing-library/react'
 import { type AgentStatus, agentStatus } from '../lib/agentStatus'
 import { AgentStateMark } from './AgentStateMark'
 
 const agent = { kind: 'claude', sessionId: null, cwd: '/w' } as const
 
-function status(state: AgentStateName, progress: SessionInfo['progress'] = null) {
-  const agentState = { state, reason: 'tool', source: 'hooks', since: 1 } as const
+function status(state: AgentStateName, reason: AgentReason = 'turn') {
   return agentStatus({
-    agentState,
-    progress,
+    agentState: { state, reason, since: 1 },
+    progress: null,
     agent,
     title: 'repo',
     alive: true,
