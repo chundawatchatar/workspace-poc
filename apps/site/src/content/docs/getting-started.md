@@ -9,7 +9,7 @@ order: 1
 
 - **macOS or Linux.** Terminals use Bun's built-in pseudo-terminal support. Windows is planned.
 - **[Bun](https://bun.sh)**, a recent release. Orchestrator uses its built-in terminal support.
-- **A current browser.** Chrome, Edge, Safari or Firefox.
+- **Chrome.** Other current browsers aren't checked yet.
 
 ## Install and run
 

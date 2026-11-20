@@ -91,7 +91,7 @@ export const FAQ: Faq[] = [
   },
   {
     q: 'Which platforms are supported?',
-    a: 'macOS and Linux today, used from any current browser. Windows support is planned.',
+    a: 'macOS and Linux today, used from Chrome. Other browsers are not checked yet. Windows support is planned.',
   },
   {
     q: 'What if I cancel Orchestrator?',
