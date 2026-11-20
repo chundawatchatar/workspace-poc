@@ -19,6 +19,7 @@ import {
   Zap,
 } from '@orch/ui/icons'
 import ArchitectureDiagram from '../components/astro/ArchitectureDiagram.astro'
+import ComparePlans from '../components/astro/ComparePlans.astro'
 import Faq from '../components/astro/Faq.astro'
 import GithubMark from '../components/astro/GithubMark.astro'
 import HeroWaves from '../components/astro/HeroWaves.astro'
@@ -351,9 +352,7 @@ const agents = ['claude', 'codex', 'opencode', 'cursor-agent', 'aider', 'gemini'
         lead="Everything that runs locally is free, forever. Pay only if you want us to run the relay that reaches your machines from anywhere."
       />
       <Pricing />
-      <p class="mt-6 text-sm text-dim">
-        <a href="/pricing" class="text-accent hover:underline">Compare plans in detail →</a>
-      </p>
+      <ComparePlans />
     </div>
   </section>
 

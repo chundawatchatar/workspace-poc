@@ -110,6 +110,6 @@ export const SECTIONS = [
   { id: 'how', name: 'how-it-works', branch: 'arch', changes: 3, label: 'How it works' },
   { id: 'agents', name: 'agents', branch: 'byo-agent', changes: 2, label: 'Agents' },
   { id: 'remote', name: 'remote', branch: 'tunnel', changes: 1, label: 'Remote access' },
-  { id: 'pricing', name: 'pricing', branch: 'plans', changes: 2, label: 'Plans' },
+  { id: 'pricing', name: 'pricing', branch: 'plans', changes: 2, label: 'Pricing' },
   { id: 'faq', name: 'faq', branch: 'answers', changes: 6, label: 'FAQ' },
 ]

@@ -15,7 +15,7 @@ import { SECTIONS, SITE } from '../site.config'
 interface Props {
   title?: string
   description?: string
-  tab: 'overview' | 'pricing' | 'docs'
+  tab: 'overview' | 'docs'
   /** The open doc's id, on docs pages. */
   doc?: string
   /** The header's path after the name, like the app shows a workspace's folder. */
@@ -26,12 +26,7 @@ const { title, description = SITE.description, tab, doc, path } = Astro.props
 const pageTitle = title ? `${title} · ${SITE.name}` : `${SITE.name}: ${SITE.tagline}`
 const docs = await sortedDocs()
 const inDocs = tab === 'docs'
-// Home and pricing are marketing pages with a top bar; the docs are drawn as the app, with its sidebar and keys.
-
-const pages = [
-  { id: 'overview', label: 'Overview', href: '/' },
-  { id: 'pricing', label: 'Pricing', href: '/pricing' },
-]
+// The home page is a marketing page with a top bar; the docs are drawn as the app, with its sidebar and keys.
 
 const items: PaletteItem[] = [
   ...SECTIONS.map((section, i) => ({
@@ -42,7 +37,7 @@ const items: PaletteItem[] = [
     keys: inDocs ? `⌃B ${i + 1}` : undefined,
     href: `/#${section.id}`,
   })),
-  ...pages.map((p) => ({ id: `page-${p.id}`, label: p.label, kind: 'page' as const, href: p.href })),
+  { id: 'page-overview', label: 'Overview', kind: 'page', href: '/' },
   { id: 'page-docs', label: 'Docs', kind: 'page', href: '/docs/getting-started' },
   ...docs.map((d) => ({
     id: `doc-${d.id}`,
@@ -137,10 +132,10 @@ const iconButton = 'rounded p-1 hover:bg-raised hover:text-ink'
     }
 
     <div id="main" class:list={['min-w-0', inDocs && 'lg:pl-64']}>
-      <!-- Home and pricing have the top bar. The docs have the app's workspace header. -->
+      <!-- The home page has the top bar. The docs have the app's workspace header. -->
       {
         !inDocs ? (
-          <SiteNav current={tab} />
+          <SiteNav />
         ) : (
           <div class="sticky top-0 z-20">
             <header class="flex h-10 items-center gap-2 border-b border-line bg-sidebar px-2">
@@ -196,7 +191,7 @@ const iconButton = 'rounded p-1 hover:bg-raised hover:text-ink'
               <span>MIT licensed. Runs on your machine.</span>
               <span class="flex gap-4 sm:ml-auto">
                 <a class="hover:text-ink" href="/docs/getting-started">Docs</a>
-                <a class="hover:text-ink" href="/pricing">Pricing</a>
+                <a class="hover:text-ink" href="/#pricing">Pricing</a>
                 <a class="hover:text-ink" href={SITE.githubUrl}>GitHub</a>
                 <a class="hover:text-ink" href="/docs/privacy-and-security">Privacy</a>
               </span>

@@ -14,6 +14,8 @@ export default defineConfig({
   integrations: [react(), mdx()],
   // Code blocks take the active theme's colours from site.css rather than a fixed highlighter theme.
   markdown: { syntaxHighlight: false },
+  // Pricing is a section of the home page now; old links to the page land on it.
+  redirects: { '/pricing': '/#pricing' },
   vite: {
     server: { strictPort: true },
     define: {

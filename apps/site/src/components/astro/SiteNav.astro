@@ -1,23 +1,16 @@
 ---
-// The top bar of the home and pricing pages, in place of the sidebar the docs have: the other pages and the palette, appearance
-// and shortcut buttons the sidebar footer holds elsewhere, then the sections as a row of terminal tabs, like a pane's
-// tab bar in the app. The tab row scrolls sideways when it doesn't fit, and below 640px Docs and Pricing join it.
+// The home page's top bar, in place of the sidebar the docs have: the docs link and the palette and appearance
+// buttons the docs sidebar's footer holds, then the sections as a row of terminal tabs, like a pane's tab bar in the
+// app. The tab row scrolls sideways when it doesn't fit, and below 640px Docs joins it.
 // Shell.astro's scroll spy marks the current section's tab, and site.css's `scroll-padding-top` matches the bar's
 // height.
 import { Moon, Palette, Search, SquareTerminal, Sun } from '@orch/ui/icons'
 import { SECTIONS, SITE } from '../../site.config'
 import Logo from './Logo.astro'
 
-interface Props {
-  /** The page it is drawn on, whose link is marked current. */
-  current: 'overview' | 'pricing'
-}
-
-const { current } = Astro.props
-const onPricing = current === 'pricing'
 const sections = SECTIONS.flatMap((section) => (section.label ? [{ id: section.id, label: section.label }] : []))
 const link = 'flex h-8 shrink-0 items-center rounded-md px-2.5 text-[13px] whitespace-nowrap'
-const pageLink = `${link} text-dim hover:bg-raised hover:text-ink aria-[current=page]:text-ink`
+const pageLink = `${link} text-dim hover:bg-raised hover:text-ink`
 const tab =
   'nav-tab flex max-w-52 min-w-24 shrink-0 items-center gap-1.5 border-r border-line px-2.5 text-xs text-faint select-none first:border-l hover:text-dim focus-visible:-outline-offset-2'
 const iconButton = 'rounded-md p-1.5 text-dim hover:bg-raised hover:text-ink'
@@ -42,7 +35,6 @@ const iconButton = 'rounded-md p-1.5 text-dim hover:bg-raised hover:text-ink'
           <span class="hidden lg:inline">Search…</span>
         </button>
         <a href="/docs/getting-started" class={`hidden sm:flex ${pageLink}`}>Docs</a>
-        <a href="/pricing" aria-current={onPricing ? 'page' : undefined} class={`hidden sm:flex ${pageLink}`}>Pricing</a>
         <span class="flex items-center">
           <button type="button" data-action="toggle-theme" title="Toggle light / dark" aria-label="Toggle light and dark" class={iconButton}>
             <Moon size={15} className="when-dark" />
@@ -68,13 +60,6 @@ const iconButton = 'rounded-md p-1.5 text-dim hover:bg-raised hover:text-ink'
         ))
       }
       <a href="/docs/getting-started" class="flex shrink-0 items-center px-2.5 text-xs text-dim hover:text-ink sm:hidden">Docs</a>
-      <a
-        href="/pricing"
-        aria-current={onPricing ? 'page' : undefined}
-        class="flex shrink-0 items-center px-2.5 text-xs text-dim hover:text-ink aria-[current=page]:text-ink sm:hidden"
-      >
-        Pricing
-      </a>
     </nav>
   </div>
 </header>

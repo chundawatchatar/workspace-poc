@@ -3,7 +3,7 @@
 
 /* The site is drawn as an Orchestrator window: colours, fonts, motion, the attention ring and kbd come from @orch/ui. */
 
-/* Home and pricing have the top bar (SiteNav.astro): the 56px header, the 32px tab row and their two borders. */
+/* The home page has the top bar (SiteNav.astro): the 56px header, the 32px tab row and their two borders. */
 html {
   scroll-behavior: smooth;
   scroll-padding-top: 90px;
