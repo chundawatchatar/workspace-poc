@@ -34,6 +34,8 @@ interface Props {
     | 'serverUrlSetBy'
     | 'defaultServerUrl'
     | 'busy'
+    | 'onClose'
+    | 'children'
   >
   /** The browsers approved for the connected account, and those waiting. Shown only while connected. */
   devices: Omit<RemoteAccessDevicesProps, 'busy'>
@@ -57,28 +59,42 @@ interface Props {
 export function RemoteAccessForm(props: Props) {
   const { status, error, notice, busy } = props
 
+  const messages = (
+    <>
+      {error && <p className="text-xs text-bad">{error}</p>}
+      {notice && <p className="text-xs text-warn">{notice}</p>}
+    </>
+  )
+
   return (
     <Modal title="Remote access" width="w-[520px] max-w-[94vw]" onClose={props.onClose}>
       <div className="space-y-3">
-        <div className="flex min-w-0 items-center gap-2 text-[13px]">
-          <span className={`h-2 w-2 shrink-0 rounded-full ${REMOTE_ACCESS_TONE_CLASS[props.statusTone]}`} />
-          <span role="status">{props.statusLabel}</span>
+        <div className="space-y-1 rounded-md bg-raised/60 px-3 py-2">
+          <div className="flex items-center justify-between gap-3 text-[13px]">
+            <span className="flex items-center gap-2 whitespace-nowrap">
+              <span className={`h-2 w-2 shrink-0 rounded-full ${REMOTE_ACCESS_TONE_CLASS[props.statusTone]}`} />
+              <span role="status">{props.statusLabel}</span>
+            </span>
+            {status?.machineFingerprint && (
+              <span
+                className="shrink-0 font-mono text-[11px] text-dim"
+                title="Machine key fingerprint. The client asks you to type it before it opens this machine through your account."
+              >
+                Machine key {status.machineFingerprint}
+              </span>
+            )}
+          </div>
           {status?.machineId && (
-            <span className="truncate font-mono text-[11px] text-faint" title={status.machineId}>
-              {status.machineId}
-            </span>
-          )}
-          {status?.machineFingerprint && (
-            <span
-              className="shrink-0 font-mono text-[11px] text-dim"
-              title="Machine key fingerprint. The client asks you to type it before it opens this machine through your account."
-            >
-              Machine key {status.machineFingerprint}
-            </span>
+            <div className="flex min-w-0 items-center gap-1.5 text-[11px]">
+              <span className="shrink-0 text-faint">Machine ID</span>
+              <span className="truncate font-mono text-faint" title={status.machineId}>
+                {status.machineId}
+              </span>
+            </div>
           )}
         </div>
 
-        {status && (
+        {status ? (
           <RemoteAccessConnect
             {...props.connection}
             linkedAccount={status.linkedAccount}
@@ -88,22 +104,25 @@ export function RemoteAccessForm(props: Props) {
             serverUrlSetBy={status.serverUrlSetBy}
             defaultServerUrl={status.defaultServerUrl}
             busy={busy}
-          />
-        )}
-        {status?.linkedAccount && <RemoteAccessDevices {...props.devices} busy={busy} />}
-
-        {error && <p className="text-xs text-bad">{error}</p>}
-        {notice && <p className="text-xs text-warn">{notice}</p>}
-
-        <div className="flex items-center justify-end gap-2 pt-1">
-          <button
-            type="button"
-            className="rounded-md px-3 py-1.5 text-xs text-dim hover:bg-raised"
-            onClick={props.onClose}
+            onClose={props.onClose}
           >
-            Close
-          </button>
-        </div>
+            {status.linkedAccount && <RemoteAccessDevices {...props.devices} busy={busy} />}
+            {messages}
+          </RemoteAccessConnect>
+        ) : (
+          <>
+            {messages}
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                className="rounded-md px-3 py-1.5 text-xs text-dim hover:bg-raised hover:text-ink"
+                onClick={props.onClose}
+              >
+                Close
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </Modal>
   )

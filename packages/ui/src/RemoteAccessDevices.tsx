@@ -6,6 +6,7 @@ import {
   formatLocalDateTime,
 } from '@orch/shared'
 import { useRef } from 'react'
+import { ShieldAlert } from './icons'
 import { TextField } from './TextField'
 
 export interface RemoteAccessDevicesProps {
@@ -34,6 +35,8 @@ const button = 'shrink-0 rounded-md px-2.5 py-1 text-xs disabled:opacity-60'
  * types the fingerprint their own browser shows, so a browser pushed into the
  * list can't be approved by a click. The field says whether the
  * typed fingerprint matches a waiting browser, and Approve waits until it does.
+ * Waiting browsers sit in a highlighted block with a count, so they catch the
+ * owner's eye; the approved ones follow in a plain one.
  */
 export function RemoteAccessDevices(props: RemoteAccessDevicesProps) {
   const { devices, fingerprint, onDismiss, onRevoke, busy } = props
@@ -71,13 +74,26 @@ export function RemoteAccessDevices(props: RemoteAccessDevicesProps) {
       ? 'No waiting browser has this fingerprint. Check it against the one your browser shows.'
       : null
   return (
-    <section aria-label="Devices" className="space-y-2 rounded-md border border-line p-2.5 text-[13px]">
-      <div className="text-xs text-dim">Browsers that open this machine through the account</div>
+    <section aria-label="Devices" className="space-y-3 text-[13px]">
       {pending.length > 0 ? (
-        <>
+        <div className="space-y-2.5 rounded-md border border-warn/60 bg-warn/10 p-2.5">
+          <div className="flex items-center gap-2 font-medium">
+            <span className="relative flex size-2 shrink-0">
+              <span className="absolute inline-flex size-full rounded-full bg-warn opacity-75 motion-safe:animate-ping" />
+              <span className="relative inline-flex size-2 rounded-full bg-warn" />
+            </span>
+            <ShieldAlert size={14} className="shrink-0 text-warn" aria-hidden />
+            Browser connect requests
+            <span className="rounded-full bg-warn/25 px-1.5 text-[11px] leading-4 font-semibold text-ink">
+              {pending.length}
+            </span>
+          </div>
           <ul aria-label="Waiting for approval" className="space-y-1">
             {pending.map((device) => (
-              <li key={device.id} className="flex items-center justify-between gap-2">
+              <li
+                key={device.id}
+                className="flex items-center justify-between gap-2 rounded-md border border-line bg-bg px-2.5 py-1.5"
+              >
                 <div className="min-w-0">
                   <div className="font-mono text-xs">{device.fingerprint}</div>
                   <div className="text-[11px] text-faint">First seen {formatLocalDateTime(device.firstSeenAt)}</div>
@@ -131,35 +147,38 @@ export function RemoteAccessDevices(props: RemoteAccessDevicesProps) {
               }
             />
           </div>
-        </>
+        </div>
       ) : (
         <p className="text-xs text-faint">
           No browser is waiting. Open this machine from the client, and its browser shows up here to approve.
         </p>
       )}
-      {approved.length > 0 ? (
-        <ul aria-label="Approved" className="space-y-1">
-          {approved.map((device) => (
-            <li key={device.id} className="flex items-center justify-between gap-2">
-              <div className="min-w-0">
-                <div className="font-mono text-xs">{device.fingerprint}</div>
-                <div className="text-[11px] text-faint">Approved {formatLocalDateTime(device.approvedAt)}</div>
-              </div>
-              <button
-                type="button"
-                disabled={busy}
-                aria-label={`Revoke ${device.fingerprint}`}
-                className={`${button} text-dim hover:bg-raised hover:text-ink`}
-                onClick={() => onRevoke(device.id)}
-              >
-                Revoke
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="text-xs text-faint">No browser is approved yet.</p>
-      )}
+      <div className="space-y-2 rounded-md border border-line p-2.5">
+        <div className="text-xs text-dim">Approved browsers</div>
+        {approved.length > 0 ? (
+          <ul aria-label="Approved" className="space-y-1">
+            {approved.map((device) => (
+              <li key={device.id} className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="font-mono text-xs">{device.fingerprint}</div>
+                  <div className="text-[11px] text-faint">Approved {formatLocalDateTime(device.approvedAt)}</div>
+                </div>
+                <button
+                  type="button"
+                  disabled={busy}
+                  aria-label={`Revoke ${device.fingerprint}`}
+                  className={`${button} text-dim hover:bg-raised hover:text-ink`}
+                  onClick={() => onRevoke(device.id)}
+                >
+                  Revoke
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-xs text-faint">No browser is approved yet.</p>
+        )}
+      </div>
     </section>
   )
 }

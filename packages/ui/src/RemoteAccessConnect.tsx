@@ -7,7 +7,7 @@ import {
   type LinkedAccount,
   sameServerUrl,
 } from '@orch/shared'
-import { useEffect, useState } from 'react'
+import { type ReactNode, useEffect, useState } from 'react'
 import { Button } from './Button'
 import { TriangleAlert } from './icons'
 import { TextField } from './TextField'
@@ -42,6 +42,10 @@ export interface RemoteAccessConnectProps {
   onCancel: () => void
   /** True while a request is on its way, so the buttons wait. */
   busy: boolean
+  /** Closes the dialog. Its button shares the footer row with the step's own actions. */
+  onClose: () => void
+  /** Shown below the step and above the footer, such as the approved browsers and the dialog's messages. */
+  children?: ReactNode
 }
 
 const button = 'rounded-md px-3 py-1.5 text-xs disabled:opacity-60'
@@ -54,7 +58,9 @@ const button = 'rounded-md px-3 py-1.5 text-xs disabled:opacity-60'
  * request waits for the owner, it asks them to approve it in the client after
  * checking the machine fingerprint, with the time left and Cancel. Connected,
  * it shows the account and its server, read-only, with Disconnect, which asks
- * first. It holds no field values of its own, only which step is showing.
+ * first. Every step ends with one footer row: its actions beside Close, or Back
+ * and Confirm while checking. It holds no field values of its own, only which
+ * step is showing.
  */
 export function RemoteAccessConnect(props: RemoteAccessConnectProps) {
   const { linkedAccount, connectRequest, busy } = props
@@ -62,63 +68,75 @@ export function RemoteAccessConnect(props: RemoteAccessConnectProps) {
 
   if (!linkedAccount && connectRequest) {
     return (
-      <WaitingForApproval
-        expiresAt={connectRequest.expiresAt}
-        machineFingerprint={props.machineFingerprint}
-        busy={busy}
-        onCancel={props.onCancel}
-      />
+      <>
+        <WaitingForApproval
+          expiresAt={connectRequest.expiresAt}
+          machineFingerprint={props.machineFingerprint}
+          busy={busy}
+          onCancel={props.onCancel}
+        />
+        {props.children}
+        <Footer>
+          <CloseButton onClose={props.onClose} />
+        </Footer>
+      </>
     )
   }
 
   if (linkedAccount) {
     return (
-      <section aria-label="Connected account" className="space-y-1.5 rounded-md border border-line p-2.5 text-[13px]">
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="truncate">
-              {linkedAccount.name} <span className="text-dim">({linkedAccount.maskedEmail})</span>
+      <>
+        <section aria-label="Connected account" className="space-y-1.5 rounded-md border border-line p-2.5 text-[13px]">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="truncate">
+                {linkedAccount.name} <span className="text-dim">({linkedAccount.maskedEmail})</span>
+              </div>
+              <div className="truncate font-mono text-[11px] text-faint">{linkedAccount.serverUrl}</div>
             </div>
-            <div className="truncate font-mono text-[11px] text-faint">{linkedAccount.serverUrl}</div>
-          </div>
-          {!confirming && (
-            <button
-              type="button"
-              disabled={busy}
-              className={`${button} shrink-0 text-dim hover:bg-raised hover:text-ink`}
-              onClick={() => setConfirming(true)}
-            >
-              Disconnect
-            </button>
-          )}
-        </div>
-        {confirming && (
-          <div role="group" aria-label="Confirm disconnect" className="space-y-2">
-            <p className="text-xs text-dim">
-              Disconnect from this account? This machine forgets it and its approved browsers, and asks the server to
-              remove it from the account's list.
-            </p>
-            <div className="flex justify-end gap-2">
+            {!confirming && (
               <button
                 type="button"
-                className={`${button} text-dim hover:bg-raised`}
-                onClick={() => setConfirming(false)}
-              >
-                Cancel
-              </button>
-              <Button
                 disabled={busy}
-                onClick={() => {
-                  setConfirming(false)
-                  props.onDisconnect()
-                }}
+                className={`${button} shrink-0 text-dim hover:bg-raised hover:text-ink`}
+                onClick={() => setConfirming(true)}
               >
                 Disconnect
-              </Button>
-            </div>
+              </button>
+            )}
           </div>
-        )}
-      </section>
+          {confirming && (
+            <div role="group" aria-label="Confirm disconnect" className="space-y-2">
+              <p className="text-xs text-dim">
+                Disconnect from this account? This machine forgets it and its approved browsers, and asks the server to
+                remove it from the account's list.
+              </p>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  className={`${button} text-dim hover:bg-raised`}
+                  onClick={() => setConfirming(false)}
+                >
+                  Cancel
+                </button>
+                <Button
+                  disabled={busy}
+                  onClick={() => {
+                    setConfirming(false)
+                    props.onDisconnect()
+                  }}
+                >
+                  Disconnect
+                </Button>
+              </div>
+            </div>
+          )}
+        </section>
+        {props.children}
+        <Footer>
+          <CloseButton onClose={props.onClose} />
+        </Footer>
+      </>
     )
   }
 
@@ -129,26 +147,29 @@ export function RemoteAccessConnect(props: RemoteAccessConnectProps) {
 
   if (confirming) {
     return (
-      <section
-        aria-label="Check before connecting"
-        className="space-y-2 rounded-md border border-line p-2.5 text-[13px]"
-      >
-        <p className="text-xs text-dim">Check these match the account and the key you created, then connect.</p>
-        <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1">
-          <dt className="text-dim">Email</dt>
-          <dd className="truncate">{email}</dd>
-          <dt className="text-dim">Server</dt>
-          <dd className="truncate font-mono text-xs">{serverUrl}</dd>
-          <dt className="text-dim">Key ends in</dt>
-          <dd className="font-mono text-xs">{enrollmentFingerprint(key)}</dd>
-        </dl>
-        {!sameServerUrl(serverUrl, props.defaultServerUrl) && (
-          <p role="alert" className="flex items-start gap-1.5 text-xs text-warn">
-            <TriangleAlert size={13} className="mt-px shrink-0" />
-            This is not the default server. Connect only if you run it or trust it.
-          </p>
-        )}
-        <div className="flex justify-end gap-2">
+      <>
+        <section
+          aria-label="Check before connecting"
+          className="space-y-2 rounded-md border border-line p-2.5 text-[13px]"
+        >
+          <p className="text-xs text-dim">Check these match the account and the key you created, then confirm.</p>
+          <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1">
+            <dt className="text-dim">Email</dt>
+            <dd className="truncate">{email}</dd>
+            <dt className="text-dim">Server</dt>
+            <dd className="truncate font-mono text-xs">{serverUrl}</dd>
+            <dt className="text-dim">Key ends in</dt>
+            <dd className="font-mono text-xs">{enrollmentFingerprint(key)}</dd>
+          </dl>
+          {!sameServerUrl(serverUrl, props.defaultServerUrl) && (
+            <p role="alert" className="flex items-start gap-1.5 text-xs text-warn">
+              <TriangleAlert size={13} className="mt-px shrink-0" />
+              This is not the default server. Connect only if you run it or trust it.
+            </p>
+          )}
+        </section>
+        {props.children}
+        <Footer>
           <button type="button" className={`${button} text-dim hover:bg-raised`} onClick={() => setConfirming(false)}>
             Back
           </button>
@@ -159,10 +180,10 @@ export function RemoteAccessConnect(props: RemoteAccessConnectProps) {
               props.onConnect()
             }}
           >
-            Connect
+            Confirm
           </Button>
-        </div>
-      </section>
+        </Footer>
+      </>
     )
   }
 
@@ -170,7 +191,7 @@ export function RemoteAccessConnect(props: RemoteAccessConnectProps) {
   return (
     <form
       aria-label="Connect to an account"
-      className="space-y-2"
+      className="space-y-3"
       onSubmit={(event) => {
         event.preventDefault()
         if (filled && !busy) setConfirming(true)
@@ -207,12 +228,27 @@ export function RemoteAccessConnect(props: RemoteAccessConnectProps) {
         onChange={props.onEnrollmentKeyChange}
         hint="From Connect a machine in the client. It works once, for 15 minutes."
       />
-      <div className="flex justify-end">
+      {props.children}
+      <Footer>
+        <CloseButton onClose={props.onClose} />
         <Button type="submit" disabled={!filled || busy}>
           Connect
         </Button>
-      </div>
+      </Footer>
     </form>
+  )
+}
+
+/** The dialog's last row: its buttons, on the right. */
+function Footer({ children }: { children: ReactNode }) {
+  return <div className="flex items-center justify-end gap-2 pt-2">{children}</div>
+}
+
+function CloseButton({ onClose }: { onClose: () => void }) {
+  return (
+    <button type="button" className={`${button} text-dim hover:bg-raised hover:text-ink`} onClick={onClose}>
+      Close
+    </button>
   )
 }
 

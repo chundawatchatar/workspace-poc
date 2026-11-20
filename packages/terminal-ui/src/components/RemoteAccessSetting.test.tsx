@@ -143,8 +143,8 @@ describe('RemoteAccessSetting', () => {
     await user.type(screen.getByRole('textbox', { name: 'Key' }), 'oek_wrong')
     const connect = () => user.click(screen.getByRole('button', { name: 'Connect' }))
     const confirm = async () => {
-      const check = await screen.findByRole('region', { name: 'Check before connecting' })
-      await user.click(within(check).getByRole('button', { name: 'Connect' }))
+      await screen.findByRole('region', { name: 'Check before connecting' })
+      await user.click(screen.getByRole('button', { name: 'Confirm' }))
     }
     await connect()
     await confirm()
@@ -201,11 +201,8 @@ describe('RemoteAccessSetting', () => {
     await user.type(await screen.findByRole('textbox', { name: 'Email' }), email)
     await user.type(screen.getByRole('textbox', { name: 'Key' }), key)
     await user.click(screen.getByRole('button', { name: 'Connect' }))
-    await user.click(
-      within(await screen.findByRole('region', { name: 'Check before connecting' })).getByRole('button', {
-        name: 'Connect',
-      }),
-    )
+    await screen.findByRole('region', { name: 'Check before connecting' })
+    await user.click(screen.getByRole('button', { name: 'Confirm' }))
     const waiting = await screen.findByRole('region', { name: 'Waiting for approval' })
     await user.click(within(waiting).getByRole('button', { name: 'Cancel' }))
 

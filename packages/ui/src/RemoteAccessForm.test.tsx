@@ -139,9 +139,9 @@ describe('RemoteAccessForm', () => {
     await user.click(screen.getByRole('button', { name: 'Back' }))
     expect(screen.getByRole('textbox', { name: 'Key' })).toHaveValue(key)
     await user.click(screen.getByRole('button', { name: 'Connect' }))
-    await user.click(
-      within(screen.getByRole('region', { name: 'Check before connecting' })).getByRole('button', { name: 'Connect' }),
-    )
+    // The check step confirms in place of a second Connect.
+    expect(screen.queryByRole('button', { name: 'Connect' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Confirm' }))
     expect(props.connection.onConnect).toHaveBeenCalledTimes(1)
   })
 
