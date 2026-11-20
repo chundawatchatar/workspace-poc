@@ -1,0 +1,76 @@
+---
+// The home page's top bar, in place of the sidebar the other pages have: the sections, the other pages, and the
+// palette, appearance and shortcut buttons the sidebar footer holds elsewhere. On wide screens it is one row. Below
+// 1280px the sections move to a second row that scrolls sideways, and below 640px Docs and Pricing join them there.
+// The sections are drawn in both rows, one of them hidden, so Tab follows what is on screen at every width.
+// Shell.astro's scroll spy marks the current section in both, and site.css's `scroll-padding-top` for
+// `data-area='home'` matches the bar's height.
+import { Keyboard, Moon, Palette, Search, Sun } from '@orch/ui/icons'
+import { SECTIONS, SITE } from '../../site.config'
+import GithubMark from './GithubMark.astro'
+import Logo from './Logo.astro'
+
+const sections = SECTIONS.flatMap((section) => (section.label ? [{ id: section.id, label: section.label }] : []))
+const link = 'flex h-8 shrink-0 items-center rounded-md px-2.5 text-[13px] whitespace-nowrap'
+const pageLink = `${link} text-dim hover:bg-raised hover:text-ink`
+const sectionLink = `nav-link ${link} text-dim hover:bg-raised hover:text-ink`
+const iconButton = 'rounded-md p-1.5 text-dim hover:bg-raised hover:text-ink'
+---
+
+<header class="sticky top-0 z-20 border-b border-line bg-sidebar/90 backdrop-blur">
+  <div class="mx-auto max-w-7xl px-4 sm:px-8">
+    <div class="flex h-14 items-center gap-1">
+      <a href="/" class="mr-3 flex shrink-0 items-center gap-2.5 text-ink">
+        <Logo size={22} />
+        <span class="text-[15px] font-semibold tracking-tight">{SITE.name}</span>
+      </a>
+
+      <nav aria-label="Sections" class="hidden items-center gap-0.5 xl:flex">
+        {sections.map((s) => <a href={`/#${s.id}`} data-section-link={s.id} class={sectionLink}>{s.label}</a>)}
+      </nav>
+
+      <div class="ml-auto flex shrink-0 items-center gap-1">
+        <button
+          type="button"
+          data-open="palette"
+          aria-label="Search"
+          class="mr-1 flex h-8 items-center gap-2 rounded-md border border-line bg-bg/60 px-2 text-xs text-faint hover:border-dim/50 hover:text-dim"
+        >
+          <Search size={14} />
+          <span class="hidden lg:inline">Search…</span>
+          <kbd class="hidden lg:inline">⌘P</kbd>
+        </button>
+        <a href="/docs/getting-started" class={`hidden sm:flex ${pageLink}`}>Docs</a>
+        <a href="/pricing" class={`hidden sm:flex ${pageLink}`}>Pricing</a>
+        <a href={SITE.githubUrl} class={`hidden gap-1.5 sm:flex ${pageLink}`}>
+          <GithubMark size={14} />
+          GitHub
+        </a>
+        <span class="leader-hides flex items-center">
+          <button type="button" data-action="toggle-theme" title="Toggle light / dark" aria-label="Toggle light and dark" class={iconButton}>
+            <Moon size={15} className="when-dark" />
+            <Sun size={15} className="when-light" />
+          </button>
+          <button type="button" data-open="themes" title="Choose theme" aria-label="Choose theme" class={iconButton}>
+            <Palette size={15} />
+          </button>
+          <button type="button" data-open="help" title="Keyboard shortcuts" aria-label="Keyboard shortcuts" class={iconButton}>
+            <Keyboard size={15} />
+          </button>
+        </span>
+        <span class="leader-chip rounded bg-accent px-1.5 py-0.5 text-[11px] font-medium text-on-accent">Ctrl+B …</span>
+        <a href="/docs/getting-started" class="ml-1 flex h-8 shrink-0 items-center rounded-md bg-accent px-3 text-[13px] font-medium text-on-accent hover:opacity-90">
+          Install
+        </a>
+      </div>
+    </div>
+
+    <!-- Padded by the focus ring's width, so the scrolling row doesn't clip the ring of its first and last links. -->
+    <nav aria-label="Sections" class="-mx-1 flex h-10 items-center gap-0.5 overflow-x-auto px-1 [scrollbar-width:none] xl:hidden">
+      {sections.map((s) => <a href={`/#${s.id}`} data-section-link={s.id} class={sectionLink}>{s.label}</a>)}
+      <span class="mx-1.5 h-4 w-px shrink-0 bg-line sm:hidden" aria-hidden="true"></span>
+      <a href="/docs/getting-started" class={`sm:hidden ${pageLink}`}>Docs</a>
+      <a href="/pricing" class={`sm:hidden ${pageLink}`}>Pricing</a>
+    </nav>
+  </div>
+</header>
