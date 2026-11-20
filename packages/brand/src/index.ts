@@ -11,7 +11,7 @@ export const PRODUCT_TAGLINE = 'Your agents, your machine, any browser.'
 export const PRODUCT_HEADLINE = { lead: 'Run every agent at once.', accent: 'Know which one needs you.' } as const
 
 /** The short facts in the pill above the headline. */
-export const PRODUCT_FACTS = 'Free and open source · macOS and Linux · any browser'
+export const PRODUCT_FACTS = 'Free and open source · macOS and Linux · Chrome'
 
 /**
  * The mark as SVG markup: a window split into three panes, one of them ringing for attention. `color` may be a

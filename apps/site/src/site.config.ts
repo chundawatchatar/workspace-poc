@@ -44,7 +44,6 @@ export const PLANS: Plan[] = [
       'Any CLI agent: Claude Code, Codex, Aider…',
       'Notifications when a terminal needs you',
       'Command palette, shortcuts, 8 themes',
-      'Self-host the relay for remote access',
     ],
     cta: { label: 'Install', href: '/docs/getting-started' },
   },
@@ -60,7 +59,7 @@ export const PLANS: Plan[] = [
       'Hosted relay: no server to run, no ports to open',
       'Every linked machine on one dashboard',
       'Open any workspace from any browser',
-      'Revoke a device or rotate a key in one click',
+      'Revoke a device at any time',
       'Cancel anytime: local work is never affected',
     ],
     cta: { label: 'Set up remote access', href: '/docs/remote-access' },
@@ -92,7 +91,7 @@ export const FAQ: Faq[] = [
   },
   {
     q: 'Which platforms are supported?',
-    a: 'macOS and Linux today, used from any current browser. Windows support is planned.',
+    a: 'macOS and Linux today, used from Chrome. Other browsers are not checked yet. Windows support is planned.',
   },
   {
     q: 'What if I cancel Orchestrator?',
